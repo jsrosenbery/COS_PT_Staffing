@@ -89,9 +89,6 @@ function parseScheduleRows(rows, coverageRows) {
 
   Array.from(crnRows.keys()).forEach(ensureNode);
 
-  // Build groups in two ways:
-  // 1. COREQUISITE_CRN is a real CRN link
-  // 2. CROSS_LIST is a group code, so rows sharing the same code are linked together
   const crossListMap = new Map();
 
   rows.forEach((row) => {
@@ -114,7 +111,6 @@ function parseScheduleRows(rows, coverageRows) {
     }
   });
 
-  // Link all CRNs that share the same CROSS_LIST code
   for (const [, crnSet] of crossListMap.entries()) {
     const crns = Array.from(crnSet);
     for (let i = 0; i < crns.length; i += 1) {
@@ -502,6 +498,66 @@ app.post("/api/upload/seniority", async (req, res) => {
             [termCode, row.discipline_code, subjectCode]
           );
         }
+      }
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    res.json({ ok: true, importedRows: rows.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/upload/subject-mapping", upload.single("file"), async (req, res) => {
+  try {
+    const { termCode } = req.body;
+
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded." });
+    }
+
+    if (!termCode) {
+      return res.status(400).json({ error: "termCode is required." });
+    }
+
+    const csvText = req.file.buffer.toString("utf-8");
+    const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+
+    const rows = parsed.data.map((row) => ({
+      subject_code: normalize(row.subject_code).toUpperCase(),
+      discipline_code: normalize(row.discipline_code),
+    }));
+
+    const badRows = rows.filter((row) => !row.subject_code || !row.discipline_code);
+    if (badRows.length) {
+      return res.status(400).json({
+        error: "Each row must contain subject_code and discipline_code.",
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        `DELETE FROM discipline_subject_coverage
+         WHERE term_code = $1`,
+        [termCode]
+      );
+
+      for (const row of rows) {
+        await client.query(
+          `INSERT INTO discipline_subject_coverage (term_code, discipline_code, subject_code)
+           VALUES ($1,$2,$3)`,
+          [termCode, row.discipline_code, row.subject_code]
+        );
       }
 
       await client.query("COMMIT");
