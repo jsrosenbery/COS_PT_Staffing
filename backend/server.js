@@ -89,27 +89,43 @@ function parseScheduleRows(rows, coverageRows) {
 
   Array.from(crnRows.keys()).forEach(ensureNode);
 
+  // Build groups in two ways:
+  // 1. COREQUISITE_CRN is a real CRN link
+  // 2. CROSS_LIST is a group code, so rows sharing the same code are linked together
+  const crossListMap = new Map();
+
   rows.forEach((row) => {
     const crn = normalize(row.CRN);
     if (!crn) return;
 
-    const cross = normalize(row.CROSS_LIST);
-    const coreq = normalize(row.COREQUISITE_CRN);
-
     ensureNode(crn);
 
-    if (cross) {
-      ensureNode(cross);
-      graph.get(crn).add(cross);
-      graph.get(cross).add(crn);
-    }
-
+    const coreq = normalize(row.COREQUISITE_CRN);
     if (coreq) {
       ensureNode(coreq);
       graph.get(crn).add(coreq);
       graph.get(coreq).add(crn);
     }
+
+    const crossListCode = normalize(row.CROSS_LIST);
+    if (crossListCode) {
+      if (!crossListMap.has(crossListCode)) crossListMap.set(crossListCode, new Set());
+      crossListMap.get(crossListCode).add(crn);
+    }
   });
+
+  // Link all CRNs that share the same CROSS_LIST code
+  for (const [, crnSet] of crossListMap.entries()) {
+    const crns = Array.from(crnSet);
+    for (let i = 0; i < crns.length; i += 1) {
+      ensureNode(crns[i]);
+      for (let j = i + 1; j < crns.length; j += 1) {
+        ensureNode(crns[j]);
+        graph.get(crns[i]).add(crns[j]);
+        graph.get(crns[j]).add(crns[i]);
+      }
+    }
+  }
 
   const visited = new Set();
   const clusters = [];
@@ -136,7 +152,7 @@ function parseScheduleRows(rows, coverageRows) {
   }
 
   const errors = [];
-  const unmapped = [];
+  const warnings = [];
   let crossListedGroupCount = 0;
   let corequisiteGroupCount = 0;
   let multiRowCrnGroups = 0;
@@ -144,7 +160,7 @@ function parseScheduleRows(rows, coverageRows) {
   const parsedSections = clusters.map((cluster) => {
     cluster.forEach((crn) => {
       if (!crnRows.has(crn)) {
-        errors.push(`CRN ${crn} is referenced by CROSS_LIST or COREQUISITE_CRN but is missing from the upload.`);
+        errors.push(`CRN ${crn} is referenced by COREQUISITE_CRN but is missing from the upload.`);
       }
     });
 
@@ -211,7 +227,7 @@ function parseScheduleRows(rows, coverageRows) {
       new Set(bundleRows.map((r) => Number(normalize(r.UNITS || r.HOURS || 0)) || 0))
     ).filter(Boolean);
 
-    const crossListGroup = Array.from(
+    const crossListCodes = Array.from(
       new Set(bundleRows.map((r) => normalize(r.CROSS_LIST)).filter(Boolean))
     );
 
@@ -222,7 +238,9 @@ function parseScheduleRows(rows, coverageRows) {
     const { disciplineCode, subjectCode } = inferDiscipline(first.SUBJECT_COURSE, coverageRows);
 
     if (!disciplineCode) {
-      unmapped.push(`${cluster.join(", ")} (${subjectCode || normalize(first.SUBJECT_COURSE) || "UNKNOWN SUBJECT"})`);
+      warnings.push(
+        `Unmapped subject ${subjectCode || normalize(first.SUBJECT_COURSE) || "UNKNOWN SUBJECT"} for CRN group ${cluster.join(", ")}`
+      );
     }
 
     return {
@@ -239,24 +257,22 @@ function parseScheduleRows(rows, coverageRows) {
       meetings,
       pt_eligible: true,
       is_grouped: cluster.length > 1 || bundleRows.length > 1,
-      cross_list_group: crossListGroup.length ? cluster.filter((c) => crossListGroup.includes(c)) : null,
+      cross_list_group: crossListCodes.length ? crossListCodes : null,
       corequisite_group: coreqGroup.length ? coreqGroup : null,
+      subject_code: subjectCode || null,
     };
   });
 
-  if (unmapped.length) {
-    errors.push(
-      `${unmapped.length} assignment group(s) could not be mapped to a discipline: ${unmapped.slice(0, 10).join("; ")}${unmapped.length > 10 ? " ..." : ""}`
-    );
-  }
-
   return {
     errors,
+    warnings,
     sections: parsedSections.filter((s) => s.discipline_code),
     summary: {
       totalRows: rows.length,
       totalCrns: crnRows.size,
-      assignmentGroups: parsedSections.filter((s) => s.discipline_code).length,
+      assignmentGroups: parsedSections.length,
+      mappedAssignmentGroups: parsedSections.filter((s) => s.discipline_code).length,
+      unmappedAssignmentGroups: parsedSections.filter((s) => !s.discipline_code).length,
       crossListedGroups: crossListedGroupCount,
       corequisiteGroups: corequisiteGroupCount,
       multiRowCrnGroups,
@@ -301,6 +317,7 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
       return res.status(400).json({
         ok: false,
         errors: result.errors,
+        warnings: result.warnings,
         summary: result.summary,
       });
     }
@@ -400,6 +417,7 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
     res.json({
       ok: true,
       importedCount: result.sections.length,
+      warnings: result.warnings,
       summary: result.summary,
     });
   } catch (error) {
