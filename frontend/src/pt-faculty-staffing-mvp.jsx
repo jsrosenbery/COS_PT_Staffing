@@ -1,3 +1,4 @@
+const API_BASE = "https://cos-pt-staffing.onrender.com";
 import React, { useMemo, useState } from "react";
 import Papa from "papaparse";
 
@@ -293,7 +294,9 @@ function parseScheduleCsv(file, disciplines, onSuccess, onError) {
 
         clusters.forEach((cluster) => {
           cluster.forEach((crn) => {
-            if (!crnRows.has(crn)) errors.push(`CRN ${crn} is referenced by CROSS_LIST or COREQUISITE_CRN but is missing from the upload.`);
+            if (!crnRows.has(crn)) {
+              errors.push(`CRN ${crn} is referenced by CROSS_LIST or COREQUISITE_CRN but is missing from the upload.`);
+            }
           });
 
           const bundleRows = cluster.flatMap((crn) => crnRows.get(crn) || []);
@@ -307,7 +310,9 @@ function parseScheduleCsv(file, disciplines, onSuccess, onError) {
           const hasCoreq = bundleRows.some((r) => normalize(r.COREQUISITE_CRN));
           if (hasCross) crossListedGroupCount += 1;
           if (hasCoreq) corequisiteGroupCount += 1;
-          if (Array.from(new Set(bundleRows.map((r) => normalize(r.CRN)))).some((crn) => (crnRows.get(crn) || []).length > 1)) multiRowCrnCount += 1;
+          if (Array.from(new Set(bundleRows.map((r) => normalize(r.CRN)))).some((crn) => (crnRows.get(crn) || []).length > 1)) {
+            multiRowCrnCount += 1;
+          }
         });
 
         const parsedSections = clusters.map((cluster) => {
@@ -315,6 +320,7 @@ function parseScheduleCsv(file, disciplines, onSuccess, onError) {
           const first = bundleRows[0] || {};
           const meetings = [];
           const meetingSeen = new Set();
+
           bundleRows.forEach((row) => {
             const key = [normalize(row.DAYS), normalize(row.START_TIME), normalize(row.END_TIME), normalize(row.BUILDING), normalize(row.ROOM)].join("|");
             if (meetingSeen.has(key)) return;
@@ -334,6 +340,7 @@ function parseScheduleCsv(file, disciplines, onSuccess, onError) {
           const crossListGroup = Array.from(new Set(bundleRows.map((r) => normalize(r.CROSS_LIST)).filter(Boolean)));
           const coreqGroup = Array.from(new Set(bundleRows.map((r) => normalize(r.COREQUISITE_CRN)).filter(Boolean)));
           const { disciplineId, subjectCode } = inferDisciplineIdFromSubjectCourse(first.SUBJECT_COURSE, disciplines);
+
           if (!disciplineId) {
             unmapped.push(`${cluster.join(", ")} (${subjectCode || normalize(first.SUBJECT_COURSE) || "UNKNOWN SUBJECT"})`);
           }
@@ -419,6 +426,8 @@ export default function PTFacultyStaffingMVP() {
   const [seniority] = useState(initialSeniority);
   const [sections, setSections] = useState(initialSections);
   const [uploadReport, setUploadReport] = useState({ errors: [], importedCount: 0, fileName: "", summary: null });
+  const [uploadingSchedule, setUploadingSchedule] = useState(false);
+  const [backendMessage, setBackendMessage] = useState("");
   const [links] = useState(initialLinks);
   const [submissions] = useState(initialSubmissions);
   const [assignments, setAssignments] = useState(initialAssignments);
@@ -483,6 +492,72 @@ export default function PTFacultyStaffingMVP() {
     submitted: submissions.filter((s) => s.submitted).length,
     noActivity: links.filter((l) => l.status === "no_activity").length,
   };
+
+  async function handleScheduleUpload(file) {
+    if (!file) return;
+
+    setUploadingSchedule(true);
+    setBackendMessage("");
+    setUploadReport({ errors: [], importedCount: 0, fileName: file.name, summary: null });
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("termCode", activeTerm.code);
+
+      const response = await fetch(`${API_BASE}/api/upload/schedule`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setUploadReport({
+          errors: data.errors || [data.error || "Upload failed."],
+          importedCount: 0,
+          fileName: file.name,
+          summary: data.summary || null,
+        });
+        setBackendMessage("Backend rejected the upload. Fix the issues and reupload.");
+        return;
+      }
+
+      parseScheduleCsv(
+        file,
+        disciplines,
+        (parsed) => {
+          setSections(parsed.sections);
+          setUploadReport({
+            errors: [],
+            importedCount: data.importedCount ?? parsed.sections.length,
+            fileName: file.name,
+            summary: data.summary || parsed.summary,
+          });
+          setBackendMessage("Schedule uploaded to backend successfully.");
+        },
+        (errors) => {
+          setUploadReport({
+            errors,
+            importedCount: 0,
+            fileName: file.name,
+            summary: null,
+          });
+          setBackendMessage("Backend accepted the file, but local parsing failed.");
+        }
+      );
+    } catch (error) {
+      setUploadReport({
+        errors: [error.message || "Unexpected upload error."],
+        importedCount: 0,
+        fileName: file.name,
+        summary: null,
+      });
+      setBackendMessage("Could not reach the backend service.");
+    } finally {
+      setUploadingSchedule(false);
+    }
+  }
 
   const assignSection = (sectionId, targetFacultyId) => {
     const topAvailable = currentSelections.find((sel) => sel.status === "Available");
@@ -634,23 +709,21 @@ export default function PTFacultyStaffingMVP() {
                   style={ui.input}
                   type="file"
                   accept=".csv"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    parseScheduleCsv(
-                      file,
-                      disciplines,
-                      (parsed) => {
-                        setSections(parsed.sections);
-                        setUploadReport({ errors: [], importedCount: parsed.sections.length, fileName: file.name, summary: parsed.summary });
-                      },
-                      (errors) => {
-                        setUploadReport({ errors, importedCount: 0, fileName: file.name, summary: null });
-                      }
-                    );
-                  }}
+                  disabled={uploadingSchedule}
+                  onChange={(e) => handleScheduleUpload(e.target.files?.[0])}
                 />
               </div>
+
+              {uploadingSchedule ? (
+                <div style={{ marginTop: 12, color: "#475569", fontWeight: 700 }}>Uploading schedule to backend...</div>
+              ) : null}
+
+              {backendMessage ? (
+                <div style={{ marginTop: 12, color: backendMessage.includes("successfully") ? "#166534" : "#b91c1c", fontWeight: 700 }}>
+                  {backendMessage}
+                </div>
+              ) : null}
+
               {uploadReport.fileName ? (
                 <div style={{ ...ui.sectionCard, marginTop: 16 }}>
                   <div style={{ fontWeight: 700 }}>Latest upload: {uploadReport.fileName}</div>
@@ -916,10 +989,15 @@ export default function PTFacultyStaffingMVP() {
           </div>
           <div style={{ ...ui.row, marginTop: 16 }}>
             <button style={ui.btn} onClick={() => setShowReasonModal(false)}>Cancel</button>
-            <button style={ui.btnPrimary} onClick={() => {
-              finalizeAssignment(reasonDialog.sectionId, reasonDialog.facultyId, reasonDialog.reason);
-              setShowReasonModal(false);
-            }}>Log Reason and Assign</button>
+            <button
+              style={ui.btnPrimary}
+              onClick={() => {
+                finalizeAssignment(reasonDialog.sectionId, reasonDialog.facultyId, reasonDialog.reason);
+                setShowReasonModal(false);
+              }}
+            >
+              Log Reason and Assign
+            </button>
           </div>
         </Modal>
       )}
@@ -993,7 +1071,11 @@ function SectionCard({ section, status, action, preference }) {
     <div style={ui.sectionCard}>
       <div style={ui.between}>
         <div>
-          <div style={{ fontWeight: 700 }}>{preference ? `#${preference} • ` : ""}{section.primary_subject_course}{section.is_grouped ? ` • CRNs ${section.all_crns.join(" + ")}` : ` • CRN ${section.primary_crn}`}</div>
+          <div style={{ fontWeight: 700 }}>
+            {preference ? `#${preference} • ` : ""}
+            {section.primary_subject_course}
+            {section.is_grouped ? ` • CRNs ${section.all_crns.join(" + ")}` : ` • CRN ${section.primary_crn}`}
+          </div>
           <div style={{ ...ui.small, marginTop: 6 }}>{section.title}</div>
           <div style={{ ...ui.small, marginTop: 6 }}>{meetingSummary || "Meeting details TBD"}</div>
           <div style={{ ...ui.small, marginTop: 6 }}>{section.modality} • {section.campus}</div>
