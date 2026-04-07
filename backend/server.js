@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import multer from "multer";
 import Papa from "papaparse";
+import fs from "fs";
 import { pool, query } from "./db.js";
 
 dotenv.config();
@@ -57,6 +58,16 @@ async function getCoverage(termCode) {
     [termCode]
   );
   return result.rows;
+}
+
+async function runSchema() {
+  try {
+    const schema = fs.readFileSync("./schema.sql", "utf-8");
+    await pool.query(schema);
+    console.log("Schema loaded successfully");
+  } catch (err) {
+    console.error("Error loading schema:", err.message);
+  }
 }
 
 function parseScheduleRows(rows, coverageRows) {
@@ -671,6 +682,7 @@ app.post("/api/disciplines/dean-approve", async (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Backend running on port ${PORT}`);
+  await runSchema();
 });
