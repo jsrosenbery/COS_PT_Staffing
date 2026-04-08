@@ -410,6 +410,74 @@ export default function PTFacultyStaffingMVP() {
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
 
+  async function loadTerms() {
+    try {
+      const response = await fetch(`${API_BASE}/api/terms`);
+      const data = await response.json();
+      if (!response.ok) {
+        setTermMessage(data.error || "Could not load terms.");
+        return;
+      }
+      setTerms((data.terms || []).map((term) => ({
+        id: term.id || term.term_code,
+        code: term.term_code,
+        name: term.term_name,
+        active: term.is_active,
+      })));
+    } catch (error) {
+      setTermMessage(error.message || "Could not load terms.");
+    }
+  }
+
+  async function activateTerm(termCode) {
+    try {
+      const response = await fetch(`${API_BASE}/api/terms/activate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ termCode }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setTermMessage(data.error || "Could not activate term.");
+        return;
+      }
+      setTermMessage(`Active term set to ${data.term.term_name}.`);
+      await loadTerms();
+    } catch (error) {
+      setTermMessage(error.message || "Could not activate term.");
+    }
+  }
+
+  async function createOrUpdateTerm() {
+    try {
+      const response = await fetch(`${API_BASE}/api/terms`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          termCode: newTermCode,
+          termName: newTermName,
+          isActive: false,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setTermMessage(data.error || "Could not save term.");
+        return;
+      }
+      setTermMessage(`Saved ${data.term.term_name}.`);
+      setNewTermCode("");
+      setNewTermName("");
+      await loadTerms();
+    } catch (error) {
+      setTermMessage(error.message || "Could not save term.");
+    }
+  }
+
+  useEffect(() => {
+    loadTerms();
+  }, []);
+
+
   const themeVars = darkMode
     ? {
         "--bg-page": "linear-gradient(180deg, #081120 0%, #0f172a 100%)",
