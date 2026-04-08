@@ -221,6 +221,7 @@ function parseScheduleRows(rows, coverageRows) {
   let multiRowCrnGroups = 0;
   let mixedInstructorGroupCount = 0;
   let skippedAssignedGroupCount = 0;
+  const unmappedSubjects = [];
 
   const parsedSections = clusters.map((cluster) => {
     cluster.forEach((crn) => {
@@ -311,9 +312,18 @@ function parseScheduleRows(rows, coverageRows) {
     const { disciplineCode, subjectCode } = inferDiscipline(first.SUBJECT_COURSE, coverageRows);
 
     if (!disciplineCode) {
+      const unresolvedSubjectCode =
+        subjectCode || normalize(first.SUBJECT_COURSE) || "UNKNOWN SUBJECT";
+
       warnings.push(
-        `Unmapped subject ${subjectCode || normalize(first.SUBJECT_COURSE) || "UNKNOWN SUBJECT"} for CRN group ${cluster.join(", ")}`
+        `Unmapped subject ${unresolvedSubjectCode} for CRN group ${cluster.join(", ")}`
       );
+
+      unmappedSubjects.push({
+        subject_code: unresolvedSubjectCode,
+        discipline_code: "",
+        example_crn_group: cluster.join(", "),
+      });
     }
 
     return {
@@ -339,11 +349,20 @@ function parseScheduleRows(rows, coverageRows) {
 
   const mappedSections = parsedSections.filter((s) => s.discipline_code);
   const importableSections = mappedSections.filter((s) => s.pt_eligible);
+  const uniqueUnmappedSubjects = Array.from(
+    new Map(
+      unmappedSubjects.map((row) => [
+        `${row.subject_code}__${row.example_crn_group}`,
+        row,
+      ])
+    ).values()
+  );
 
   return {
     errors,
     warnings,
     sections: importableSections,
+    unmappedSubjects: uniqueUnmappedSubjects,
     summary: {
       totalRows: rows.length,
       totalCrns: crnRows.size,
@@ -398,6 +417,7 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
         ok: false,
         errors: result.errors,
         warnings: result.warnings,
+        unmappedSubjects: result.unmappedSubjects || [],
         summary: result.summary,
       });
     }
@@ -498,6 +518,7 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
       ok: true,
       importedCount: result.sections.length,
       warnings: result.warnings,
+      unmappedSubjects: result.unmappedSubjects || [],
       summary: result.summary,
     });
   } catch (error) {

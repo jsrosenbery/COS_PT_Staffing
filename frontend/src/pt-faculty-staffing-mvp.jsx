@@ -108,6 +108,48 @@ function normalize(s) {
   return String(s ?? "").trim();
 }
 
+function buildUnmappedSubjectsCsv(rows) {
+  const uniqueRows = Array.from(
+    new Map((rows || []).map((row) => [row.subject_code, row])).values()
+  );
+
+  const lines = [
+    "subject_code,discipline_code,example_crn_group",
+    ...uniqueRows.map((row) => {
+      const cells = [
+        row.subject_code || "",
+        row.discipline_code || "",
+        row.example_crn_group || "",
+      ];
+
+      return cells
+        .map((value) => {
+          const safe = String(value ?? "");
+          const escaped = safe.replace(/"/g, '""');
+          return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
+        })
+        .join(",");
+    }),
+  ];
+
+  return lines.join("\n");
+}
+
+function downloadUnmappedSubjectsCsv(rows, fileName) {
+  if (!rows?.length) return;
+
+  const csv = buildUnmappedSubjectsCsv(rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName || "unmapped-subjects.csv";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 const ui = {
   page: { minHeight: "100vh", background: "#f8fafc", padding: 24, fontFamily: "Arial, sans-serif", color: "#0f172a" },
   shell: { maxWidth: 1300, margin: "0 auto", display: "grid", gap: 24 },
@@ -139,6 +181,7 @@ export default function PTFacultyStaffingMVP() {
   const [uploadReport, setUploadReport] = useState({
     errors: [],
     warnings: [],
+    unmappedSubjects: [],
     importedCount: 0,
     fileName: "",
     summary: null,
@@ -256,6 +299,7 @@ export default function PTFacultyStaffingMVP() {
     setUploadReport({
       errors: [],
       warnings: [],
+      unmappedSubjects: [],
       importedCount: 0,
       fileName: file.name,
       summary: null,
@@ -277,6 +321,7 @@ export default function PTFacultyStaffingMVP() {
         setUploadReport({
           errors: data.errors || [data.error || "Upload failed."],
           warnings: data.warnings || [],
+          unmappedSubjects: data.unmappedSubjects || [],
           importedCount: 0,
           fileName: file.name,
           summary: data.summary || null,
@@ -289,6 +334,7 @@ export default function PTFacultyStaffingMVP() {
       setUploadReport({
         errors: [],
         warnings: data.warnings || [],
+        unmappedSubjects: data.unmappedSubjects || [],
         importedCount: data.importedCount || 0,
         fileName: file.name,
         summary: data.summary || null,
@@ -298,6 +344,7 @@ export default function PTFacultyStaffingMVP() {
       setUploadReport({
         errors: [error.message || "Unexpected upload error."],
         warnings: [],
+        unmappedSubjects: [],
         importedCount: 0,
         fileName: file.name,
         summary: null,
@@ -538,6 +585,30 @@ export default function PTFacultyStaffingMVP() {
               }}
             >
               {backendMessage}
+            </div>
+          ) : null}
+
+          {uploadReport.unmappedSubjects?.length ? (
+            <div style={{ ...ui.sectionCard, marginTop: 16 }}>
+              <div style={{ fontWeight: 700 }}>
+                Unmapped subjects found: {Array.from(new Set(uploadReport.unmappedSubjects.map((row) => row.subject_code))).length}
+              </div>
+              <div style={{ marginTop: 8, color: "#475569" }}>
+                Download a ready-to-fill CSV, add discipline codes, then upload it as your next subject mapping file.
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <button
+                  style={ui.btn}
+                  onClick={() =>
+                    downloadUnmappedSubjectsCsv(
+                      uploadReport.unmappedSubjects,
+                      `${activeTerm.code.toLowerCase()}-unmapped-subjects.csv`
+                    )
+                  }
+                >
+                  Download Unmapped Subjects CSV
+                </button>
+              </div>
             </div>
           ) : null}
 
