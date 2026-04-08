@@ -35,6 +35,13 @@ function normalize(value) {
   return String(value ?? "").trim();
 }
 
+function normalizeInstructor(value) {
+  return normalize(value)
+    .replace(/\s+/g, " ")
+    .replace(/\s*\.\s*/g, ".")
+    .trim();
+}
+
 function toFriendlyModality(value) {
   const v = normalize(value).toUpperCase();
   if (["ONS", "ONN", "ONC", "ONLINE", "DE", "IP"].includes(v)) return "Online";
@@ -212,6 +219,8 @@ function parseScheduleRows(rows, coverageRows) {
   let crossListedGroupCount = 0;
   let corequisiteGroupCount = 0;
   let multiRowCrnGroups = 0;
+  let mixedInstructorGroupCount = 0;
+  let skippedAssignedGroupCount = 0;
 
   const parsedSections = clusters.map((cluster) => {
     cluster.forEach((crn) => {
@@ -222,14 +231,22 @@ function parseScheduleRows(rows, coverageRows) {
 
     const bundleRows = cluster.flatMap((crn) => crnRows.get(crn) || []);
     const instructorValues = Array.from(
-      new Set(bundleRows.map((r) => normalize(r.INSTRUCTOR)).filter(Boolean))
+      new Set(bundleRows.map((r) => normalizeInstructor(r.INSTRUCTOR)).filter(Boolean))
+    );
+    const realInstructorValues = instructorValues.filter(
+      (value) => value.toLowerCase() !== "staff"
     );
 
-    const allStaff = instructorValues.every((value) => value.toLowerCase() === "staff");
-    if (!allStaff) {
+    if (realInstructorValues.length > 1) {
+      mixedInstructorGroupCount += 1;
       errors.push(
-        `Bundle ${cluster.join(", ")} has mixed INSTRUCTOR values: ${instructorValues.join(", ") || "(blank)"}. Fix and reupload.`
+        `Bundle ${cluster.join(", ")} has multiple assigned instructors: ${realInstructorValues.join(", ")}. Fix the source schedule and reupload.`
       );
+    }
+
+    const isOpenStaffBundle = realInstructorValues.length === 0;
+    if (!isOpenStaffBundle) {
+      skippedAssignedGroupCount += 1;
     }
 
     const hasCross = bundleRows.some((r) => normalize(r.CROSS_LIST));
@@ -311,7 +328,8 @@ function parseScheduleRows(rows, coverageRows) {
       campus: normalize(first.CAMPUS),
       units: allUnits,
       meetings,
-      pt_eligible: true,
+      pt_eligible: isOpenStaffBundle,
+      assigned_instructor: realInstructorValues[0] || null,
       is_grouped: cluster.length > 1 || bundleRows.length > 1,
       cross_list_group: crossListCodes.length ? crossListCodes : null,
       corequisite_group: coreqGroup.length ? coreqGroup : null,
@@ -319,16 +337,22 @@ function parseScheduleRows(rows, coverageRows) {
     };
   });
 
+  const mappedSections = parsedSections.filter((s) => s.discipline_code);
+  const importableSections = mappedSections.filter((s) => s.pt_eligible);
+
   return {
     errors,
     warnings,
-    sections: parsedSections.filter((s) => s.discipline_code),
+    sections: importableSections,
     summary: {
       totalRows: rows.length,
       totalCrns: crnRows.size,
       assignmentGroups: parsedSections.length,
-      mappedAssignmentGroups: parsedSections.filter((s) => s.discipline_code).length,
+      mappedAssignmentGroups: mappedSections.length,
       unmappedAssignmentGroups: parsedSections.filter((s) => !s.discipline_code).length,
+      importableOpenGroups: importableSections.length,
+      skippedAssignedGroups: skippedAssignedGroupCount,
+      mixedInstructorGroups: mixedInstructorGroupCount,
       crossListedGroups: crossListedGroupCount,
       corequisiteGroups: corequisiteGroupCount,
       multiRowCrnGroups,
