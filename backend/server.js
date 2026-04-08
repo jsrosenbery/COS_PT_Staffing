@@ -48,6 +48,17 @@ function mapInstructionalMethodToDisplayModality(rawInstructionalMethod) {
   return "";
 }
 
+function resolveInstructionalMethod(row) {
+  return normalize(
+    row?.INSTRUCTIONAL_METHOD ||
+    row?.INSTRUCTIONAL_METHODS ||
+    row?.INSTRUCTIONAL_METHOD_CODE ||
+    row?.INSTRUCTIONAL_METHOD_CD ||
+    row?.INSTR_METHOD ||
+    row?.METHOD
+  );
+}
+
 function normalizeInstructor(value) {
   return normalize(value)
     .replace(/\s+/g, " ")
@@ -339,6 +350,11 @@ function parseScheduleRows(rows, coverageRows) {
       });
     }
 
+    const instructionalMethod = resolveInstructionalMethod(first);
+    const displayModality =
+      mapInstructionalMethodToDisplayModality(instructionalMethod) ||
+      toFriendlyModality(first.SCHEDULE_TYPE || first.MEETING_TYPE || "");
+
     return {
       assignment_group_id: `grp_${cluster.join("_")}`,
       discipline_code: disciplineCode,
@@ -347,7 +363,9 @@ function parseScheduleRows(rows, coverageRows) {
       all_crns: cluster,
       title: allTitles.join(" / ") || normalize(first.TITLE) || "Untitled",
       division: normalize(first.DIVISION),
-      modality: toFriendlyModality(first.INSTRUCTIONAL_METHOD),
+      modality: normalize(first.SCHEDULE_TYPE || first.MEETING_TYPE || ""),
+      instructional_method: instructionalMethod,
+      display_modality: displayModality,
       campus: normalize(first.CAMPUS),
       units: allUnits,
       meetings,
