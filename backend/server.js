@@ -380,6 +380,245 @@ function parseScheduleRows(rows, coverageRows) {
 }
 
 
+
+app.get("/api/preferences", async (req, res) => {
+  try {
+    const { termCode, facultyId } = req.query;
+
+    if (!termCode) {
+      return res.status(400).json({ error: "termCode is required." });
+    }
+
+    const params = [termCode];
+    let whereClause = "WHERE fp.term_code = $1";
+
+    if (facultyId) {
+      params.push(facultyId);
+      whereClause += ` AND fp.faculty_id = $${params.length}`;
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          fp.id,
+          fp.faculty_id,
+          fp.employee_id,
+          fp.faculty_name,
+          fp.term_code,
+          fp.assignment_group_id,
+          fp.discipline_code,
+          fp.preference_rank,
+          fp.created_at,
+          ag.primary_subject_course,
+          ag.primary_crn,
+          ag.title,
+          ag.division,
+          ag.modality,
+          ag.campus,
+          ag.units,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'days', agm.days,
+                'start_time', agm.start_time,
+                'end_time', agm.end_time,
+                'building', agm.building,
+                'room', agm.room
+              )
+              ORDER BY agm.days NULLS LAST, agm.start_time NULLS LAST, agm.end_time NULLS LAST
+            ) FILTER (WHERE agm.id IS NOT NULL),
+            '[]'::json
+          ) AS meetings
+        FROM faculty_preferences fp
+        LEFT JOIN assignment_groups ag
+          ON fp.assignment_group_id = ag.assignment_group_id
+         AND fp.term_code = ag.term_code
+        LEFT JOIN assignment_group_meetings agm
+          ON ag.assignment_group_id = agm.assignment_group_id
+        ${whereClause}
+        GROUP BY
+          fp.id,
+          fp.faculty_id,
+          fp.employee_id,
+          fp.faculty_name,
+          fp.term_code,
+          fp.assignment_group_id,
+          fp.discipline_code,
+          fp.preference_rank,
+          fp.created_at,
+          ag.primary_subject_course,
+          ag.primary_crn,
+          ag.title,
+          ag.division,
+          ag.modality,
+          ag.campus,
+          ag.units
+        ORDER BY fp.faculty_name NULLS LAST, fp.faculty_id, fp.preference_rank
+      `,
+      params
+    );
+
+    res.json({ ok: true, preferences: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/preferences", async (req, res) => {
+  try {
+    const { termCode, facultyId, employeeId, facultyName, preferences } = req.body || {};
+
+    if (!termCode || !facultyId || !Array.isArray(preferences)) {
+      return res.status(400).json({ error: "termCode, facultyId, and preferences are required." });
+    }
+
+    const cleanedPreferences = preferences
+      .map((item, index) => ({
+        assignment_group_id: String(item?.assignment_group_id || "").trim(),
+        discipline_code: String(item?.discipline_code || "").trim(),
+        preference_rank: Number.isFinite(Number(item?.preference_rank))
+          ? Number(item.preference_rank)
+          : index + 1,
+      }))
+      .filter((item) => item.assignment_group_id);
+
+    const duplicateGroups = cleanedPreferences
+      .map((item) => item.assignment_group_id)
+      .filter((value, index, arr) => arr.indexOf(value) !== index);
+
+    if (duplicateGroups.length) {
+      return res.status(400).json({ error: "Duplicate section preferences are not allowed.", duplicates: duplicateGroups });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `DELETE FROM faculty_preferences
+         WHERE term_code = $1 AND faculty_id = $2`,
+        [termCode, facultyId]
+      );
+
+      for (let index = 0; index < cleanedPreferences.length; index += 1) {
+        const item = cleanedPreferences[index];
+        await client.query(
+          `INSERT INTO faculty_preferences (
+            faculty_id,
+            employee_id,
+            faculty_name,
+            term_code,
+            assignment_group_id,
+            discipline_code,
+            preference_rank
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [
+            facultyId,
+            employeeId || null,
+            facultyName || null,
+            termCode,
+            item.assignment_group_id,
+            item.discipline_code || null,
+            index + 1,
+          ]
+        );
+      }
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    res.json({ ok: true, savedCount: cleanedPreferences.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/preferences/export", async (req, res) => {
+  try {
+    const { termCode, disciplineCode } = req.query;
+    if (!termCode) {
+      return res.status(400).json({ error: "termCode is required." });
+    }
+
+    const params = [termCode];
+    let whereClause = "WHERE fp.term_code = $1";
+    if (disciplineCode) {
+      params.push(disciplineCode);
+      whereClause += ` AND fp.discipline_code = $${params.length}`;
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          fp.discipline_code,
+          fp.faculty_name,
+          fp.employee_id,
+          fp.preference_rank,
+          ag.primary_subject_course,
+          ag.primary_crn,
+          ag.title,
+          ag.division,
+          ag.campus,
+          ag.modality
+        FROM faculty_preferences fp
+        LEFT JOIN assignment_groups ag
+          ON fp.assignment_group_id = ag.assignment_group_id
+         AND fp.term_code = ag.term_code
+        ${whereClause}
+        ORDER BY fp.discipline_code, fp.faculty_name, fp.preference_rank
+      `,
+      params
+    );
+
+    const header = [
+      "discipline_code",
+      "faculty_name",
+      "employee_id",
+      "preference_rank",
+      "course",
+      "crn",
+      "title",
+      "division",
+      "campus",
+      "modality",
+    ];
+
+    const escapeCell = (value) => {
+      const safe = String(value ?? "");
+      const escaped = safe.replace(/"/g, '""');
+      return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
+    };
+
+    const csv = [
+      header.join(","),
+      ...result.rows.map((row) =>
+        [
+          row.discipline_code,
+          row.faculty_name,
+          row.employee_id,
+          row.preference_rank,
+          row.primary_subject_course,
+          row.primary_crn,
+          row.title,
+          row.division,
+          row.campus,
+          row.modality,
+        ].map(escapeCell).join(",")
+      ),
+    ].join("\n");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${termCode.toLowerCase()}-faculty-preferences.csv"`);
+    res.send(csv);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get("/api/available-sections", async (req, res) => {
   try {
     const { termCode, disciplineCode } = req.query;

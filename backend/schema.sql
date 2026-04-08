@@ -136,3 +136,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS subject_mappings_unique_global
 CREATE INDEX IF NOT EXISTS subject_mappings_term_subject_idx
   ON subject_mappings (term_code, subject_code);
 
+
+
+CREATE TABLE IF NOT EXISTS faculty_preferences (
+  id SERIAL PRIMARY KEY,
+  faculty_id TEXT NOT NULL,
+  employee_id TEXT,
+  faculty_name TEXT,
+  term_code TEXT NOT NULL,
+  assignment_group_id TEXT NOT NULL,
+  discipline_code TEXT,
+  preference_rank INTEGER NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  UNIQUE(faculty_id, term_code, assignment_group_id),
+  UNIQUE(faculty_id, term_code, preference_rank)
+);

@@ -61,6 +61,39 @@ const initialSeniority = [
   { disciplineId: "math", facultyId: "f4", rank: 2, seniorityDate: "2016-08-15", active: true },
 ];
 
+const initialChairAssignments = [
+  { chairName: "Agriculture Division Chair", divisions: ["Agriculture"] },
+  { chairName: "Social Sciences Division Chair", divisions: ["Social Sciences"] },
+  { chairName: "Business Division Chair", divisions: ["Business"] },
+  { chairName: "Consumer/Family Studies Division Chair", divisions: ["Consumer/Family Studies"] },
+  { chairName: "English Division Chair", divisions: ["English"] },
+  { chairName: "Fine Arts Division Chair", divisions: ["Fine Arts"] },
+  { chairName: "Math & Engineering Division Chair", divisions: ["Math & Engineering"] },
+  { chairName: "Science Division Chair", divisions: ["Science"] },
+  { chairName: "Language & Communication Stud. Division Chair", divisions: ["Language & Communication Stud."] },
+  { chairName: "Library Division Chair", divisions: ["Library"] },
+  { chairName: "Physical Education Division Chair", divisions: ["Physical Education"] },
+  { chairName: "Nursing Division Chair", divisions: ["Nursing"] },
+  { chairName: "Industry & Technology Division Chair", divisions: ["Industry and Technology", "Industry & Technology"] },
+  { chairName: "Cosmetology Division Chair", divisions: ["Cosmetology"] },
+  { chairName: "Student Services Division Chair", divisions: ["Student Services"] },
+  { chairName: "Fire Technology Division Chair", divisions: ["Fire Technology"] },
+  { chairName: "Police Sciences Division Chair", divisions: ["Police Sciences"] },
+  { chairName: "Emergency Medical Technician Division Chair", divisions: ["Emergency Medical Technician"] },
+];
+
+const initialDeanAssignments = [
+  { deanName: "Agriculture Dean", divisions: ["Agriculture"] },
+  { deanName: "Social Sciences, Business, Consumer/Family Studies Dean", divisions: ["Social Sciences", "Business", "Consumer/Family Studies"] },
+  { deanName: "English, Fine Arts Dean", divisions: ["English", "Fine Arts"] },
+  { deanName: "Math & Engineering, Science Dean", divisions: ["Math & Engineering", "Science"] },
+  { deanName: "Language & Communication Stud., Library Dean", divisions: ["Language & Communication Stud.", "Library"] },
+  { deanName: "Physical Education Dean", divisions: ["Physical Education"] },
+  { deanName: "Nursing, Industry & Technology, Cosmetology Dean", divisions: ["Nursing", "Industry and Technology", "Industry & Technology", "Cosmetology"] },
+  { deanName: "Student Services Dean", divisions: ["Student Services"] },
+  { deanName: "Fire Technology, Police Sciences, Emergency Medical Technician Dean", divisions: ["Fire Technology", "Police Sciences", "Emergency Medical Technician"] },
+];
+
 const initialSections = [];
 const initialLinks = [];
 const initialSubmissions = [];
@@ -169,6 +202,56 @@ function formatUnits(units) {
   return String(units);
 }
 
+function parseUnitsValue(units) {
+  try {
+    const parsed = typeof units === "string" ? JSON.parse(units) : units;
+    if (Array.isArray(parsed)) return parsed.map((x) => Number(x) || 0).reduce((a, b) => a + b, 0);
+  } catch (_error) {}
+  return Number(units) || 0;
+}
+
+function normalizeMeetingPattern(meetings) {
+  return (meetings || [])
+    .map((meeting) => `${meeting.days || ""}|${meeting.start_time || ""}|${meeting.end_time || ""}`)
+    .sort()
+    .join(";");
+}
+
+function hasMeetingConflict(sectionA, sectionB) {
+  return normalizeMeetingPattern(sectionA?.meetings) === normalizeMeetingPattern(sectionB?.meetings)
+    && normalizeMeetingPattern(sectionA?.meetings) !== "";
+}
+
+function reorderList(items, startIndex, endIndex) {
+  const next = [...items];
+  const [removed] = next.splice(startIndex, 1);
+  next.splice(endIndex, 0, removed);
+  return next;
+}
+
+function downloadCsvFromRows(rows, fileName, headers) {
+  const escapeCell = (value) => {
+    const safe = String(value ?? "");
+    const escaped = safe.replace(/"/g, '""');
+    return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
+  };
+
+  const csv = [
+    headers.join(","),
+    ...rows.map((row) => headers.map((header) => escapeCell(row[header])).join(",")),
+  ].join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 const ui = {
   page: { minHeight: "100vh", background: "#f8fafc", padding: 24, fontFamily: "Arial, sans-serif", color: "#0f172a" },
   shell: { maxWidth: 1300, margin: "0 auto", display: "grid", gap: 24 },
@@ -189,6 +272,8 @@ const ui = {
   gridSummary: { display: "grid", gap: 16, gridTemplateColumns: "repeat(6, minmax(0, 1fr))" },
   sectionCard: { border: "1px solid #e2e8f0", borderRadius: 14, padding: 12, background: "#fff" },
   small: { fontSize: 12, color: "#64748b" },
+  chip: { display: "inline-block", padding: "6px 10px", borderRadius: 999, background: "#eef2ff", color: "#3730a3", fontSize: 12, fontWeight: 700, marginRight: 8, marginBottom: 8 },
+  panelGrid: { display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 2fr) minmax(320px, 1fr)" },
   table: { width: "100%", borderCollapse: "collapse", marginTop: 12 },
   th: { textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e2e8f0", fontSize: 12, color: "#475569" },
   td: { padding: "10px 12px", borderBottom: "1px solid #e2e8f0", fontSize: 14 },
@@ -196,6 +281,9 @@ const ui = {
 
 export default function PTFacultyStaffingMVP() {
   const [role, setRole] = useState("admin");
+  const [selectedChairName, setSelectedChairName] = useState(initialChairAssignments[0]?.chairName || "");
+  const [selectedDeanName, setSelectedDeanName] = useState(initialDeanAssignments[0]?.deanName || "");
+  const [selectedFacultyId, setSelectedFacultyId] = useState(initialFaculty[0]?.id || "");
   const [terms] = useState(initialTerms);
   const [disciplines] = useState(initialDisciplines);
   const [faculty] = useState(initialFaculty);
@@ -226,6 +314,11 @@ export default function PTFacultyStaffingMVP() {
   const [loadingSections, setLoadingSections] = useState(false);
   const [sectionsError, setSectionsError] = useState("");
   const [selectedDisciplineCode, setSelectedDisciplineCode] = useState("ALL");
+  const [facultyPreferences, setFacultyPreferences] = useState([]);
+  const [savingPreferences, setSavingPreferences] = useState(false);
+  const [preferencesMessage, setPreferencesMessage] = useState("");
+  const [dragIndex, setDragIndex] = useState(null);
+  const [showOnlyConflictFree, setShowOnlyConflictFree] = useState(false);
   const [mappingList, setMappingList] = useState([]);
   const [loadingMappingList, setLoadingMappingList] = useState(false);
   const [mappingAdminError, setMappingAdminError] = useState("");
@@ -243,12 +336,84 @@ export default function PTFacultyStaffingMVP() {
     ).sort();
   }, [availableSections]);
 
+  const chairDivisions = useMemo(() => {
+    return initialChairAssignments.find((item) => item.chairName === selectedChairName)?.divisions || [];
+  }, [selectedChairName]);
+
+  const deanDivisions = useMemo(() => {
+    return initialDeanAssignments.find((item) => item.deanName === selectedDeanName)?.divisions || [];
+  }, [selectedDeanName]);
+
+  const selectedFaculty = useMemo(
+    () => faculty.find((item) => item.id === selectedFacultyId) || faculty[0],
+    [faculty, selectedFacultyId]
+  );
+
+  const facultySeniorityRows = useMemo(() => {
+    if (!selectedFaculty) return [];
+    return seniority
+      .filter((row) => row.facultyId === selectedFaculty.id)
+      .map((row) => {
+        const discipline = disciplines.find((d) => d.id === row.disciplineId);
+        return {
+          ...row,
+          disciplineCode: discipline?.code || row.disciplineId?.toUpperCase?.() || row.disciplineId,
+          disciplineName: discipline?.name || row.disciplineId,
+        };
+      });
+  }, [selectedFaculty, seniority, disciplines]);
+
+  const roleScopedSections = useMemo(() => {
+    if (role === "chair") {
+      return availableSections.filter((section) => chairDivisions.includes(section.division));
+    }
+    if (role === "dean") {
+      return availableSections.filter((section) => deanDivisions.includes(section.division));
+    }
+    if (role === "faculty") {
+      const facultyCodes = facultySeniorityRows.map((row) => row.disciplineCode);
+      return availableSections.filter((section) => facultyCodes.includes(section.discipline_code));
+    }
+    return availableSections;
+  }, [role, availableSections, chairDivisions, deanDivisions, facultySeniorityRows]);
+
+  const roleAvailableDisciplineCodes = useMemo(() => {
+    return Array.from(
+      new Set(roleScopedSections.map((section) => section.discipline_code).filter(Boolean))
+    ).sort();
+  }, [roleScopedSections]);
+
   const visibleSections = useMemo(() => {
-    return availableSections.filter((section) => {
+    return roleScopedSections.filter((section) => {
       if (selectedDisciplineCode === "ALL") return true;
       return section.discipline_code === selectedDisciplineCode;
     });
-  }, [availableSections, selectedDisciplineCode]);
+  }, [roleScopedSections, selectedDisciplineCode]);
+
+  const conflictIds = useMemo(() => {
+    const ids = new Set();
+    facultyPreferences.forEach((preference, index) => {
+      facultyPreferences.forEach((other, otherIndex) => {
+        if (index !== otherIndex && hasMeetingConflict(preference, other)) {
+          ids.add(preference.assignment_group_id);
+          ids.add(other.assignment_group_id);
+        }
+      });
+    });
+    return ids;
+  }, [facultyPreferences]);
+
+  const preferenceDisciplineCodes = useMemo(() => {
+    return Array.from(new Set(facultyPreferences.map((item) => item.discipline_code).filter(Boolean))).sort();
+  }, [facultyPreferences]);
+
+  const selectableSections = useMemo(() => {
+    const selectedIds = new Set(facultyPreferences.map((item) => item.assignment_group_id));
+    const base = visibleSections.filter((section) => !selectedIds.has(section.assignment_group_id));
+    return showOnlyConflictFree
+      ? base.filter((section) => !facultyPreferences.some((pref) => hasMeetingConflict(section, pref)))
+      : base;
+  }, [visibleSections, facultyPreferences, showOnlyConflictFree]);
 
   async function loadAvailableSections(disciplineCode = selectedDisciplineCode) {
     setLoadingSections(true);
@@ -282,6 +447,110 @@ export default function PTFacultyStaffingMVP() {
       setAvailableSections([]);
     } finally {
       setLoadingSections(false);
+    }
+  }
+
+
+  async function loadFacultyPreferences(facultyId = selectedFacultyId) {
+    if (role !== "faculty") return;
+    try {
+      const params = new URLSearchParams({ termCode: activeTerm.code, facultyId });
+      const response = await fetch(`${API_BASE}/api/preferences?${params.toString()}`);
+      const data = await response.json();
+      if (!response.ok) {
+        setPreferencesMessage(data.error || "Could not load saved preferences.");
+        setFacultyPreferences([]);
+        return;
+      }
+      setFacultyPreferences(data.preferences || []);
+    } catch (error) {
+      setPreferencesMessage(error.message || "Could not load saved preferences.");
+      setFacultyPreferences([]);
+    }
+  }
+
+  function addPreference(section) {
+    if (facultyPreferences.some((item) => item.assignment_group_id === section.assignment_group_id)) return;
+    const next = [
+      ...facultyPreferences,
+      {
+        ...section,
+        preference_rank: facultyPreferences.length + 1,
+        faculty_id: selectedFaculty?.id,
+        employee_id: selectedFaculty?.employeeId,
+        faculty_name: selectedFaculty ? facultyName(selectedFaculty) : "",
+      },
+    ];
+    setFacultyPreferences(next.map((item, index) => ({ ...item, preference_rank: index + 1 })));
+    setPreferencesMessage("");
+  }
+
+  function removePreference(assignmentGroupId) {
+    const next = facultyPreferences
+      .filter((item) => item.assignment_group_id !== assignmentGroupId)
+      .map((item, index) => ({ ...item, preference_rank: index + 1 }));
+    setFacultyPreferences(next);
+    setPreferencesMessage("");
+  }
+
+  function movePreference(fromIndex, toIndex) {
+    const next = reorderList(facultyPreferences, fromIndex, toIndex).map((item, index) => ({
+      ...item,
+      preference_rank: index + 1,
+    }));
+    setFacultyPreferences(next);
+    setPreferencesMessage("");
+  }
+
+  async function savePreferences() {
+    if (!selectedFaculty) return;
+    setSavingPreferences(true);
+    setPreferencesMessage("");
+    try {
+      const response = await fetch(`${API_BASE}/api/preferences`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          termCode: activeTerm.code,
+          facultyId: selectedFaculty.id,
+          employeeId: selectedFaculty.employeeId,
+          facultyName: facultyName(selectedFaculty),
+          preferences: facultyPreferences.map((item, index) => ({
+            assignment_group_id: item.assignment_group_id,
+            discipline_code: item.discipline_code,
+            preference_rank: index + 1,
+          })),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setPreferencesMessage(data.error || "Could not save preferences.");
+        return;
+      }
+      setPreferencesMessage(`Saved ${data.savedCount || 0} preference(s).`);
+      loadFacultyPreferences(selectedFaculty.id);
+    } catch (error) {
+      setPreferencesMessage(error.message || "Could not save preferences.");
+    } finally {
+      setSavingPreferences(false);
+    }
+  }
+
+  async function exportPreferences() {
+    try {
+      const response = await fetch(`${API_BASE}/api/preferences/export?termCode=${activeTerm.code}`);
+      const text = await response.text();
+      const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${activeTerm.code.toLowerCase()}-faculty-preferences.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setPreferencesMessage(error.message || "Could not export preferences.");
     }
   }
 
@@ -504,8 +773,11 @@ export default function PTFacultyStaffingMVP() {
             </div>
           </div>
           <div style={ui.row}>
-            <select style={ui.select} value={role} onChange={(e) => setRole(e.target.value)}>
+            <select style={ui.select} value={role} onChange={(e) => { setRole(e.target.value); setSelectedDisciplineCode("ALL"); }}>
               <option value="admin">Scheduler / Admin</option>
+              <option value="chair">Division Chair</option>
+              <option value="dean">Dean</option>
+              <option value="faculty">Part-Time Faculty</option>
             </select>
             <span style={{ ...ui.badge("open"), background: "#0f172a", color: "white" }}>
               {activeTerm.name}
@@ -522,6 +794,7 @@ export default function PTFacultyStaffingMVP() {
           <SummaryCard title="No Activity" value={summary.noActivity} />
         </div>
 
+        {role === "admin" ? (
         <div style={ui.card}>
           <h2 style={ui.cardTitle}>Subject Mapping Upload</h2>
           <div style={ui.cardDesc}>
@@ -587,15 +860,15 @@ export default function PTFacultyStaffingMVP() {
             </div>
           ) : null}
         </div>
+        ) : null}
 
-
-        {mappingAdminError ? (
+        {role === "admin" && mappingAdminError ? (
           <div style={{ ...ui.card, borderColor: "#fecaca", background: "#fff7f7" }}>
             <div style={{ color: "#b91c1c", fontWeight: 700 }}>{mappingAdminError}</div>
           </div>
         ) : null}
 
-        {showMappingList ? (
+        {role === "admin" && showMappingList ? (
           <div style={ui.card}>
             <div style={ui.between}>
               <div>
@@ -636,6 +909,7 @@ export default function PTFacultyStaffingMVP() {
           </div>
         ) : null}
 
+        {role === "admin" ? (
         <div style={ui.card}>
           <h2 style={ui.cardTitle}>Schedule Upload</h2>
           <div style={ui.cardDesc}>
@@ -768,7 +1042,9 @@ export default function PTFacultyStaffingMVP() {
             </div>
           ) : null}
         </div>
+        ) : null}
 
+        {role === "admin" ? (
         <div style={ui.card}>
           <h2 style={ui.cardTitle}>Starter Mapping Example</h2>
           <div style={ui.cardDesc}>Use this exact header format in your CSV.</div>
@@ -783,13 +1059,130 @@ VT,VETERINARIAN_ASSISTING
 OH,ORNAMENTAL_HORTICULTURE`}
           </pre>
         </div>
+        ) : null}
+
+
+        {role === "chair" ? (
+          <div style={ui.card}>
+            <div style={ui.between}>
+              <div>
+                <h2 style={ui.cardTitle}>Division Chair View</h2>
+                <div style={ui.cardDesc}>
+                  Scoped to the real division structure you provided. Chair names can be swapped in once you are ready.
+                </div>
+              </div>
+              <select
+                style={ui.select}
+                value={selectedChairName}
+                onChange={(e) => {
+                  setSelectedChairName(e.target.value);
+                  setSelectedDisciplineCode("ALL");
+                }}
+              >
+                {initialChairAssignments.map((item) => (
+                  <option key={item.chairName} value={item.chairName}>
+                    {item.chairName}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              {chairDivisions.map((division) => (
+                <span key={division} style={ui.chip}>{division}</span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {role === "dean" ? (
+          <div style={ui.card}>
+            <div style={ui.between}>
+              <div>
+                <h2 style={ui.cardTitle}>Dean View</h2>
+                <div style={ui.cardDesc}>
+                  Scoped to the real dean coverage structure you provided. Dean names can be swapped in later.
+                </div>
+              </div>
+              <select
+                style={ui.select}
+                value={selectedDeanName}
+                onChange={(e) => {
+                  setSelectedDeanName(e.target.value);
+                  setSelectedDisciplineCode("ALL");
+                }}
+              >
+                {initialDeanAssignments.map((item) => (
+                  <option key={item.deanName} value={item.deanName}>
+                    {item.deanName}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              {deanDivisions.map((division) => (
+                <span key={division} style={ui.chip}>{division}</span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {role === "faculty" ? (
+          <div style={ui.card}>
+            <div style={ui.between}>
+              <div>
+                <h2 style={ui.cardTitle}>Part-Time Faculty View</h2>
+                <div style={ui.cardDesc}>
+                  This view is scoped to a sample faculty member's seniority disciplines for preview purposes.
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <select
+                  style={ui.select}
+                  value={selectedFacultyId}
+                  onChange={(e) => {
+                    setSelectedFacultyId(e.target.value);
+                    setSelectedDisciplineCode("ALL");
+                    setFacultyPreferences([]);
+                    setTimeout(() => loadFacultyPreferences(e.target.value), 0);
+                  }}
+                >
+                  {faculty.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {facultyName(item)}
+                    </option>
+                  ))}
+                </select>
+                <button style={ui.btn} onClick={() => loadFacultyPreferences(selectedFacultyId)}>
+                  Load Saved Preferences
+                </button>
+              </div>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              {facultySeniorityRows.length ? (
+                facultySeniorityRows.map((row) => (
+                  <span key={`${row.disciplineCode}-${row.rank}`} style={ui.chip}>
+                    {row.disciplineCode} • Rank {row.rank}
+                  </span>
+                ))
+              ) : (
+                <div style={{ color: "#475569" }}>No sample seniority rows are assigned to this faculty profile yet.</div>
+              )}
+            </div>
+          </div>
+        ) : null}
 
         <div style={ui.card}>
           <div style={ui.between}>
             <div>
               <h2 style={ui.cardTitle}>Available Sections</h2>
               <div style={ui.cardDesc}>
-                View PT-eligible open sections by discipline for the active term.
+                {role === "admin"
+                  ? "View PT-eligible open sections by discipline for the active term."
+                  : role === "chair"
+                  ? "View only the open sections assigned to the selected chair disciplines."
+                  : role === "dean"
+                  ? "View only the open sections that fall inside the selected dean divisions."
+                  : "View only the open sections available to the selected faculty member's seniority disciplines."}
               </div>
             </div>
             <div style={ui.row}>
@@ -803,7 +1196,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 }}
               >
                 <option value="ALL">All disciplines</option>
-                {availableDisciplineCodes.map((code) => (
+                {roleAvailableDisciplineCodes.map((code) => (
                   <option key={code} value={code}>
                     {code}
                   </option>
@@ -812,6 +1205,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
               <button style={ui.btnPrimary} onClick={() => loadAvailableSections(selectedDisciplineCode)}>
                 Refresh Sections
               </button>
+              {(role === "admin" || role === "chair" || role === "dean") ? (
+                <button style={ui.btn} onClick={exportPreferences}>
+                  Export Preferences
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -831,6 +1229,117 @@ OH,ORNAMENTAL_HORTICULTURE`}
             Showing {visibleSections.length} section(s)
             {selectedDisciplineCode !== "ALL" ? ` for ${selectedDisciplineCode}` : ""}.
           </div>
+          {role !== "admin" ? (
+            <div style={{ marginTop: 8, color: "#64748b", fontSize: 13 }}>
+              {role === "chair"
+                ? `Scoped to ${selectedChairName}`
+                : role === "dean"
+                ? `Scoped to ${selectedDeanName}`
+                : `Scoped to ${selectedFaculty ? facultyName(selectedFaculty) : "selected faculty"}`}
+            </div>
+          ) : null}
+
+          {role === "faculty" ? (
+            <div style={ui.panelGrid}>
+              <div>
+                <div style={{ marginTop: 12, color: "#475569" }}>
+                  Build your ranked section list. Use Add to Preferences, then drag or move items in My Preferences.
+                </div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 12, color: "#334155" }}>
+                  <input
+                    type="checkbox"
+                    checked={showOnlyConflictFree}
+                    onChange={(e) => setShowOnlyConflictFree(e.target.checked)}
+                  />
+                  Show only sections with no direct meeting-pattern conflict against my current preferences
+                </label>
+              </div>
+              <div style={{ ...ui.sectionCard, marginTop: 12 }}>
+                <div style={{ fontWeight: 700 }}>My Preferences</div>
+                <div style={{ marginTop: 8, color: "#475569" }}>
+                  {facultyPreferences.length} section(s) selected
+                  {conflictIds.size ? `, ${conflictIds.size} with direct pattern conflicts` : ", no direct pattern conflicts detected"}.
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  {facultyPreferences.length ? (
+                    facultyPreferences.map((item, index) => (
+                      <div
+                        key={item.assignment_group_id}
+                        draggable
+                        onDragStart={() => setDragIndex(index)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={() => {
+                          if (dragIndex === null || dragIndex === index) return;
+                          movePreference(dragIndex, index);
+                          setDragIndex(null);
+                        }}
+                        style={{
+                          border: "1px solid #e2e8f0",
+                          borderRadius: 12,
+                          padding: 10,
+                          marginBottom: 10,
+                          background: conflictIds.has(item.assignment_group_id) ? "#fff7ed" : "#fff",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                          <div style={{ fontWeight: 700 }}>
+                            #{index + 1} {item.primary_subject_course} • {item.primary_crn}
+                          </div>
+                          <button style={ui.btn} onClick={() => removePreference(item.assignment_group_id)}>Remove</button>
+                        </div>
+                        <div style={{ marginTop: 6 }}>{item.title || ""}</div>
+                        <div style={{ marginTop: 6, color: "#475569", fontSize: 13 }}>
+                          {formatMeetings(item.meetings)} • {item.campus || ""} • {item.modality || ""}
+                        </div>
+                        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                          <button disabled={index === 0} style={ui.btn} onClick={() => movePreference(index, index - 1)}>Move Up</button>
+                          <button disabled={index === facultyPreferences.length - 1} style={ui.btn} onClick={() => movePreference(index, index + 1)}>Move Down</button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{ color: "#64748b" }}>No selections yet.</div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                  <button style={ui.btnPrimary} onClick={savePreferences} disabled={savingPreferences}>
+                    {savingPreferences ? "Saving..." : "Save Preferences"}
+                  </button>
+                  <button style={ui.btn} onClick={() => {
+                    setFacultyPreferences([]);
+                    setPreferencesMessage("");
+                  }}>
+                    Clear List
+                  </button>
+                  <button
+                    style={ui.btn}
+                    onClick={() =>
+                      downloadCsvFromRows(
+                        facultyPreferences.map((item, index) => ({
+                          preference_rank: index + 1,
+                          discipline_code: item.discipline_code,
+                          course: item.primary_subject_course,
+                          crn: item.primary_crn,
+                          title: item.title,
+                          campus: item.campus,
+                          modality: item.modality,
+                        })),
+                        `${activeTerm.code.toLowerCase()}-${selectedFaculty?.employeeId || "faculty"}-preferences-preview.csv`,
+                        ["preference_rank", "discipline_code", "course", "crn", "title", "campus", "modality"]
+                      )
+                    }
+                  >
+                    Download My List
+                  </button>
+                </div>
+                {preferencesMessage ? (
+                  <div style={{ marginTop: 10, color: preferencesMessage.toLowerCase().includes("saved") ? "#166534" : "#b91c1c", fontWeight: 700 }}>
+                    {preferencesMessage}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           <div style={ui.tableWrap}>
             <table style={ui.table}>
@@ -844,6 +1353,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   <th style={ui.th}>Units</th>
                   <th style={ui.th}>Campus</th>
                   <th style={ui.th}>Modality</th>
+                  {role === "faculty" ? <th style={ui.th}>Action</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -858,11 +1368,23 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <td style={ui.td}>{formatUnits(section.units)}</td>
                       <td style={ui.td}>{section.campus || ""}</td>
                       <td style={ui.td}>{section.modality || ""}</td>
+                      {role === "faculty" ? (
+                        <td style={ui.td}>
+                          <button style={ui.btnPrimary} onClick={() => addPreference(section)}>
+                            Add to Preferences
+                          </button>
+                          {facultyPreferences.some((item) => hasMeetingConflict(section, item)) ? (
+                            <div style={{ marginTop: 6, color: "#b45309", fontSize: 12, fontWeight: 700 }}>
+                              Conflicts with a selected meeting pattern
+                            </div>
+                          ) : null}
+                        </td>
+                      ) : null}
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td style={ui.td} colSpan={8}>
+                    <td style={ui.td} colSpan={role === "faculty" ? 9 : 8}>
                       No PT-eligible open sections found yet. Upload a schedule, then click Refresh Sections.
                     </td>
                   </tr>
