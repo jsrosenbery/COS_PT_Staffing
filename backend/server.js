@@ -52,12 +52,72 @@ function inferDiscipline(subjectCourse, coverageRows) {
 
 async function getCoverage(termCode) {
   const result = await query(
-    `SELECT term_code, discipline_code, subject_code
-     FROM discipline_subject_coverage
-     WHERE term_code = $1`,
+    `WITH combined AS (
+       SELECT
+         2 AS priority,
+         term_code,
+         discipline_code,
+         subject_code
+       FROM discipline_subject_coverage
+       WHERE term_code = $1
+
+       UNION ALL
+
+       SELECT
+         1 AS priority,
+         term_code,
+         discipline_code,
+         subject_code
+       FROM subject_mappings
+       WHERE term_code IS NULL OR term_code = $1
+     )
+     SELECT DISTINCT ON (UPPER(subject_code))
+       term_code,
+       discipline_code,
+       subject_code
+     FROM combined
+     ORDER BY UPPER(subject_code), priority DESC, discipline_code`,
     [termCode]
   );
   return result.rows;
+}
+
+async function getSubjectMappingStatus(termCode) {
+  const [globalResult, termResult] = await Promise.all([
+    query(
+      `SELECT COUNT(*)::int AS count
+       FROM subject_mappings
+       WHERE term_code IS NULL`
+    ),
+    query(
+      `SELECT COUNT(*)::int AS count
+       FROM discipline_subject_coverage
+       WHERE term_code = $1`,
+      [termCode]
+    ),
+  ]);
+
+  return {
+    globalCount: globalResult.rows[0]?.count || 0,
+    termCount: termResult.rows[0]?.count || 0,
+  };
+}
+
+function normalizeHeader(value) {
+  return String(value ?? "")
+    .replace(/^\uFEFF/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function normalizeParsedRowKeys(row) {
+  const normalized = {};
+  Object.entries(row || {}).forEach(([key, value]) => {
+    normalized[normalizeHeader(key)] = value;
+  });
+  return normalized;
 }
 
 async function runSchema() {
@@ -514,6 +574,17 @@ app.post("/api/upload/seniority", async (req, res) => {
   }
 });
 
+
+app.get("/api/subject-mapping/:termCode/status", async (req, res) => {
+  try {
+    const { termCode } = req.params;
+    const status = await getSubjectMappingStatus(termCode);
+    res.json({ ok: true, ...status });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/api/upload/subject-mapping", upload.single("file"), async (req, res) => {
   try {
     const { termCode } = req.body;
@@ -522,24 +593,56 @@ app.post("/api/upload/subject-mapping", upload.single("file"), async (req, res) 
       return res.status(400).json({ error: "No file uploaded." });
     }
 
-    if (!termCode) {
-      return res.status(400).json({ error: "termCode is required." });
-    }
-
     const csvText = req.file.buffer.toString("utf-8");
     const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
 
-    const rows = parsed.data.map((row) => ({
-      subject_code: normalize(row.subject_code).toUpperCase(),
-      discipline_code: normalize(row.discipline_code),
-    }));
+    if (parsed.errors?.length) {
+      return res.status(400).json({
+        error: "CSV parse error.",
+        parseErrors: parsed.errors.map((err) => ({
+          row: err.row,
+          code: err.code,
+          message: err.message,
+        })),
+      });
+    }
+
+    const rows = parsed.data
+      .map((row, index) => {
+        const normalizedRow = normalizeParsedRowKeys(row);
+        const subjectCode = normalize(
+          normalizedRow.subject_code || normalizedRow.subject || normalizedRow.banner_subject
+        ).toUpperCase();
+        const disciplineCode = normalize(
+          normalizedRow.discipline_code || normalizedRow.discipline || normalizedRow.discipline_name
+        ).toUpperCase();
+
+        return {
+          rowNumber: index + 2,
+          subject_code: subjectCode,
+          discipline_code: disciplineCode,
+        };
+      })
+      .filter((row) => row.subject_code || row.discipline_code);
 
     const badRows = rows.filter((row) => !row.subject_code || !row.discipline_code);
     if (badRows.length) {
       return res.status(400).json({
         error: "Each row must contain subject_code and discipline_code.",
+        rejectedRows: badRows.map((row) => ({
+          rowNumber: row.rowNumber,
+          subject_code: row.subject_code,
+          discipline_code: row.discipline_code,
+        })),
       });
     }
+
+    const dedupedRows = Array.from(
+      rows.reduce((map, row) => {
+        map.set(row.subject_code, row);
+        return map;
+      }, new Map()).values()
+    );
 
     const client = await pool.connect();
 
@@ -547,16 +650,15 @@ app.post("/api/upload/subject-mapping", upload.single("file"), async (req, res) 
       await client.query("BEGIN");
 
       await client.query(
-        `DELETE FROM discipline_subject_coverage
-         WHERE term_code = $1`,
-        [termCode]
+        `DELETE FROM subject_mappings
+         WHERE term_code IS NULL`
       );
 
-      for (const row of rows) {
+      for (const row of dedupedRows) {
         await client.query(
-          `INSERT INTO discipline_subject_coverage (term_code, discipline_code, subject_code)
-           VALUES ($1,$2,$3)`,
-          [termCode, row.discipline_code, row.subject_code]
+          `INSERT INTO subject_mappings (term_code, discipline_code, subject_code)
+           VALUES (NULL, $1, $2)`,
+          [row.discipline_code, row.subject_code]
         );
       }
 
@@ -568,7 +670,16 @@ app.post("/api/upload/subject-mapping", upload.single("file"), async (req, res) 
       client.release();
     }
 
-    res.json({ ok: true, importedRows: rows.length });
+    const status = await getSubjectMappingStatus(termCode || "FA27");
+
+    res.json({
+      ok: true,
+      importedRows: dedupedRows.length,
+      globalCount: status.globalCount,
+      termCount: status.termCount,
+      scope: "global",
+      message: "Global subject mapping saved. Future schedule uploads will reuse it automatically.",
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

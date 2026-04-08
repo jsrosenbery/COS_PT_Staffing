@@ -120,3 +120,19 @@ CREATE TABLE IF NOT EXISTS decision_logs (
   detail TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT NOW()
 );
+
+
+CREATE TABLE IF NOT EXISTS subject_mappings (
+  id SERIAL PRIMARY KEY,
+  term_code TEXT,
+  subject_code TEXT NOT NULL,
+  discipline_code TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS subject_mappings_unique_global
+  ON subject_mappings (subject_code, COALESCE(term_code, ''));
+
+CREATE INDEX IF NOT EXISTS subject_mappings_term_subject_idx
+  ON subject_mappings (term_code, subject_code);
+

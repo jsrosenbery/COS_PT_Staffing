@@ -1,5 +1,5 @@
 const API_BASE = "https://cos-pt-staffing.onrender.com";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 
 const initialTerms = [{ id: "fa27", code: "FA27", name: "Fall 2027", active: true }];
@@ -144,12 +144,44 @@ export default function PTFacultyStaffingMVP() {
     error: "",
     importedRows: 0,
     fileName: "",
+    globalCount: 0,
+    termCount: 0,
+    scope: "",
+    message: "",
+    loadedFromBackend: false,
   });
   const [uploadingSchedule, setUploadingSchedule] = useState(false);
   const [uploadingMapping, setUploadingMapping] = useState(false);
   const [backendMessage, setBackendMessage] = useState("");
 
   const activeTerm = terms.find((t) => t.active);
+
+  useEffect(() => {
+    async function loadMappingStatus() {
+      try {
+        const response = await fetch(`${API_BASE}/api/subject-mapping/${activeTerm.code}/status`);
+        const data = await response.json();
+        if (!response.ok) return;
+
+        if ((data.globalCount || 0) > 0 || (data.termCount || 0) > 0) {
+          setMappingReport({
+            error: "",
+            importedRows: data.globalCount || 0,
+            fileName: "",
+            globalCount: data.globalCount || 0,
+            termCount: data.termCount || 0,
+            scope: "global",
+            message: "Saved subject mapping was loaded from the backend automatically.",
+            loadedFromBackend: true,
+          });
+        }
+      } catch (_error) {
+        // silent, page can still function without the status badge
+      }
+    }
+
+    loadMappingStatus();
+  }, [activeTerm.code]);
 
   async function handleSubjectMappingUpload(file) {
     if (!file) return;
@@ -174,6 +206,11 @@ export default function PTFacultyStaffingMVP() {
           error: data.error || "Mapping upload failed.",
           importedRows: 0,
           fileName: file.name,
+          globalCount: data.globalCount || 0,
+          termCount: data.termCount || 0,
+          scope: data.scope || "",
+          message: data.message || "",
+          loadedFromBackend: false,
         });
         return;
       }
@@ -182,12 +219,22 @@ export default function PTFacultyStaffingMVP() {
         error: "",
         importedRows: data.importedRows || 0,
         fileName: file.name,
+        globalCount: data.globalCount || data.importedRows || 0,
+        termCount: data.termCount || 0,
+        scope: data.scope || "global",
+        message: data.message || "",
+        loadedFromBackend: false,
       });
     } catch (error) {
       setMappingReport({
         error: error.message || "Unexpected mapping upload error.",
         importedRows: 0,
         fileName: file.name,
+        globalCount: 0,
+        termCount: 0,
+        scope: "",
+        message: "",
+        loadedFromBackend: false,
       });
     } finally {
       setUploadingMapping(false);
@@ -270,7 +317,7 @@ export default function PTFacultyStaffingMVP() {
           <div>
             <h1 style={{ fontSize: 32, margin: 0 }}>PT Faculty Staffing MVP</h1>
             <div style={ui.cardDesc}>
-              Upload subject mapping first, then upload the schedule.
+              Upload subject mapping once, then future schedule uploads can reuse it automatically.
             </div>
           </div>
           <div style={ui.row}>
@@ -295,7 +342,7 @@ export default function PTFacultyStaffingMVP() {
         <div style={ui.card}>
           <h2 style={ui.cardTitle}>Subject Mapping Upload</h2>
           <div style={ui.cardDesc}>
-            Upload a CSV with columns: <code>subject_code</code>, <code>discipline_code</code>
+            Upload a CSV with columns: <code>subject_code</code>, <code>discipline_code</code>. This saves a global mapping that later schedule uploads reuse automatically.
           </div>
           <div style={{ marginTop: 16 }}>
             <input
@@ -313,17 +360,32 @@ export default function PTFacultyStaffingMVP() {
             </div>
           ) : null}
 
-          {mappingReport.fileName ? (
+          {(mappingReport.fileName || mappingReport.loadedFromBackend) ? (
             <div style={{ ...ui.sectionCard, marginTop: 16 }}>
-              <div style={{ fontWeight: 700 }}>Latest mapping upload: {mappingReport.fileName}</div>
+              <div style={{ fontWeight: 700 }}>
+                {mappingReport.fileName
+                  ? `Latest mapping upload: ${mappingReport.fileName}`
+                  : "Saved subject mapping found in backend"}
+              </div>
               {mappingReport.error ? (
                 <div style={{ marginTop: 12, color: "#b91c1c", fontWeight: 700 }}>
                   {mappingReport.error}
                 </div>
               ) : (
-                <div style={{ marginTop: 12, color: "#166534", fontWeight: 700 }}>
-                  Mapping uploaded successfully. {mappingReport.importedRows} row(s) imported.
-                </div>
+                <>
+                  <div style={{ marginTop: 12, color: "#166534", fontWeight: 700 }}>
+                    {mappingReport.loadedFromBackend
+                      ? `Subject mapping is already saved. ${mappingReport.globalCount} global row(s) available.`
+                      : `Mapping uploaded successfully. ${mappingReport.importedRows} row(s) imported.`}
+                  </div>
+                  <div style={{ marginTop: 8, color: "#334155" }}>
+                    {mappingReport.message || "Future schedule uploads will reuse this mapping automatically."}
+                  </div>
+                  <div style={{ marginTop: 8, color: "#475569", fontSize: 13 }}>
+                    Global mappings: {mappingReport.globalCount || 0}
+                    {mappingReport.termCount ? `, term-specific overrides: ${mappingReport.termCount}` : ""}
+                  </div>
+                </>
               )}
             </div>
           ) : null}
