@@ -379,6 +379,85 @@ function parseScheduleRows(rows, coverageRows) {
   };
 }
 
+
+app.get("/api/available-sections", async (req, res) => {
+  try {
+    const { termCode, disciplineCode } = req.query;
+
+    if (!termCode) {
+      return res.status(400).json({ error: "termCode is required." });
+    }
+
+    const params = [termCode];
+    let whereClause = "WHERE ag.term_code = $1 AND COALESCE(ag.pt_eligible, true) = true";
+
+    if (disciplineCode) {
+      params.push(disciplineCode);
+      whereClause += ` AND ag.discipline_code = $${params.length}`;
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          ag.term_code,
+          ag.discipline_code,
+          ag.assignment_group_id,
+          ag.primary_subject_course,
+          ag.primary_crn,
+          ag.all_crns,
+          ag.title,
+          ag.division,
+          ag.modality,
+          ag.campus,
+          ag.units,
+          ag.pt_eligible,
+          ag.is_grouped,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'days', agm.days,
+                'start_time', agm.start_time,
+                'end_time', agm.end_time,
+                'building', agm.building,
+                'room', agm.room
+              )
+              ORDER BY agm.days NULLS LAST, agm.start_time NULLS LAST, agm.end_time NULLS LAST
+            ) FILTER (WHERE agm.id IS NOT NULL),
+            '[]'::json
+          ) AS meetings
+        FROM assignment_groups ag
+        LEFT JOIN assignment_group_meetings agm
+          ON ag.assignment_group_id = agm.assignment_group_id
+        ${whereClause}
+        GROUP BY
+          ag.term_code,
+          ag.discipline_code,
+          ag.assignment_group_id,
+          ag.primary_subject_course,
+          ag.primary_crn,
+          ag.all_crns,
+          ag.title,
+          ag.division,
+          ag.modality,
+          ag.campus,
+          ag.units,
+          ag.pt_eligible,
+          ag.is_grouped
+        ORDER BY ag.discipline_code, ag.primary_subject_course, ag.primary_crn
+      `,
+      params
+    );
+
+    res.json({
+      ok: true,
+      sections: result.rows,
+      count: result.rows.length,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get("/api/health", async (_req, res) => {
   try {
     await query("SELECT NOW()");

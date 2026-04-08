@@ -150,12 +150,35 @@ function downloadUnmappedSubjectsCsv(rows, fileName) {
   URL.revokeObjectURL(url);
 }
 
+function formatMeetings(meetings) {
+  const rows = (meetings || []).filter(Boolean);
+  if (!rows.length) return "No meeting details";
+  return rows
+    .map((meeting) => {
+      const dayPart = meeting.days || "TBA";
+      const timePart = [meeting.start_time, meeting.end_time].filter(Boolean).join(" - ") || "Time TBA";
+      const roomPart = [meeting.building, meeting.room].filter(Boolean).join(" ");
+      return [dayPart, timePart, roomPart].filter(Boolean).join(" • ");
+    })
+    .join("; ");
+}
+
+function formatUnits(units) {
+  if (!units) return "";
+  if (Array.isArray(units)) return units.join(", ");
+  return String(units);
+}
+
 const ui = {
   page: { minHeight: "100vh", background: "#f8fafc", padding: 24, fontFamily: "Arial, sans-serif", color: "#0f172a" },
   shell: { maxWidth: 1300, margin: "0 auto", display: "grid", gap: 24 },
   card: { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" },
   cardTitle: { fontSize: 20, fontWeight: 700, margin: 0 },
   cardDesc: { fontSize: 13, color: "#475569", marginTop: 6 },
+  tableWrap: { overflowX: "auto", marginTop: 16 },
+  table: { width: "100%", borderCollapse: "collapse", fontSize: 14 },
+  th: { textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #cbd5e1", background: "#f8fafc", whiteSpace: "nowrap" },
+  td: { padding: "10px 12px", borderBottom: "1px solid #e2e8f0", verticalAlign: "top" },
   row: { display: "flex", gap: 12, flexWrap: "wrap" },
   between: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
   btn: { padding: "10px 14px", borderRadius: 10, border: "1px solid #cbd5e1", background: "#ffffff", cursor: "pointer", fontWeight: 600 },
@@ -199,12 +222,62 @@ export default function PTFacultyStaffingMVP() {
   const [uploadingSchedule, setUploadingSchedule] = useState(false);
   const [uploadingMapping, setUploadingMapping] = useState(false);
   const [backendMessage, setBackendMessage] = useState("");
+  const [availableSections, setAvailableSections] = useState([]);
+  const [loadingSections, setLoadingSections] = useState(false);
+  const [sectionsError, setSectionsError] = useState("");
+  const [selectedDisciplineCode, setSelectedDisciplineCode] = useState("ALL");
   const [mappingList, setMappingList] = useState([]);
   const [loadingMappingList, setLoadingMappingList] = useState(false);
   const [mappingAdminError, setMappingAdminError] = useState("");
   const [showMappingList, setShowMappingList] = useState(false);
 
   const activeTerm = terms.find((t) => t.active);
+
+  const availableDisciplineCodes = useMemo(() => {
+    return Array.from(
+      new Set(
+        availableSections
+          .map((section) => section.discipline_code)
+          .filter(Boolean)
+      )
+    ).sort();
+  }, [availableSections]);
+
+  const visibleSections = useMemo(() => {
+    return availableSections.filter((section) => {
+      if (selectedDisciplineCode === "ALL") return true;
+      return section.discipline_code === selectedDisciplineCode;
+    });
+  }, [availableSections, selectedDisciplineCode]);
+
+  async function loadAvailableSections(disciplineCode = selectedDisciplineCode) {
+    setLoadingSections(true);
+    setSectionsError("");
+
+    try {
+      const params = new URLSearchParams({ termCode: activeTerm.code });
+      if (disciplineCode && disciplineCode !== "ALL") {
+        params.set("disciplineCode", disciplineCode);
+      }
+
+      const response = await fetch(`${API_BASE}/api/available-sections?${params.toString()}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        setSectionsError(data.error || "Could not load available sections.");
+        setAvailableSections([]);
+        return;
+      }
+
+      setAvailableSections(data.sections || []);
+    } catch (error) {
+      setSectionsError(error.message || "Could not load available sections.");
+      setAvailableSections([]);
+    } finally {
+      setLoadingSections(false);
+    }
+  }
+
 
   useEffect(() => {
     async function loadMappingStatus() {
@@ -340,6 +413,7 @@ export default function PTFacultyStaffingMVP() {
         summary: data.summary || null,
       });
       setBackendMessage("Schedule uploaded to backend successfully.");
+      loadAvailableSections(selectedDisciplineCode);
     } catch (error) {
       setUploadReport({
         errors: [error.message || "Unexpected upload error."],
@@ -702,6 +776,95 @@ VT,VETERINARIAN_ASSISTING
 OH,ORNAMENTAL_HORTICULTURE`}
           </pre>
         </div>
+
+        <div style={ui.card}>
+          <div style={ui.between}>
+            <div>
+              <h2 style={ui.cardTitle}>Available Sections</h2>
+              <div style={ui.cardDesc}>
+                View PT-eligible open sections by discipline for the active term.
+              </div>
+            </div>
+            <div style={ui.row}>
+              <select
+                style={ui.select}
+                value={selectedDisciplineCode}
+                onChange={(e) => {
+                  const nextCode = e.target.value;
+                  setSelectedDisciplineCode(nextCode);
+                  loadAvailableSections(nextCode);
+                }}
+              >
+                <option value="ALL">All disciplines</option>
+                {availableDisciplineCodes.map((code) => (
+                  <option key={code} value={code}>
+                    {code}
+                  </option>
+                ))}
+              </select>
+              <button style={ui.btnPrimary} onClick={() => loadAvailableSections(selectedDisciplineCode)}>
+                Refresh Sections
+              </button>
+            </div>
+          </div>
+
+          {loadingSections ? (
+            <div style={{ marginTop: 12, color: "#475569", fontWeight: 700 }}>
+              Loading available sections...
+            </div>
+          ) : null}
+
+          {sectionsError ? (
+            <div style={{ marginTop: 12, color: "#b91c1c", fontWeight: 700 }}>
+              {sectionsError}
+            </div>
+          ) : null}
+
+          <div style={{ marginTop: 12, color: "#475569" }}>
+            Showing {visibleSections.length} section(s)
+            {selectedDisciplineCode !== "ALL" ? ` for ${selectedDisciplineCode}` : ""}.
+          </div>
+
+          <div style={ui.tableWrap}>
+            <table style={ui.table}>
+              <thead>
+                <tr>
+                  <th style={ui.th}>Discipline</th>
+                  <th style={ui.th}>Course</th>
+                  <th style={ui.th}>CRN</th>
+                  <th style={ui.th}>Title</th>
+                  <th style={ui.th}>Meetings</th>
+                  <th style={ui.th}>Units</th>
+                  <th style={ui.th}>Campus</th>
+                  <th style={ui.th}>Modality</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleSections.length ? (
+                  visibleSections.map((section) => (
+                    <tr key={section.assignment_group_id}>
+                      <td style={ui.td}>{section.discipline_code || ""}</td>
+                      <td style={ui.td}>{section.primary_subject_course || ""}</td>
+                      <td style={ui.td}>{section.primary_crn || ""}</td>
+                      <td style={ui.td}>{section.title || ""}</td>
+                      <td style={ui.td}>{formatMeetings(section.meetings)}</td>
+                      <td style={ui.td}>{formatUnits(section.units)}</td>
+                      <td style={ui.td}>{section.campus || ""}</td>
+                      <td style={ui.td}>{section.modality || ""}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td style={ui.td} colSpan={8}>
+                      No PT-eligible open sections found yet. Upload a schedule, then click Refresh Sections.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
       </div>
     </div>
   );
