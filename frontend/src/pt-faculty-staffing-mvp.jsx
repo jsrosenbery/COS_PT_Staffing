@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 import cosLogo from "./assets/cos-logo.jpg";
 
-const initialTerms = [{ id: "fa27", code: "FA27", name: "Fall 2027", active: true }];
+const initialTerms = [];
 
 const initialDisciplines = [
   {
@@ -361,11 +361,14 @@ const ui = {
 
 export default function PTFacultyStaffingMVP() {
   const [role, setRole] = useState("admin");
+  const [terms, setTerms] = useState(initialTerms);
+  const [newTermCode, setNewTermCode] = useState("");
+  const [newTermName, setNewTermName] = useState("");
+  const [termMessage, setTermMessage] = useState("");
   const [darkMode, setDarkMode] = useState(false);
   const [selectedChairName, setSelectedChairName] = useState(initialChairAssignments[0]?.chairName || "");
   const [selectedDeanName, setSelectedDeanName] = useState(initialDeanAssignments[0]?.deanName || "");
   const [selectedFacultyId, setSelectedFacultyId] = useState(initialFaculty[0]?.id || "");
-  const [terms] = useState(initialTerms);
   const [disciplines] = useState(initialDisciplines);
   const [faculty] = useState(initialFaculty);
   const [seniority] = useState(initialSeniority);
@@ -564,6 +567,7 @@ export default function PTFacultyStaffingMVP() {
   }, [visibleSections, facultyPreferences, showOnlyConflictFree]);
 
   async function loadAvailableSections(disciplineCode = selectedDisciplineCode) {
+    if (!activeTerm?.code) return;
     setLoadingSections(true);
     setSectionsError("");
     setAvailableSections([]);
@@ -600,7 +604,7 @@ export default function PTFacultyStaffingMVP() {
 
 
   async function loadFacultyPreferences(facultyId = selectedFacultyId) {
-    if (role !== "faculty") return;
+    if (role !== "faculty" || !activeTerm?.code) return;
     try {
       const params = new URLSearchParams({ termCode: activeTerm.code, facultyId });
       const response = await fetch(`${API_BASE}/api/preferences?${params.toString()}`);
@@ -973,6 +977,79 @@ export default function PTFacultyStaffingMVP() {
           <SummaryCard title="Submitted" value={summary.submitted} />
           <SummaryCard title="No Activity" value={summary.noActivity} />
         </div>
+
+        {role === "admin" ? (
+        <div className="cos-summary-card" style={ui.card}>
+          <div style={ui.between}>
+            <div>
+              <h2 style={ui.cardTitle}>Manage Terms</h2>
+              <div style={ui.cardDesc}>
+                Add future semesters here, then switch the active staffing cycle from the header dropdown.
+              </div>
+            </div>
+            <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+              Active: {activeTerm.name}
+            </div>
+          </div>
+
+          <div style={{ ...ui.row, marginTop: 16 }}>
+            <input
+              style={{ ...ui.input, maxWidth: 180 }}
+              value={newTermCode}
+              onChange={(e) => setNewTermCode(e.target.value.toUpperCase())}
+              placeholder="SP28"
+            />
+            <input
+              style={{ ...ui.input, maxWidth: 280 }}
+              value={newTermName}
+              onChange={(e) => setNewTermName(e.target.value)}
+              placeholder="Spring 2028"
+            />
+            <button style={ui.btnPrimary} onClick={createOrUpdateTerm}>
+              Save Term
+            </button>
+          </div>
+
+          <div style={ui.tableWrap}>
+            <table className="cos-table" style={ui.table}>
+              <thead>
+                <tr>
+                  <th style={ui.th}>Term Code</th>
+                  <th style={ui.th}>Term Name</th>
+                  <th style={ui.th}>Status</th>
+                  <th style={ui.th}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {terms.length ? (
+                  terms.map((term) => (
+                    <tr key={term.code}>
+                      <td style={ui.td}>{term.code}</td>
+                      <td style={ui.td}>{term.name}</td>
+                      <td style={ui.td}>{term.active ? "Active" : "Available"}</td>
+                      <td style={ui.td}>
+                        <button style={ui.btn} disabled={term.active} onClick={() => activateTerm(term.code)}>
+                          {term.active ? "Current Term" : "Make Active"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td style={ui.td} colSpan={4}>No terms loaded yet.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {termMessage ? (
+            <div style={{ marginTop: 12, color: termMessage.toLowerCase().includes("could not") ? "#b91c1c" : "#166534", fontWeight: 700 }}>
+              {termMessage}
+            </div>
+          ) : null}
+        </div>
+        ) : null}
 
         {role === "admin" ? (
         <div className="cos-summary-card" style={ui.card}>

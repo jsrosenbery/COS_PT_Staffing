@@ -20,6 +20,21 @@ app.use(
 
 app.use(express.json());
 
+async function ensureDefaultTerms() {
+  const existing = await pool.query("SELECT COUNT(*)::int AS count FROM terms");
+  if ((existing.rows?.[0]?.count || 0) > 0) return;
+
+  await pool.query(
+    `INSERT INTO terms (term_code, term_name, is_active)
+     VALUES
+       ('SP27', 'Spring 2027', true),
+       ('FA27', 'Fall 2027', false),
+       ('SP28', 'Spring 2028', false)
+     ON CONFLICT (term_code) DO NOTHING`
+  );
+}
+
+
 const hiddenColumns = new Set([
   "SCHEDULE_TYPE",
   "ACCOUNTING_METHOD",
@@ -723,6 +738,89 @@ app.get("/api/available-sections", async (req, res) => {
       sections: result.rows,
       count: result.rows.length,
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/terms", async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, term_code, term_name, is_active
+       FROM terms
+       ORDER BY is_active DESC, created_at DESC, term_name`
+    );
+    res.json({ ok: true, terms: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/terms", async (req, res) => {
+  try {
+    const { termCode, termName, isActive } = req.body || {};
+    if (!termCode || !termName) {
+      return res.status(400).json({ error: "termCode and termName are required." });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      if (isActive) {
+        await client.query(`UPDATE terms SET is_active = false WHERE is_active = true`);
+      }
+      const result = await client.query(
+        `INSERT INTO terms (term_code, term_name, is_active)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (term_code)
+         DO UPDATE SET term_name = EXCLUDED.term_name, is_active = EXCLUDED.is_active
+         RETURNING id, term_code, term_name, is_active`,
+        [String(termCode).trim().toUpperCase(), String(termName).trim(), Boolean(isActive)]
+      );
+      await client.query("COMMIT");
+      res.json({ ok: true, term: result.rows[0] });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post("/api/terms/activate", async (req, res) => {
+  try {
+    const { termCode } = req.body || {};
+    if (!termCode) {
+      return res.status(400).json({ error: "termCode is required." });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`UPDATE terms SET is_active = false WHERE is_active = true`);
+      const result = await client.query(
+        `UPDATE terms
+         SET is_active = true
+         WHERE term_code = $1
+         RETURNING id, term_code, term_name, is_active`,
+        [String(termCode).trim().toUpperCase()]
+      );
+      await client.query("COMMIT");
+
+      if (!result.rows.length) {
+        return res.status(404).json({ error: "Term not found." });
+      }
+
+      res.json({ ok: true, term: result.rows[0] });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
