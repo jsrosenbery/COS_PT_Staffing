@@ -355,9 +355,29 @@ export default function PTFacultyStaffingMVP() {
       .filter((row) => row.facultyId === selectedFaculty.id)
       .map((row) => {
         const discipline = disciplines.find((d) => d.id === row.disciplineId);
+        const fallbackMap = {
+          hist: "HIST",
+          math: "MATH",
+          pols: "POLS",
+          aj: "ADMINISTRATION_OF_JUSTICE",
+          anth: "ANTHROPOLOGY",
+          astr: "ASTRONOMY",
+          art: "ART",
+          asl: "AMERICAN_SIGN_LANGUAGE",
+          cina: "CINEMA",
+          music: "MUSIC",
+          bus: "BUSINESS",
+          biol: "BIOLOGICAL_SCIENCES",
+          chem: "CHEMISTRY",
+          chld: "CHILD_DEVELOPMENT",
+        };
         return {
           ...row,
-          disciplineCode: discipline?.code || row.disciplineId?.toUpperCase?.() || row.disciplineId,
+          disciplineCode:
+            discipline?.code ||
+            fallbackMap[row.disciplineId] ||
+            row.disciplineId?.toUpperCase?.() ||
+            row.disciplineId,
           disciplineName: discipline?.name || row.disciplineId,
         };
       });
@@ -371,8 +391,12 @@ export default function PTFacultyStaffingMVP() {
       return availableSections.filter((section) => deanDivisions.includes(section.division));
     }
     if (role === "faculty") {
-      const facultyCodes = facultySeniorityRows.map((row) => row.disciplineCode);
-      return availableSections.filter((section) => facultyCodes.includes(section.discipline_code));
+      const facultyCodes = facultySeniorityRows.map((row) => row.disciplineCode).filter(Boolean);
+      if (!facultyCodes.length) {
+        return availableSections;
+      }
+      const scoped = availableSections.filter((section) => facultyCodes.includes(section.discipline_code));
+      return scoped.length ? scoped : availableSections;
     }
     return availableSections;
   }, [role, availableSections, chairDivisions, deanDivisions, facultySeniorityRows]);
@@ -1132,7 +1156,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
               <div>
                 <h2 style={ui.cardTitle}>Part-Time Faculty View</h2>
                 <div style={ui.cardDesc}>
-                  This view is scoped to a sample faculty member's seniority disciplines for preview purposes.
+                  This view is scoped to a sample faculty member's seniority disciplines for preview purposes. If no sample mapping matches the loaded schedule yet, the view will temporarily fall back to all available sections so you can keep testing.
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -1357,8 +1381,8 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </tr>
               </thead>
               <tbody>
-                {visibleSections.length ? (
-                  visibleSections.map((section) => (
+                {(role === "faculty" ? selectableSections : visibleSections).length ? (
+                  (role === "faculty" ? selectableSections : visibleSections).map((section) => (
                     <tr key={section.assignment_group_id}>
                       <td style={ui.td}>{section.discipline_code || ""}</td>
                       <td style={ui.td}>{section.primary_subject_course || ""}</td>
