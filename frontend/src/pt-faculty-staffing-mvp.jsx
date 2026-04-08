@@ -928,7 +928,7 @@ export default function PTFacultyStaffingMVP() {
             <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
               <img
                 src={cosLogo}
-                alt="College of the Sequoias logo"
+                alt="Staffing Coordination & Preference Engine logo"
                 style={{ width: 120, height: 120, objectFit: "contain", borderRadius: 22, background: "rgba(255,255,255,0.1)", padding: 8, boxShadow: "0 16px 34px rgba(15,23,42,0.22)" }}
               />
               <div>
@@ -936,15 +936,10 @@ export default function PTFacultyStaffingMVP() {
                   College of the Sequoias
                 </div>
                 <h1 style={{ fontSize: 36, margin: "4px 0 0 0", fontWeight: 900, letterSpacing: "-0.04em" }}>
-                  PT Faculty Staffing
+                  SCOPE
                 </h1>
                 <div style={{ marginTop: 10, fontSize: 14, maxWidth: 720, lineHeight: 1.5, opacity: 0.96 }}>
-                  A cleaner staffing cockpit for COS, with clearer visibility, ranked faculty preferences, and less spreadsheet fog.
-                </div>
-                <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ padding: "6px 10px", borderRadius: 999, background: "rgba(255,255,255,0.16)", fontSize: 12, fontWeight: 800 }}>COS Blue</span>
-                  <span style={{ padding: "6px 10px", borderRadius: 999, background: "rgba(255,255,255,0.16)", fontSize: 12, fontWeight: 800 }}>COS Orange</span>
-                  <span style={{ padding: "6px 10px", borderRadius: 999, background: "rgba(255,255,255,0.16)", fontSize: 12, fontWeight: 800 }}>COS Green</span>
+                  Smarter faculty staffing starts here.
                 </div>
               </div>
             </div>
