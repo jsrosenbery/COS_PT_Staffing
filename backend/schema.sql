@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS assignment_groups (
   title TEXT,
   division TEXT,
   modality TEXT,
+  instructional_method TEXT,
+  display_modality TEXT,
   campus TEXT,
   units TEXT,
   pt_eligible BOOLEAN DEFAULT TRUE,

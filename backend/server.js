@@ -35,6 +35,19 @@ function normalize(value) {
   return String(value ?? "").trim();
 }
 
+
+function mapInstructionalMethodToDisplayModality(rawInstructionalMethod) {
+  const value = normalize(rawInstructionalMethod).toUpperCase();
+
+  if (value === "IP") return "In Person";
+  if (value === "HYB") return "Hybrid";
+  if (value === "FLX") return "Hybrid Flex";
+  if (value === "ONL") return "Online";
+  if (value === "DE") return "Dual Enrollment";
+
+  return "";
+}
+
 function normalizeInstructor(value) {
   return normalize(value)
     .replace(/\s+/g, " ")
@@ -780,11 +793,13 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
             title,
             division,
             modality,
+            instructional_method,
+            display_modality,
             campus,
             units,
             pt_eligible,
             is_grouped
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
           [
             termCode,
             section.discipline_code,
@@ -795,6 +810,8 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
             section.title,
             section.division,
             section.modality,
+            section.instructional_method,
+            section.display_modality,
             section.campus,
             JSON.stringify(section.units),
             section.pt_eligible,

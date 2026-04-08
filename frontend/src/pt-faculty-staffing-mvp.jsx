@@ -253,11 +253,11 @@ function downloadCsvFromRows(rows, fileName, headers) {
 }
 
 const ui = {
-  page: { minHeight: "100vh", background: "#f8fafc", padding: 24, fontFamily: "Arial, sans-serif", color: "#0f172a" },
+  page: { minHeight: "100vh", background: "#f8fafc", padding: 24, fontFamily: "Arial, sans-serif", color: "var(--brand-blue)" },
   shell: { maxWidth: 1300, margin: "0 auto", display: "grid", gap: 24 },
   card: { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" },
   cardTitle: { fontSize: 20, fontWeight: 700, margin: 0 },
-  cardDesc: { fontSize: 13, color: "#475569", marginTop: 6 },
+  cardDesc: { fontSize: 13, color: "var(--text-muted)", marginTop: 6 },
   tableWrap: { overflowX: "auto", marginTop: 16 },
   table: { width: "100%", borderCollapse: "collapse", fontSize: 14 },
   th: { textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #cbd5e1", background: "#f8fafc", whiteSpace: "nowrap" },
@@ -265,22 +265,23 @@ const ui = {
   row: { display: "flex", gap: 12, flexWrap: "wrap" },
   between: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
   btn: { padding: "10px 14px", borderRadius: 10, border: "1px solid #cbd5e1", background: "#ffffff", cursor: "pointer", fontWeight: 600 },
-  btnPrimary: { padding: "10px 14px", borderRadius: 10, border: "1px solid #0f172a", background: "#0f172a", color: "#ffffff", cursor: "pointer", fontWeight: 600 },
+  btnPrimary: { padding: "10px 14px", borderRadius: 10, border: "1px solid var(--brand-blue)", background: "var(--brand-blue)", color: "#ffffff", cursor: "pointer", fontWeight: 600 },
   input: { padding: "10px 12px", borderRadius: 10, border: "1px solid #cbd5e1", width: "100%" },
-  select: { padding: "10px 12px", borderRadius: 10, border: "1px solid #cbd5e1", background: "#fff" },
+  select: { padding: "10px 12px", borderRadius: 10, border: "1px solid #cbd5e1", background: "var(--bg-card)" },
   badge: (status) => ({ display: "inline-block", padding: "4px 10px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: statusColors[status] || "#e2e8f0" }),
   gridSummary: { display: "grid", gap: 16, gridTemplateColumns: "repeat(6, minmax(0, 1fr))" },
-  sectionCard: { border: "1px solid #e2e8f0", borderRadius: 14, padding: 12, background: "#fff" },
-  small: { fontSize: 12, color: "#64748b" },
+  sectionCard: { border: "1px solid #e2e8f0", borderRadius: 14, padding: 12, background: "var(--bg-card)" },
+  small: { fontSize: 12, color: "var(--text-subtle)" },
   chip: { display: "inline-block", padding: "6px 10px", borderRadius: 999, background: "#eef2ff", color: "#3730a3", fontSize: 12, fontWeight: 700, marginRight: 8, marginBottom: 8 },
   panelGrid: { display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 2fr) minmax(320px, 1fr)" },
   table: { width: "100%", borderCollapse: "collapse", marginTop: 12 },
-  th: { textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e2e8f0", fontSize: 12, color: "#475569" },
+  th: { textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e2e8f0", fontSize: 12, color: "var(--text-muted)" },
   td: { padding: "10px 12px", borderBottom: "1px solid #e2e8f0", fontSize: 14 },
 };
 
 export default function PTFacultyStaffingMVP() {
   const [role, setRole] = useState("admin");
+  const [darkMode, setDarkMode] = useState(false);
   const [selectedChairName, setSelectedChairName] = useState(initialChairAssignments[0]?.chairName || "");
   const [selectedDeanName, setSelectedDeanName] = useState(initialDeanAssignments[0]?.deanName || "");
   const [selectedFacultyId, setSelectedFacultyId] = useState(initialFaculty[0]?.id || "");
@@ -325,6 +326,62 @@ export default function PTFacultyStaffingMVP() {
   const [showMappingList, setShowMappingList] = useState(false);
 
   const activeTerm = terms.find((t) => t.active);
+
+  const themeVars = darkMode
+    ? {
+        "--bg-page": "linear-gradient(180deg, #0b1020 0%, #10182b 100%)",
+        "--bg-card": "rgba(17, 24, 39, 0.92)",
+        "--bg-soft": "rgba(31, 41, 55, 0.92)",
+        "--border-color": "rgba(148, 163, 184, 0.18)",
+        "--border-soft": "rgba(148, 163, 184, 0.12)",
+        "--text-main": "#f8fafc",
+        "--text-muted": "#cbd5e1",
+        "--text-subtle": "#94a3b8",
+        "--chip-bg": "rgba(36, 51, 122, 0.35)",
+        "--chip-text": "#dbeafe",
+        "--shadow-soft": "0 18px 50px rgba(2, 6, 23, 0.45)",
+        "--brand-blue": "#24337a",
+        "--brand-orange": "#f05423",
+        "--brand-green": "#7fbe41",
+      }
+    : {
+        "--bg-page": "linear-gradient(180deg, #f7fafc 0%, #edf5f2 100%)",
+        "--bg-card": "rgba(255,255,255,0.88)",
+        "--bg-soft": "rgba(248, 250, 252, 0.95)",
+        "--border-color": "rgba(36, 51, 122, 0.12)",
+        "--border-soft": "rgba(36, 51, 122, 0.08)",
+        "--text-main": "var(--brand-blue)",
+        "--text-muted": "var(--text-muted)",
+        "--text-subtle": "var(--text-subtle)",
+        "--chip-bg": "rgba(127, 190, 65, 0.14)",
+        "--chip-text": "#24337a",
+        "--shadow-soft": "0 18px 50px rgba(15, 23, 42, 0.08)",
+        "--brand-blue": "#24337a",
+        "--brand-orange": "#f05423",
+        "--brand-green": "#7fbe41",
+      };
+
+  const heroCardStyle = {
+    ...ui.card,
+    background: "linear-gradient(135deg, rgba(36,51,122,0.97), rgba(127,190,65,0.92))",
+    color: "var(--bg-card)",
+    padding: 24,
+    overflow: "hidden",
+    position: "relative",
+  };
+
+  const logoMarkStyle = {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    background: "linear-gradient(135deg, #24337a, #f05423 58%, #7fbe41)",
+    display: "grid",
+    placeItems: "center",
+    color: "var(--bg-card)",
+    fontWeight: 900,
+    fontSize: 20,
+    boxShadow: "0 12px 30px rgba(15,23,42,0.18)",
+  };
 
   const availableDisciplineCodes = useMemo(() => {
     return Array.from(
@@ -787,7 +844,7 @@ export default function PTFacultyStaffingMVP() {
   };
 
   return (
-    <div style={ui.page}>
+    <div style={{ ...ui.page, ...themeVars }}>
       <div style={ui.shell}>
         <div style={ui.between}>
           <div>
@@ -803,7 +860,7 @@ export default function PTFacultyStaffingMVP() {
               <option value="dean">Dean</option>
               <option value="faculty">Part-Time Faculty</option>
             </select>
-            <span style={{ ...ui.badge("open"), background: "#0f172a", color: "white" }}>
+            <span style={{ ...ui.badge("open"), background: "var(--brand-blue)", color: "white" }}>
               {activeTerm.name}
             </span>
           </div>
@@ -849,7 +906,7 @@ export default function PTFacultyStaffingMVP() {
           </div>
 
           {uploadingMapping ? (
-            <div style={{ marginTop: 12, color: "#475569", fontWeight: 700 }}>
+            <div style={{ marginTop: 12, color: "var(--text-muted)", fontWeight: 700 }}>
               Uploading subject mapping...
             </div>
           ) : null}
@@ -875,7 +932,7 @@ export default function PTFacultyStaffingMVP() {
                   <div style={{ marginTop: 8, color: "#334155" }}>
                     {mappingReport.message || "Future schedule uploads will reuse this mapping automatically."}
                   </div>
-                  <div style={{ marginTop: 8, color: "#475569", fontSize: 13 }}>
+                  <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 13 }}>
                     Global mappings: {mappingReport.globalCount || 0}
                     {mappingReport.termCount ? `, term-specific overrides: ${mappingReport.termCount}` : ""}
                   </div>
@@ -901,7 +958,7 @@ export default function PTFacultyStaffingMVP() {
                   Global mappings currently saved in the backend and reused for future schedule uploads.
                 </div>
               </div>
-              <div style={{ color: "#475569", fontSize: 13 }}>
+              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
                 {mappingList.length} mapping row(s)
               </div>
             </div>
@@ -926,7 +983,7 @@ export default function PTFacultyStaffingMVP() {
                 </table>
               </div>
             ) : (
-              <div style={{ marginTop: 12, color: "#475569" }}>
+              <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
                 No mappings are currently saved.
               </div>
             )}
@@ -950,7 +1007,7 @@ export default function PTFacultyStaffingMVP() {
           </div>
 
           {uploadingSchedule ? (
-            <div style={{ marginTop: 12, color: "#475569", fontWeight: 700 }}>
+            <div style={{ marginTop: 12, color: "var(--text-muted)", fontWeight: 700 }}>
               Uploading schedule to backend...
             </div>
           ) : null}
@@ -972,7 +1029,7 @@ export default function PTFacultyStaffingMVP() {
               <div style={{ fontWeight: 700 }}>
                 Unmapped subjects found: {Array.from(new Set(uploadReport.unmappedSubjects.map((row) => row.subject_code))).length}
               </div>
-              <div style={{ marginTop: 8, color: "#475569" }}>
+              <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
                 Download a ready-to-fill CSV, add discipline codes, then upload it as your next subject mapping file.
               </div>
               <div style={{ marginTop: 12 }}>
@@ -1189,7 +1246,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </span>
                 ))
               ) : (
-                <div style={{ color: "#475569" }}>No sample seniority rows are assigned to this faculty profile yet.</div>
+                <div style={{ color: "var(--text-muted)" }}>No sample seniority rows are assigned to this faculty profile yet.</div>
               )}
             </div>
           </div>
@@ -1238,7 +1295,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           </div>
 
           {loadingSections ? (
-            <div style={{ marginTop: 12, color: "#475569", fontWeight: 700 }}>
+            <div style={{ marginTop: 12, color: "var(--text-muted)", fontWeight: 700 }}>
               Loading available sections...
             </div>
           ) : null}
@@ -1249,12 +1306,12 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           ) : null}
 
-          <div style={{ marginTop: 12, color: "#475569" }}>
+          <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
             Showing {visibleSections.length} section(s)
             {selectedDisciplineCode !== "ALL" ? ` for ${selectedDisciplineCode}` : ""}.
           </div>
           {role !== "admin" ? (
-            <div style={{ marginTop: 8, color: "#64748b", fontSize: 13 }}>
+            <div style={{ marginTop: 8, color: "var(--text-subtle)", fontSize: 13 }}>
               {role === "chair"
                 ? `Scoped to ${selectedChairName}`
                 : role === "dean"
@@ -1266,7 +1323,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           {role === "faculty" ? (
             <div style={ui.panelGrid}>
               <div>
-                <div style={{ marginTop: 12, color: "#475569" }}>
+                <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
                   Build your ranked section list. Use Add to Preferences, then drag or move items in My Preferences.
                 </div>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 12, color: "#334155" }}>
@@ -1280,7 +1337,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
               </div>
               <div style={{ ...ui.sectionCard, marginTop: 12 }}>
                 <div style={{ fontWeight: 700 }}>My Preferences</div>
-                <div style={{ marginTop: 8, color: "#475569" }}>
+                <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
                   {facultyPreferences.length} section(s) selected
                   {conflictIds.size ? `, ${conflictIds.size} with direct pattern conflicts` : ", no direct pattern conflicts detected"}.
                 </div>
@@ -1302,7 +1359,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           borderRadius: 12,
                           padding: 10,
                           marginBottom: 10,
-                          background: conflictIds.has(item.assignment_group_id) ? "#fff7ed" : "#fff",
+                          background: conflictIds.has(item.assignment_group_id) ? "#fff7ed" : "var(--bg-card)",
                         }}
                       >
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
@@ -1312,8 +1369,8 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           <button style={ui.btn} onClick={() => removePreference(item.assignment_group_id)}>Remove</button>
                         </div>
                         <div style={{ marginTop: 6 }}>{item.title || ""}</div>
-                        <div style={{ marginTop: 6, color: "#475569", fontSize: 13 }}>
-                          {formatMeetings(item.meetings)} • {item.campus || ""} • {item.modality || ""}
+                        <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                          {formatMeetings(item.meetings)} • {item.campus || ""} • {item.display_modality || item.modality || ""}
                         </div>
                         <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
                           <button disabled={index === 0} style={ui.btn} onClick={() => movePreference(index, index - 1)}>Move Up</button>
@@ -1322,7 +1379,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </div>
                     ))
                   ) : (
-                    <div style={{ color: "#64748b" }}>No selections yet.</div>
+                    <div style={{ color: "var(--text-subtle)" }}>No selections yet.</div>
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
@@ -1376,6 +1433,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   <th style={ui.th}>Meetings</th>
                   <th style={ui.th}>Units</th>
                   <th style={ui.th}>Campus</th>
+                  <th style={ui.th}>Method</th>
                   <th style={ui.th}>Modality</th>
                   {role === "faculty" ? <th style={ui.th}>Action</th> : null}
                 </tr>
@@ -1391,7 +1449,8 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <td style={ui.td}>{formatMeetings(section.meetings)}</td>
                       <td style={ui.td}>{formatUnits(section.units)}</td>
                       <td style={ui.td}>{section.campus || ""}</td>
-                      <td style={ui.td}>{section.modality || ""}</td>
+                      <td style={ui.td}>{section.instructional_method || ""}</td>
+                      <td style={ui.td}>{section.display_modality || section.modality || ""}</td>
                       {role === "faculty" ? (
                         <td style={ui.td}>
                           <button style={ui.btnPrimary} onClick={() => addPreference(section)}>
@@ -1408,7 +1467,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   ))
                 ) : (
                   <tr>
-                    <td style={ui.td} colSpan={role === "faculty" ? 9 : 8}>
+                    <td style={ui.td} colSpan={role === "faculty" ? 10 : 9}>
                       No PT-eligible open sections found yet. Upload a schedule, then click Refresh Sections.
                     </td>
                   </tr>
