@@ -1,6 +1,7 @@
 const API_BASE = "https://cos-pt-staffing.onrender.com";
 import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
+import cosLogo from "./assets/cos-logo.jpg";
 
 const initialTerms = [{ id: "fa27", code: "FA27", name: "Fall 2027", active: true }];
 
@@ -253,30 +254,109 @@ function downloadCsvFromRows(rows, fileName, headers) {
 }
 
 const ui = {
-  page: { minHeight: "100vh", background: "#f8fafc", padding: 24, fontFamily: "Arial, sans-serif", color: "var(--brand-blue)" },
-  shell: { maxWidth: 1300, margin: "0 auto", display: "grid", gap: 24 },
-  card: { background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16, boxShadow: "0 1px 2px rgba(0,0,0,0.04)" },
-  cardTitle: { fontSize: 20, fontWeight: 700, margin: 0 },
-  cardDesc: { fontSize: 13, color: "var(--text-muted)", marginTop: 6 },
-  tableWrap: { overflowX: "auto", marginTop: 16 },
-  table: { width: "100%", borderCollapse: "collapse", fontSize: 14 },
-  th: { textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #cbd5e1", background: "#f8fafc", whiteSpace: "nowrap" },
-  td: { padding: "10px 12px", borderBottom: "1px solid #e2e8f0", verticalAlign: "top" },
+  page: {
+    minHeight: "100vh",
+    background: "var(--bg-page)",
+    padding: 24,
+    fontFamily: 'Inter, "Segoe UI", Arial, sans-serif',
+    color: "var(--text-main)",
+    transition: "background 180ms ease, color 180ms ease",
+  },
+  shell: { maxWidth: 1420, margin: "0 auto", display: "grid", gap: 22 },
+  card: {
+    background: "var(--bg-card)",
+    border: "1px solid var(--border-color)",
+    borderRadius: 24,
+    padding: 18,
+    boxShadow: "var(--shadow-soft)",
+    backdropFilter: "blur(10px)",
+  },
+  cardTitle: { fontSize: 20, fontWeight: 800, margin: 0, letterSpacing: "-0.02em" },
+  cardDesc: { fontSize: 13, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.45 },
+  tableWrap: {
+    overflowX: "auto",
+    marginTop: 16,
+    borderRadius: 20,
+    border: "1px solid var(--border-color)",
+    background: "var(--bg-card)",
+  },
+  table: { width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 14 },
+  th: {
+    textAlign: "left",
+    padding: "12px 14px",
+    borderBottom: "1px solid var(--border-color)",
+    background: "var(--bg-soft)",
+    whiteSpace: "nowrap",
+    color: "var(--text-muted)",
+    fontSize: 12,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    position: "sticky",
+    top: 0,
+    zIndex: 1,
+  },
+  td: { padding: "12px 14px", borderBottom: "1px solid var(--border-soft)", verticalAlign: "top" },
   row: { display: "flex", gap: 12, flexWrap: "wrap" },
   between: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" },
-  btn: { padding: "10px 14px", borderRadius: 10, border: "1px solid #cbd5e1", background: "#ffffff", cursor: "pointer", fontWeight: 600 },
-  btnPrimary: { padding: "10px 14px", borderRadius: 10, border: "1px solid var(--brand-blue)", background: "var(--brand-blue)", color: "#ffffff", cursor: "pointer", fontWeight: 600 },
-  input: { padding: "10px 12px", borderRadius: 10, border: "1px solid #cbd5e1", width: "100%" },
-  select: { padding: "10px 12px", borderRadius: 10, border: "1px solid #cbd5e1", background: "var(--bg-card)" },
-  badge: (status) => ({ display: "inline-block", padding: "4px 10px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: statusColors[status] || "#e2e8f0" }),
+  btn: {
+    padding: "10px 14px",
+    borderRadius: 14,
+    border: "1px solid var(--border-color)",
+    background: "var(--bg-card)",
+    color: "var(--text-main)",
+    cursor: "pointer",
+    fontWeight: 700,
+    boxShadow: "0 4px 14px rgba(15,23,42,0.06)",
+  },
+  btnPrimary: {
+    padding: "10px 14px",
+    borderRadius: 14,
+    border: "1px solid transparent",
+    background: "linear-gradient(135deg, var(--brand-blue), var(--brand-orange) 55%, var(--brand-green))",
+    color: "#fff",
+    cursor: "pointer",
+    fontWeight: 800,
+    boxShadow: "0 14px 32px rgba(36,51,122,0.22)",
+  },
+  input: {
+    padding: "11px 12px",
+    borderRadius: 14,
+    border: "1px solid var(--border-color)",
+    width: "100%",
+    background: "var(--bg-card)",
+    color: "var(--text-main)",
+  },
+  select: {
+    padding: "11px 12px",
+    borderRadius: 14,
+    border: "1px solid var(--border-color)",
+    background: "var(--bg-card)",
+    color: "var(--text-main)",
+  },
+  badge: (status) => ({
+    display: "inline-block",
+    padding: "5px 10px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 800,
+    background: statusColors[status] || "var(--bg-soft)",
+    color: "var(--text-main)",
+  }),
   gridSummary: { display: "grid", gap: 16, gridTemplateColumns: "repeat(6, minmax(0, 1fr))" },
-  sectionCard: { border: "1px solid #e2e8f0", borderRadius: 14, padding: 12, background: "var(--bg-card)" },
+  sectionCard: { border: "1px solid var(--border-color)", borderRadius: 18, padding: 12, background: "var(--bg-card)" },
   small: { fontSize: 12, color: "var(--text-subtle)" },
-  chip: { display: "inline-block", padding: "6px 10px", borderRadius: 999, background: "#eef2ff", color: "#3730a3", fontSize: 12, fontWeight: 700, marginRight: 8, marginBottom: 8 },
+  chip: {
+    display: "inline-block",
+    padding: "7px 11px",
+    borderRadius: 999,
+    background: "var(--chip-bg)",
+    color: "var(--chip-text)",
+    fontSize: 12,
+    fontWeight: 800,
+    marginRight: 8,
+    marginBottom: 8,
+  },
   panelGrid: { display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 2fr) minmax(320px, 1fr)" },
-  table: { width: "100%", borderCollapse: "collapse", marginTop: 12 },
-  th: { textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e2e8f0", fontSize: 12, color: "var(--text-muted)" },
-  td: { padding: "10px 12px", borderBottom: "1px solid #e2e8f0", fontSize: 14 },
 };
 
 export default function PTFacultyStaffingMVP() {
@@ -329,31 +409,31 @@ export default function PTFacultyStaffingMVP() {
 
   const themeVars = darkMode
     ? {
-        "--bg-page": "linear-gradient(180deg, #0b1020 0%, #10182b 100%)",
-        "--bg-card": "rgba(17, 24, 39, 0.92)",
-        "--bg-soft": "rgba(31, 41, 55, 0.92)",
-        "--border-color": "rgba(148, 163, 184, 0.18)",
+        "--bg-page": "linear-gradient(180deg, #081120 0%, #0f172a 100%)",
+        "--bg-card": "rgba(15, 23, 42, 0.88)",
+        "--bg-soft": "rgba(30, 41, 59, 0.96)",
+        "--border-color": "rgba(148, 163, 184, 0.22)",
         "--border-soft": "rgba(148, 163, 184, 0.12)",
         "--text-main": "#f8fafc",
         "--text-muted": "#cbd5e1",
         "--text-subtle": "#94a3b8",
-        "--chip-bg": "rgba(36, 51, 122, 0.35)",
-        "--chip-text": "#dbeafe",
-        "--shadow-soft": "0 18px 50px rgba(2, 6, 23, 0.45)",
+        "--chip-bg": "rgba(240, 84, 35, 0.18)",
+        "--chip-text": "#fed7aa",
+        "--shadow-soft": "0 20px 54px rgba(2, 6, 23, 0.45)",
         "--brand-blue": "#24337a",
         "--brand-orange": "#f05423",
         "--brand-green": "#7fbe41",
       }
     : {
-        "--bg-page": "linear-gradient(180deg, #f7fafc 0%, #edf5f2 100%)",
-        "--bg-card": "rgba(255,255,255,0.88)",
-        "--bg-soft": "rgba(248, 250, 252, 0.95)",
+        "--bg-page": "linear-gradient(180deg, #f8fafc 0%, #eef4f7 100%)",
+        "--bg-card": "rgba(255, 255, 255, 0.9)",
+        "--bg-soft": "rgba(248, 250, 252, 0.98)",
         "--border-color": "rgba(36, 51, 122, 0.12)",
         "--border-soft": "rgba(36, 51, 122, 0.08)",
-        "--text-main": "var(--brand-blue)",
-        "--text-muted": "var(--text-muted)",
-        "--text-subtle": "var(--text-subtle)",
-        "--chip-bg": "rgba(127, 190, 65, 0.14)",
+        "--text-main": "#0f172a",
+        "--text-muted": "#475569",
+        "--text-subtle": "#64748b",
+        "--chip-bg": "rgba(127, 190, 65, 0.16)",
         "--chip-text": "#24337a",
         "--shadow-soft": "0 18px 50px rgba(15, 23, 42, 0.08)",
         "--brand-blue": "#24337a",
@@ -363,24 +443,11 @@ export default function PTFacultyStaffingMVP() {
 
   const heroCardStyle = {
     ...ui.card,
-    background: "linear-gradient(135deg, rgba(36,51,122,0.97), rgba(127,190,65,0.92))",
-    color: "var(--bg-card)",
-    padding: 24,
+    background: "linear-gradient(135deg, rgba(36,51,122,0.98), rgba(240,84,35,0.96) 58%, rgba(127,190,65,0.92))",
+    color: "#fff",
+    padding: 26,
     overflow: "hidden",
     position: "relative",
-  };
-
-  const logoMarkStyle = {
-    width: 56,
-    height: 56,
-    borderRadius: 18,
-    background: "linear-gradient(135deg, #24337a, #f05423 58%, #7fbe41)",
-    display: "grid",
-    placeItems: "center",
-    color: "var(--bg-card)",
-    fontWeight: 900,
-    fontSize: 20,
-    boxShadow: "0 12px 30px rgba(15,23,42,0.18)",
   };
 
   const availableDisciplineCodes = useMemo(() => {
@@ -845,24 +912,61 @@ export default function PTFacultyStaffingMVP() {
 
   return (
     <div style={{ ...ui.page, ...themeVars }}>
+      <style>{`
+        .cos-table tbody tr:nth-child(even) { background: rgba(36, 51, 122, 0.03); }
+        .cos-table tbody tr:hover { background: rgba(240, 84, 35, 0.08); transition: background 140ms ease; }
+        .cos-summary-card { position: relative; overflow: hidden; }
+        .cos-summary-card::after { content: ""; position: absolute; inset: auto -24px -24px auto; width: 96px; height: 96px; background: radial-gradient(circle, rgba(240,84,35,0.14), transparent 65%); border-radius: 999px; }
+        @media (max-width: 980px) {
+          .cos-panel-grid { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
       <div style={ui.shell}>
-        <div style={ui.between}>
-          <div>
-            <h1 style={{ fontSize: 32, margin: 0 }}>PT Faculty Staffing MVP</h1>
-            <div style={ui.cardDesc}>
-              Upload subject mapping once, then future schedule uploads can reuse it automatically.
+        <div style={heroCardStyle}>
+          <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at top right, rgba(255,255,255,0.2), transparent 34%)" }} />
+          <div style={{ ...ui.between, position: "relative" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+              <img
+                src={cosLogo}
+                alt="College of the Sequoias logo"
+                style={{ width: 120, height: 120, objectFit: "contain", borderRadius: 22, background: "rgba(255,255,255,0.1)", padding: 8, boxShadow: "0 16px 34px rgba(15,23,42,0.22)" }}
+              />
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.18em", textTransform: "uppercase", opacity: 0.92 }}>
+                  College of the Sequoias
+                </div>
+                <h1 style={{ fontSize: 36, margin: "4px 0 0 0", fontWeight: 900, letterSpacing: "-0.04em" }}>
+                  PT Faculty Staffing
+                </h1>
+                <div style={{ marginTop: 10, fontSize: 14, maxWidth: 720, lineHeight: 1.5, opacity: 0.96 }}>
+                  A cleaner staffing cockpit for COS, with clearer visibility, ranked faculty preferences, and less spreadsheet fog.
+                </div>
+                <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ padding: "6px 10px", borderRadius: 999, background: "rgba(255,255,255,0.16)", fontSize: 12, fontWeight: 800 }}>COS Blue</span>
+                  <span style={{ padding: "6px 10px", borderRadius: 999, background: "rgba(255,255,255,0.16)", fontSize: 12, fontWeight: 800 }}>COS Orange</span>
+                  <span style={{ padding: "6px 10px", borderRadius: 999, background: "rgba(255,255,255,0.16)", fontSize: 12, fontWeight: 800 }}>COS Green</span>
+                </div>
+              </div>
             </div>
-          </div>
-          <div style={ui.row}>
-            <select style={ui.select} value={role} onChange={(e) => { setRole(e.target.value); setSelectedDisciplineCode("ALL"); }}>
-              <option value="admin">Scheduler / Admin</option>
-              <option value="chair">Division Chair</option>
-              <option value="dean">Dean</option>
-              <option value="faculty">Part-Time Faculty</option>
-            </select>
-            <span style={{ ...ui.badge("open"), background: "var(--brand-blue)", color: "white" }}>
-              {activeTerm.name}
-            </span>
+            <div style={{ ...ui.row, alignItems: "center" }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 999, background: "rgba(255,255,255,0.16)", border: "1px solid rgba(255,255,255,0.22)", fontWeight: 800 }}>
+                <span>Dark View</span>
+                <input type="checkbox" checked={darkMode} onChange={(e) => setDarkMode(e.target.checked)} />
+              </label>
+              <select
+                style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)" }}
+                value={role}
+                onChange={(e) => { setRole(e.target.value); setSelectedDisciplineCode("ALL"); }}
+              >
+                <option value="admin" style={{ color: "#0f172a" }}>Scheduler / Admin</option>
+                <option value="chair" style={{ color: "#0f172a" }}>Division Chair</option>
+                <option value="dean" style={{ color: "#0f172a" }}>Dean</option>
+                <option value="faculty" style={{ color: "#0f172a" }}>Part-Time Faculty</option>
+              </select>
+              <span style={{ ...ui.badge("open"), background: "rgba(255,255,255,0.16)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)" }}>
+                {activeTerm.name}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -876,7 +980,7 @@ export default function PTFacultyStaffingMVP() {
         </div>
 
         {role === "admin" ? (
-        <div style={ui.card}>
+        <div className="cos-summary-card" style={ui.card}>
           <h2 style={ui.cardTitle}>Subject Mapping Upload</h2>
           <div style={ui.cardDesc}>
             Upload a CSV with columns: <code>subject_code</code>, <code>discipline_code</code>. This saves a global mapping that later schedule uploads reuse automatically.
@@ -965,7 +1069,7 @@ export default function PTFacultyStaffingMVP() {
 
             {mappingList.length ? (
               <div style={{ overflowX: "auto", marginTop: 8 }}>
-                <table style={ui.table}>
+                <table className="cos-table" style={ui.table}>
                   <thead>
                     <tr>
                       <th style={ui.th}>Subject Code</th>
@@ -1321,7 +1425,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           ) : null}
 
           {role === "faculty" ? (
-            <div style={ui.panelGrid}>
+            <div className="cos-panel-grid" style={ui.panelGrid}>
               <div>
                 <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
                   Build your ranked section list. Use Add to Preferences, then drag or move items in My Preferences.
@@ -1423,7 +1527,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           ) : null}
 
           <div style={ui.tableWrap}>
-            <table style={ui.table}>
+            <table className="cos-table" style={ui.table}>
               <thead>
                 <tr>
                   <th style={ui.th}>Discipline</th>
@@ -1484,9 +1588,9 @@ OH,ORNAMENTAL_HORTICULTURE`}
 
 function SummaryCard({ title, value }) {
   return (
-    <div style={ui.card}>
-      <div style={ui.small}>{title}</div>
-      <div style={{ marginTop: 8, fontSize: 28, fontWeight: 700 }}>{value}</div>
+    <div className="cos-summary-card" style={{ ...ui.card, padding: 16 }}>
+      <div style={{ ...ui.small, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 800 }}>{title}</div>
+      <div style={{ marginTop: 8, fontSize: 30, fontWeight: 900, color: "var(--brand-blue)" }}>{value}</div>
     </div>
   );
 }
@@ -1495,14 +1599,14 @@ function TinyStat({ label, value }) {
   return (
     <div
       style={{
-        background: "#f8fafc",
-        border: "1px solid #e2e8f0",
-        borderRadius: 12,
+        background: "var(--bg-soft)",
+        border: "1px solid var(--border-color)",
+        borderRadius: 16,
         padding: 12,
       }}
     >
-      <div style={{ ...ui.small, textTransform: "uppercase" }}>{label}</div>
-      <div style={{ marginTop: 6, fontWeight: 700 }}>{value}</div>
+      <div style={{ ...ui.small, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 800 }}>{label}</div>
+      <div style={{ marginTop: 6, fontWeight: 800 }}>{value}</div>
     </div>
   );
 }
