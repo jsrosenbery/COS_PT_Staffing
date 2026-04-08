@@ -408,7 +408,7 @@ export default function PTFacultyStaffingMVP() {
   const [mappingAdminError, setMappingAdminError] = useState("");
   const [showMappingList, setShowMappingList] = useState(false);
 
-  const activeTerm = terms.find((t) => t.active);
+  const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
 
   const themeVars = darkMode
     ? {
@@ -962,9 +962,19 @@ export default function PTFacultyStaffingMVP() {
                 <option value="dean" style={{ color: "#0f172a" }}>Dean</option>
                 <option value="faculty" style={{ color: "#0f172a" }}>Part-Time Faculty</option>
               </select>
-              <span style={{ ...ui.badge("open"), background: "rgba(255,255,255,0.16)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)" }}>
-                {activeTerm.name}
-              </span>
+              <select
+                style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)", minWidth: 220 }}
+                value={activeTerm.code}
+                onChange={(e) => activateTerm(e.target.value)}
+              >
+                {terms.length ? terms.map((term) => (
+                  <option key={term.code} value={term.code} style={{ color: "#0f172a" }}>
+                    {term.name}{term.active ? " • Active" : ""}
+                  </option>
+                )) : (
+                  <option value={activeTerm.code} style={{ color: "#0f172a" }}>{activeTerm.name}</option>
+                )}
+              </select>
             </div>
           </div>
         </div>
@@ -988,7 +998,7 @@ export default function PTFacultyStaffingMVP() {
               </div>
             </div>
             <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
-              Active: {activeTerm.name}
+              Active: {activeTerm?.name || "Spring 2027"}
             </div>
           </div>
 
