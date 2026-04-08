@@ -253,6 +253,7 @@ export default function PTFacultyStaffingMVP() {
   async function loadAvailableSections(disciplineCode = selectedDisciplineCode) {
     setLoadingSections(true);
     setSectionsError("");
+    setAvailableSections([]);
 
     try {
       const params = new URLSearchParams({ termCode: activeTerm.code });
@@ -269,7 +270,13 @@ export default function PTFacultyStaffingMVP() {
         return;
       }
 
-      setAvailableSections(data.sections || []);
+      const fetchedSections = Array.isArray(data.sections) ? data.sections : [];
+      const filteredSections =
+        disciplineCode && disciplineCode !== "ALL"
+          ? fetchedSections.filter((section) => section.discipline_code === disciplineCode)
+          : fetchedSections;
+
+      setAvailableSections(filteredSections);
     } catch (error) {
       setSectionsError(error.message || "Could not load available sections.");
       setAvailableSections([]);
