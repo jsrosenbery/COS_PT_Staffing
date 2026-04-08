@@ -124,6 +124,9 @@ const ui = {
   gridSummary: { display: "grid", gap: 16, gridTemplateColumns: "repeat(6, minmax(0, 1fr))" },
   sectionCard: { border: "1px solid #e2e8f0", borderRadius: 14, padding: 12, background: "#fff" },
   small: { fontSize: 12, color: "#64748b" },
+  table: { width: "100%", borderCollapse: "collapse", marginTop: 12 },
+  th: { textAlign: "left", padding: "10px 12px", borderBottom: "1px solid #e2e8f0", fontSize: 12, color: "#475569" },
+  td: { padding: "10px 12px", borderBottom: "1px solid #e2e8f0", fontSize: 14 },
 };
 
 export default function PTFacultyStaffingMVP() {
@@ -153,6 +156,10 @@ export default function PTFacultyStaffingMVP() {
   const [uploadingSchedule, setUploadingSchedule] = useState(false);
   const [uploadingMapping, setUploadingMapping] = useState(false);
   const [backendMessage, setBackendMessage] = useState("");
+  const [mappingList, setMappingList] = useState([]);
+  const [loadingMappingList, setLoadingMappingList] = useState(false);
+  const [mappingAdminError, setMappingAdminError] = useState("");
+  const [showMappingList, setShowMappingList] = useState(false);
 
   const activeTerm = terms.find((t) => t.active);
 
@@ -301,6 +308,54 @@ export default function PTFacultyStaffingMVP() {
     }
   }
 
+
+  async function loadMappingList() {
+    setLoadingMappingList(true);
+    setMappingAdminError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/subject-mapping?scope=global&termCode=${activeTerm.code}`);
+      const data = await response.json();
+      if (!response.ok) {
+        setMappingAdminError(data.error || "Could not load mappings.");
+        return;
+      }
+      setMappingList(data.mappings || []);
+      setShowMappingList(true);
+    } catch (error) {
+      setMappingAdminError(error.message || "Could not load mappings.");
+    } finally {
+      setLoadingMappingList(false);
+    }
+  }
+
+  async function handleExportMappings() {
+    setMappingAdminError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/subject-mapping/export?scope=global&termCode=${activeTerm.code}`);
+      if (!response.ok) {
+        let data = {};
+        try {
+          data = await response.json();
+        } catch (_error) {
+          data = {};
+        }
+        setMappingAdminError(data.error || "Could not export mappings.");
+        return;
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "subject-mapping.csv";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      setMappingAdminError(error.message || "Could not export mappings.");
+    }
+  }
+
   const summary = {
     ready: disciplines.filter((d) => d.status === "ready").length,
     open: disciplines.filter((d) => d.status === "open").length,
@@ -354,6 +409,20 @@ export default function PTFacultyStaffingMVP() {
             />
           </div>
 
+          <div style={{ ...ui.row, marginTop: 12 }}>
+            <button style={ui.btn} type="button" onClick={loadMappingList} disabled={loadingMappingList}>
+              {loadingMappingList ? "Loading mappings..." : "View current mappings"}
+            </button>
+            <button style={ui.btn} type="button" onClick={handleExportMappings}>
+              Export mappings
+            </button>
+            {showMappingList ? (
+              <button style={ui.btn} type="button" onClick={() => setShowMappingList(false)}>
+                Hide mappings
+              </button>
+            ) : null}
+          </div>
+
           {uploadingMapping ? (
             <div style={{ marginTop: 12, color: "#475569", fontWeight: 700 }}>
               Uploading subject mapping...
@@ -390,6 +459,54 @@ export default function PTFacultyStaffingMVP() {
             </div>
           ) : null}
         </div>
+
+
+        {mappingAdminError ? (
+          <div style={{ ...ui.card, borderColor: "#fecaca", background: "#fff7f7" }}>
+            <div style={{ color: "#b91c1c", fontWeight: 700 }}>{mappingAdminError}</div>
+          </div>
+        ) : null}
+
+        {showMappingList ? (
+          <div style={ui.card}>
+            <div style={ui.between}>
+              <div>
+                <h2 style={ui.cardTitle}>Current Subject Mappings</h2>
+                <div style={ui.cardDesc}>
+                  Global mappings currently saved in the backend and reused for future schedule uploads.
+                </div>
+              </div>
+              <div style={{ color: "#475569", fontSize: 13 }}>
+                {mappingList.length} mapping row(s)
+              </div>
+            </div>
+
+            {mappingList.length ? (
+              <div style={{ overflowX: "auto", marginTop: 8 }}>
+                <table style={ui.table}>
+                  <thead>
+                    <tr>
+                      <th style={ui.th}>Subject Code</th>
+                      <th style={ui.th}>Discipline Code</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mappingList.map((row, idx) => (
+                      <tr key={`${row.subject_code}-${row.discipline_code}-${idx}`}>
+                        <td style={ui.td}>{row.subject_code}</td>
+                        <td style={ui.td}>{row.discipline_code}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ marginTop: 12, color: "#475569" }}>
+                No mappings are currently saved.
+              </div>
+            )}
+          </div>
+        ) : null}
 
         <div style={ui.card}>
           <h2 style={ui.cardTitle}>Schedule Upload</h2>

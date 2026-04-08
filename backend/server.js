@@ -585,6 +585,63 @@ app.get("/api/subject-mapping/:termCode/status", async (req, res) => {
   }
 });
 
+
+app.get("/api/subject-mapping", async (req, res) => {
+  try {
+    const scope = String(req.query.scope || "global").toLowerCase();
+    const termCode = normalize(req.query.termCode || "");
+    const useTerm = scope === "term" && termCode;
+
+    const result = await query(
+      `SELECT subject_code, discipline_code, term_code, created_at
+       FROM subject_mappings
+       WHERE ` + (useTerm ? `term_code = $1` : `term_code IS NULL`) + `
+       ORDER BY subject_code, discipline_code`,
+      useTerm ? [termCode] : []
+    );
+
+    res.json({
+      ok: true,
+      scope: useTerm ? "term" : "global",
+      termCode: useTerm ? termCode : null,
+      count: result.rows.length,
+      mappings: result.rows,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/subject-mapping/export", async (req, res) => {
+  try {
+    const scope = String(req.query.scope || "global").toLowerCase();
+    const termCode = normalize(req.query.termCode || "");
+    const useTerm = scope === "term" && termCode;
+
+    const result = await query(
+      `SELECT subject_code, discipline_code
+       FROM subject_mappings
+       WHERE ` + (useTerm ? `term_code = $1` : `term_code IS NULL`) + `
+       ORDER BY subject_code, discipline_code`,
+      useTerm ? [termCode] : []
+    );
+
+    const header = "subject_code,discipline_code\n";
+    const body = result.rows
+      .map((row) => `${row.subject_code},${row.discipline_code}`)
+      .join("\n");
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${useTerm ? `${termCode.toLowerCase()}-subject-mapping.csv` : "subject-mapping.csv"}"`
+    );
+    res.send(header + body + (body ? "\n" : ""));
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/api/upload/subject-mapping", upload.single("file"), async (req, res) => {
   try {
     const { termCode } = req.body;
