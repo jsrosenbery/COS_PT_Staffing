@@ -55,6 +55,34 @@ function normalize(value) {
   return String(value ?? "").trim();
 }
 
+function getRowValue(row, aliases = []) {
+  if (!row) return "";
+
+  for (const alias of aliases) {
+    if (alias in row && normalize(row[alias])) return normalize(row[alias]);
+  }
+
+  const normalizedLookup = new Map(
+    Object.entries(row).map(([key, value]) => [normalizeHeader(key), value])
+  );
+
+  for (const alias of aliases) {
+    const normalizedAlias = normalizeHeader(alias);
+    if (normalizedLookup.has(normalizedAlias) && normalize(normalizedLookup.get(normalizedAlias))) {
+      return normalize(normalizedLookup.get(normalizedAlias));
+    }
+  }
+
+  return "";
+}
+
+function getFirstBundleValue(rows, aliases = []) {
+  for (const row of rows || []) {
+    const value = getRowValue(row, aliases);
+    if (value) return value;
+  }
+  return "";
+}
 
 function mapInstructionalMethodToDisplayModality(rawInstructionalMethod) {
   const value = normalize(rawInstructionalMethod).toUpperCase();
@@ -68,15 +96,41 @@ function mapInstructionalMethodToDisplayModality(rawInstructionalMethod) {
   return "";
 }
 
-function resolveInstructionalMethod(row) {
-  return normalize(
-    row?.INSTRUCTIONAL_METHOD ||
-    row?.INSTRUCTIONAL_METHODS ||
-    row?.INSTRUCTIONAL_METHOD_CODE ||
-    row?.INSTRUCTIONAL_METHOD_CD ||
-    row?.INSTR_METHOD ||
-    row?.METHOD
-  );
+function resolveInstructionalMethod(rowOrRows) {
+  const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
+  return getFirstBundleValue(rows, [
+    "INSTRUCTIONAL_METHOD",
+    "INSTRUCTIONAL_METHODS",
+    "INSTRUCTIONAL_METHOD_CODE",
+    "INSTRUCTIONAL_METHOD_CD",
+    "INSTR_METHOD",
+    "METHOD",
+    "instructional_method",
+    "instructional_methods",
+    "instructional_method_code",
+    "instructional_method_cd",
+    "instr_method",
+    "method",
+    "Instructional Method",
+    "Instructional Methods",
+    "Instructional Method Code",
+    "Instr Method",
+  ]);
+}
+
+function resolveRawModality(rowOrRows) {
+  const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
+  return getFirstBundleValue(rows, [
+    "SCHEDULE_TYPE",
+    "MEETING_TYPE",
+    "MODALITY",
+    "schedule_type",
+    "meeting_type",
+    "modality",
+    "Schedule Type",
+    "Meeting Type",
+    "Modality",
+  ]);
 }
 
 function normalizeInstructor(value) {
@@ -88,8 +142,13 @@ function normalizeInstructor(value) {
 
 function toFriendlyModality(value) {
   const v = normalize(value).toUpperCase();
-  if (["ONS", "ONN", "ONC", "ONLINE", "DE", "IP"].includes(v)) return "Online";
-  return v || "TBA";
+  if (!v) return "TBA";
+  if (["IP", "IN PERSON", "INPERSON"].includes(v)) return "In Person";
+  if (["HYB", "HYBRID"].includes(v)) return "Hybrid";
+  if (["FLX", "HYBRID FLEX", "FLEX"].includes(v)) return "Hybrid Flex";
+  if (["ONL", "ONS", "ONN", "ONC", "ONLINE"].includes(v)) return "Online";
+  if (["DE", "DUAL ENROLLMENT", "DUAL-ENROLLMENT"].includes(v)) return "Dual Enrollment";
+  return value;
 }
 
 function inferDiscipline(subjectCourse, coverageRows) {
@@ -308,6 +367,8 @@ function parseScheduleRows(rows, coverageRows) {
     }
 
     const first = bundleRows[0] || {};
+    const instructionalMethod = resolveInstructionalMethod(bundleRows);
+    const rawModality = resolveRawModality(bundleRows);
 
     const meetings = [];
     const meetingSeen = new Set();
@@ -370,10 +431,9 @@ function parseScheduleRows(rows, coverageRows) {
       });
     }
 
-    const instructionalMethod = resolveInstructionalMethod(first);
     const displayModality =
       mapInstructionalMethodToDisplayModality(instructionalMethod) ||
-      toFriendlyModality(first.SCHEDULE_TYPE || first.MEETING_TYPE || "");
+      toFriendlyModality(rawModality);
 
     return {
       assignment_group_id: `grp_${cluster.join("_")}`,
@@ -382,11 +442,11 @@ function parseScheduleRows(rows, coverageRows) {
       primary_crn: cluster[0],
       all_crns: cluster,
       title: allTitles.join(" / ") || normalize(first.TITLE) || "Untitled",
-      division: normalize(first.DIVISION),
-      modality: normalize(first.SCHEDULE_TYPE || first.MEETING_TYPE || ""),
+      division: getFirstBundleValue(bundleRows, ["DIVISION", "division", "Division"]),
+      modality: rawModality,
       instructional_method: instructionalMethod,
       display_modality: displayModality,
-      campus: normalize(first.CAMPUS),
+      campus: getFirstBundleValue(bundleRows, ["CAMPUS", "campus", "Campus"]),
       units: allUnits,
       meetings,
       pt_eligible: isOpenStaffBundle,
