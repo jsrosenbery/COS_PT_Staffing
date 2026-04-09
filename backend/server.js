@@ -193,8 +193,70 @@ function getFirstBundleValue(rows, aliases = []) {
   return "";
 }
 
-function mapInstructionalMethodToDisplayModality(rawInstructionalMethod) {
-  const value = normalize(rawInstructionalMethod).toUpperCase();
+function bundleHasAsyncOnlineSignals(rows = []) {
+  return (rows || []).some((row) => {
+    const days = normalize(getRowValue(row, ["DAYS", "days", "Days"])).toUpperCase();
+    const start = normalize(getRowValue(row, ["START_TIME", "start_time", "Start Time"])).toUpperCase();
+    const end = normalize(getRowValue(row, ["END_TIME", "end_time", "End Time"])).toUpperCase();
+    const building = normalize(getRowValue(row, ["BUILDING", "building", "Building"])).toUpperCase();
+    const room = normalize(getRowValue(row, ["ROOM", "room", "Room"])).toUpperCase();
+    const campus = normalize(getRowValue(row, ["CAMPUS", "campus", "Campus"])).toUpperCase();
+    return (
+      /^X+$/.test(days) ||
+      building.includes("ONLINE") ||
+      building.includes("HYBRID") ||
+      room === "N/A" ||
+      campus.startsWith("ON") ||
+      (start === "12:00AM" && end === "12:00AM")
+    );
+  });
+}
+
+function bundleHasPhysicalMeetings(rows = []) {
+  return (rows || []).some((row) => {
+    const days = normalize(getRowValue(row, ["DAYS", "days", "Days"])).toUpperCase();
+    const building = normalize(getRowValue(row, ["BUILDING", "building", "Building"])).toUpperCase();
+    const room = normalize(getRowValue(row, ["ROOM", "room", "Room"])).toUpperCase();
+    const campus = normalize(getRowValue(row, ["CAMPUS", "campus", "Campus"])).toUpperCase();
+    return (
+      normalizeMeetingDays(days).length > 0 &&
+      !building.includes("ONLINE") &&
+      !building.includes("HYBRID") &&
+      room !== "N/A" &&
+      !campus.startsWith("ON")
+    );
+  });
+}
+
+function canonicalizeInstructionalMethod(rawInstructionalMethod, rows = []) {
+  const value = normalize(rawInstructionalMethod).toUpperCase().replace(/[^A-Z0-9]+/g, "");
+
+  if (!value) {
+    if (bundleHasAsyncOnlineSignals(rows) && bundleHasPhysicalMeetings(rows)) return "HYB";
+    if (bundleHasAsyncOnlineSignals(rows)) return "ONL";
+    if (bundleHasPhysicalMeetings(rows)) return "IP";
+    return "";
+  }
+
+  if (["IP", "INPERSON", "INP"].includes(value)) return "IP";
+  if (["HYB", "HYBRID", "OH"].includes(value)) return "HYB";
+  if (["FLX", "HYFLEX", "HYBRIDFLEX", "FLEX"].includes(value)) return "FLX";
+  if (["ONL", "ONLINE", "ONS", "ONN", "OL", "ON"].includes(value)) return "ONL";
+  if (["DE", "DUALENROLLMENT", "DUAL"].includes(value)) return "DE";
+
+  if (["02S", "022", "02N", "04"].includes(value) && bundleHasPhysicalMeetings(rows)) return "IP";
+  if (["72", "71", "XX"].includes(value) && bundleHasAsyncOnlineSignals(rows)) return "ONL";
+  if (value === "98") return "";
+
+  if (bundleHasAsyncOnlineSignals(rows) && bundleHasPhysicalMeetings(rows)) return "HYB";
+  if (bundleHasAsyncOnlineSignals(rows)) return "ONL";
+  if (bundleHasPhysicalMeetings(rows)) return "IP";
+
+  return "";
+}
+
+function mapInstructionalMethodToDisplayModality(rawInstructionalMethod, rows = []) {
+  const value = canonicalizeInstructionalMethod(rawInstructionalMethod, rows);
 
   if (value === "IP") return "In Person";
   if (value === "HYB") return "Hybrid";
@@ -249,15 +311,17 @@ function normalizeInstructor(value) {
     .trim();
 }
 
-function toFriendlyModality(value) {
+function toFriendlyModality(value, rows = []) {
   const v = normalize(value).toUpperCase();
-  if (!v) return "TBA";
+  if (!v) {
+    return mapInstructionalMethodToDisplayModality("", rows) || "TBA";
+  }
   if (["IP", "IN PERSON", "INPERSON"].includes(v)) return "In Person";
-  if (["HYB", "HYBRID"].includes(v)) return "Hybrid";
+  if (["HYB", "HYBRID", "OH"].includes(v)) return "Hybrid";
   if (["FLX", "HYBRID FLEX", "FLEX"].includes(v)) return "Hybrid Flex";
-  if (["ONL", "ONS", "ONN", "ONC", "ONLINE"].includes(v)) return "Online";
+  if (["ONL", "ONS", "ONN", "ONC", "ONLINE", "OL", "ON"].includes(v)) return "Online";
   if (["DE", "DUAL ENROLLMENT", "DUAL-ENROLLMENT"].includes(v)) return "Dual Enrollment";
-  return value;
+  return mapInstructionalMethodToDisplayModality(v, rows) || value;
 }
 
 function inferDiscipline(subjectCourse, coverageRows) {
@@ -479,7 +543,8 @@ function parseScheduleRows(rows, coverageRows) {
     }
 
     const first = bundleRows[0] || {};
-    const instructionalMethod = resolveInstructionalMethod(bundleRows);
+    const rawInstructionalMethod = resolveInstructionalMethod(bundleRows);
+    const instructionalMethod = canonicalizeInstructionalMethod(rawInstructionalMethod, bundleRows);
     const rawModality = resolveRawModality(bundleRows);
 
     const meetings = [];
@@ -544,8 +609,8 @@ function parseScheduleRows(rows, coverageRows) {
     }
 
     const displayModality =
-      mapInstructionalMethodToDisplayModality(instructionalMethod) ||
-      toFriendlyModality(rawModality);
+      mapInstructionalMethodToDisplayModality(instructionalMethod, bundleRows) ||
+      toFriendlyModality(rawModality, bundleRows);
 
     return {
       assignment_group_id: `grp_${cluster.join("_")}`,
@@ -637,6 +702,8 @@ app.get("/api/preferences", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
+          ag.instructional_method,
+          ag.display_modality,
           ag.campus,
           ag.units,
           COALESCE(
@@ -674,6 +741,8 @@ app.get("/api/preferences", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
+          ag.instructional_method,
+          ag.display_modality,
           ag.campus,
           ag.units
         ORDER BY fp.faculty_name NULLS LAST, fp.faculty_id, fp.preference_rank
@@ -786,7 +855,8 @@ app.get("/api/preferences/export", async (req, res) => {
           ag.title,
           ag.division,
           ag.campus,
-          ag.modality
+          ag.instructional_method,
+          COALESCE(ag.display_modality, ag.modality) AS modality
         FROM faculty_preferences fp
         LEFT JOIN assignment_groups ag
           ON fp.assignment_group_id = ag.assignment_group_id
@@ -807,6 +877,7 @@ app.get("/api/preferences/export", async (req, res) => {
       "title",
       "division",
       "campus",
+      "instructional_method",
       "modality",
     ];
 
@@ -829,6 +900,7 @@ app.get("/api/preferences/export", async (req, res) => {
           row.title,
           row.division,
           row.campus,
+          row.instructional_method,
           row.modality,
         ].map(escapeCell).join(",")
       ),
@@ -870,6 +942,8 @@ app.get("/api/available-sections", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
+          ag.instructional_method,
+          ag.display_modality,
           ag.campus,
           ag.units,
           ag.pt_eligible,
@@ -901,6 +975,8 @@ app.get("/api/available-sections", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
+          ag.instructional_method,
+          ag.display_modality,
           ag.campus,
           ag.units,
           ag.pt_eligible,

@@ -283,12 +283,43 @@ function meetingsOverlap(meetingsA = [], meetingsB = []) {
   return false;
 }
 
+function inferSectionMethod(section) {
+  const meetings = Array.isArray(section?.meetings) ? section.meetings : [];
+  const hasAsyncLikeMeeting = meetings.some((meeting) => isAsyncLikeMeeting(meeting));
+  const hasPhysicalMeeting = meetings.some((meeting) => !isAsyncLikeMeeting(meeting));
+  const campus = normalize(section?.campus).toUpperCase();
+
+  if (hasAsyncLikeMeeting && hasPhysicalMeeting) return "HYB";
+  if (hasAsyncLikeMeeting || campus.startsWith("ON")) return "ONL";
+  if (hasPhysicalMeeting) return "IP";
+  return "";
+}
+
+function canonicalMethodCode(value, section = null) {
+  const key = normalize(value).toUpperCase().replace(/[^A-Z0-9]+/g, "");
+  if (["IP", "INPERSON", "INP"].includes(key)) return "IP";
+  if (["HYB", "HYBRID", "OH"].includes(key)) return "HYB";
+  if (["FLX", "HYFLEX", "HYBRIDFLEX", "FLEX"].includes(key)) return "FLX";
+  if (["ONL", "ONLINE", "ONS", "ONN", "OL", "ON"].includes(key)) return "ONL";
+  if (["DE", "DUALENROLLMENT", "DUAL"].includes(key)) return "DE";
+  if (["02S", "022", "02N", "04"].includes(key)) return inferSectionMethod(section) || "IP";
+  return inferSectionMethod(section) || key || "";
+}
+
 function sectionMethodLabel(section) {
-  return normalize(section?.instructional_method) || "TBA";
+  return canonicalMethodCode(section?.instructional_method, section) || "TBA";
 }
 
 function sectionModalityLabel(section) {
-  return normalize(section?.display_modality || section?.modality) || "TBA";
+  const display = normalize(section?.display_modality);
+  if (display) return display;
+  const method = canonicalMethodCode(section?.instructional_method, section);
+  if (method === "IP") return "In Person";
+  if (method === "HYB") return "Hybrid";
+  if (method === "FLX") return "Hybrid Flex";
+  if (method === "ONL") return "Online";
+  if (method === "DE") return "Dual Enrollment";
+  return normalize(section?.modality) || "TBA";
 }
 
 function pillStyle(background, color, borderColor) {
