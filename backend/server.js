@@ -562,6 +562,131 @@ function analyzeUploadDivisionScope(rows, selectedDivision) {
   };
 }
 
+async function buildScheduleUploadPayload({ fileBuffer, termCode, divisionName }) {
+  const csvText = fileBuffer.toString("utf-8");
+  const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+
+  const rows = parsed.data.map((row) => {
+    const cleaned = {};
+    Object.entries(row).forEach(([key, value]) => {
+      if (!hiddenColumns.has(key)) cleaned[key] = value;
+    });
+    return { ...row, __clean: cleaned };
+  });
+
+  const divisionScope = analyzeUploadDivisionScope(rows, divisionName);
+  if (divisionScope.error) {
+    return {
+      ok: false,
+      status: 400,
+      errors: [divisionScope.error],
+      warnings: divisionScope.warnings || [],
+      unmappedSubjects: [],
+      summary: {
+        totalRows: rows.length,
+        sourceTotalRows: rows.length,
+        keptRowsForDivision: 0,
+        ignoredRowsFromOtherDivisions: rows.length,
+        detectedDivisions: divisionScope.detectedDivisions || [],
+        divisionFilterApplied: true,
+      },
+      rows,
+      scopedRows: [],
+      scopedSections: [],
+    };
+  }
+
+  const scopedRows = divisionScope.rows;
+  const coverageRows = await getCoverage(termCode);
+  const result = parseScheduleRows(scopedRows, coverageRows);
+  const combinedWarnings = [...(divisionScope.warnings || []), ...(result.warnings || [])];
+  const combinedSummary = {
+    ...(result.summary || {}),
+    sourceTotalRows: rows.length,
+    keptRowsForDivision: scopedRows.length,
+    ignoredRowsFromOtherDivisions: divisionScope.ignoredRowCount || 0,
+    detectedDivisions: divisionScope.detectedDivisions || [],
+    divisionFilterApplied: Boolean(divisionScope.filterApplied),
+  };
+
+  if (result.errors.length) {
+    return {
+      ok: false,
+      status: 400,
+      errors: result.errors,
+      warnings: combinedWarnings,
+      unmappedSubjects: result.unmappedSubjects || [],
+      summary: combinedSummary,
+      rows,
+      scopedRows,
+      scopedSections: [],
+    };
+  }
+
+  const normalizedUploadDivision = normalizeDivisionName(divisionName);
+  const divisionMismatchRows = [];
+  const scopedSections = [];
+
+  for (const section of result.sections || []) {
+    const sectionDivision = normalize(section.division);
+    const normalizedSectionDivision = normalizeDivisionName(sectionDivision || divisionName);
+
+    if (sectionDivision && normalizedSectionDivision !== normalizedUploadDivision) {
+      divisionMismatchRows.push({
+        assignment_group_id: section.assignment_group_id,
+        primary_subject_course: section.primary_subject_course,
+        primary_crn: section.primary_crn,
+        foundDivision: section.division,
+      });
+      continue;
+    }
+
+    scopedSections.push({ ...section, division: sectionDivision || divisionName });
+  }
+
+  if (divisionMismatchRows.length) {
+    combinedWarnings.push(
+      `Ignored ${divisionMismatchRows.length} parsed assignment group(s) that resolved to a different division than ${divisionName}.`
+    );
+    combinedSummary.filteredOutSectionBundles = divisionMismatchRows.length;
+    combinedSummary.mismatchedRows = divisionMismatchRows.slice(0, 10);
+  }
+
+  if (!scopedSections.length) {
+    return {
+      ok: false,
+      status: 400,
+      errors: [`No open section bundles matched ${divisionName} after division-aware filtering.`],
+      warnings: combinedWarnings,
+      unmappedSubjects: result.unmappedSubjects || [],
+      summary: {
+        ...combinedSummary,
+        divisionName,
+      },
+      rows,
+      scopedRows,
+      scopedSections,
+    };
+  }
+
+  return {
+    ok: true,
+    status: 200,
+    errors: [],
+    warnings: combinedWarnings,
+    unmappedSubjects: result.unmappedSubjects || [],
+    summary: {
+      ...combinedSummary,
+      divisionName,
+      importedSectionBundles: scopedSections.length,
+    },
+    rows,
+    scopedRows,
+    scopedSections,
+  };
+}
+
+
 async function runSchema() {
   try {
     const schema = fs.readFileSync("./schema.sql", "utf-8");
@@ -1247,6 +1372,52 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
+app.post("/api/upload/schedule/preview", upload.single("file"), async (req, res) => {
+  try {
+    const { termCode, divisionName } = req.body;
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded." });
+    }
+    if (!termCode) {
+      return res.status(400).json({ error: "termCode is required." });
+    }
+    if (!divisionName) {
+      return res.status(400).json({ error: "divisionName is required." });
+    }
+
+    const payload = await buildScheduleUploadPayload({
+      fileBuffer: req.file.buffer,
+      termCode,
+      divisionName,
+    });
+
+    const client = await pool.connect();
+    try {
+      const uploadImpact = await getDivisionUploadImpact(client, termCode, divisionName);
+      const protectedWorkCount = Object.entries(uploadImpact.counts)
+        .filter(([key]) => key !== "sections")
+        .reduce((sum, [, value]) => sum + Number(value || 0), 0);
+
+      return res.status(payload.status || 200).json({
+        ok: payload.ok,
+        errors: payload.errors || [],
+        warnings: payload.warnings || [],
+        unmappedSubjects: payload.unmappedSubjects || [],
+        summary: payload.summary || null,
+        divisionName,
+        impact: {
+          ...uploadImpact.counts,
+          hasProtectedWork: protectedWorkCount > 0,
+        },
+      });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
   try {
     const { termCode, divisionName, forceReplace } = req.body;
@@ -1260,99 +1431,26 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "divisionName is required." });
     }
 
-    const csvText = req.file.buffer.toString("utf-8");
-    const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
-
-    const rows = parsed.data.map((row) => {
-      const cleaned = {};
-      Object.entries(row).forEach(([key, value]) => {
-        if (!hiddenColumns.has(key)) cleaned[key] = value;
-      });
-      return { ...row, __clean: cleaned };
+    const payload = await buildScheduleUploadPayload({
+      fileBuffer: req.file.buffer,
+      termCode,
+      divisionName,
     });
 
-    const divisionScope = analyzeUploadDivisionScope(rows, divisionName);
-    if (divisionScope.error) {
-      return res.status(400).json({
+    if (!payload.ok) {
+      return res.status(payload.status || 400).json({
         ok: false,
-        errors: [divisionScope.error],
-        warnings: divisionScope.warnings || [],
-        unmappedSubjects: [],
-        summary: {
-          totalRows: rows.length,
-          sourceTotalRows: rows.length,
-          keptRowsForDivision: 0,
-          ignoredRowsFromOtherDivisions: rows.length,
-          detectedDivisions: divisionScope.detectedDivisions || [],
-          divisionFilterApplied: true,
-        },
+        errors: payload.errors || [],
+        warnings: payload.warnings || [],
+        unmappedSubjects: payload.unmappedSubjects || [],
+        summary: payload.summary || null,
       });
     }
 
-    const scopedRows = divisionScope.rows;
-    const coverageRows = await getCoverage(termCode);
-    const result = parseScheduleRows(scopedRows, coverageRows);
-    const combinedWarnings = [...(divisionScope.warnings || []), ...(result.warnings || [])];
-    const combinedSummary = {
-      ...(result.summary || {}),
-      sourceTotalRows: rows.length,
-      keptRowsForDivision: scopedRows.length,
-      ignoredRowsFromOtherDivisions: divisionScope.ignoredRowCount || 0,
-      detectedDivisions: divisionScope.detectedDivisions || [],
-      divisionFilterApplied: Boolean(divisionScope.filterApplied),
-    };
-
-    if (result.errors.length) {
-      return res.status(400).json({
-        ok: false,
-        errors: result.errors,
-        warnings: combinedWarnings,
-        unmappedSubjects: result.unmappedSubjects || [],
-        summary: combinedSummary,
-      });
-    }
-
+    const combinedWarnings = payload.warnings || [];
+    const combinedSummary = payload.summary || {};
+    const scopedSections = payload.scopedSections || [];
     const normalizedUploadDivision = normalizeDivisionName(divisionName);
-    const divisionMismatchRows = [];
-    const scopedSections = [];
-
-    for (const section of result.sections || []) {
-      const sectionDivision = normalize(section.division);
-      const normalizedSectionDivision = normalizeDivisionName(sectionDivision || divisionName);
-
-      if (sectionDivision && normalizedSectionDivision !== normalizedUploadDivision) {
-        divisionMismatchRows.push({
-          assignment_group_id: section.assignment_group_id,
-          primary_subject_course: section.primary_subject_course,
-          primary_crn: section.primary_crn,
-          foundDivision: section.division,
-        });
-        continue;
-      }
-
-      scopedSections.push({ ...section, division: sectionDivision || divisionName });
-    }
-
-    if (divisionMismatchRows.length) {
-      combinedWarnings.push(
-        `Ignored ${divisionMismatchRows.length} parsed assignment group(s) that resolved to a different division than ${divisionName}.`
-      );
-      combinedSummary.filteredOutSectionBundles = divisionMismatchRows.length;
-      combinedSummary.mismatchedRows = divisionMismatchRows.slice(0, 10);
-    }
-
-    if (!scopedSections.length) {
-      return res.status(400).json({
-        ok: false,
-        errors: [`No open section bundles matched ${divisionName} after division-aware filtering.`],
-        warnings: combinedWarnings,
-        unmappedSubjects: result.unmappedSubjects || [],
-        summary: {
-          ...combinedSummary,
-          divisionName,
-        },
-      });
-    }
 
     const client = await pool.connect();
 
@@ -1458,15 +1556,11 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
         ok: true,
         importedCount: scopedSections.length,
         warnings: combinedWarnings,
-        unmappedSubjects: result.unmappedSubjects || [],
+        unmappedSubjects: payload.unmappedSubjects || [],
         divisionName,
         replacedCount: uploadImpact.counts.sections || 0,
         protectedWork: uploadImpact.counts,
-        summary: {
-          ...combinedSummary,
-          divisionName,
-          importedSectionBundles: scopedSections.length,
-        },
+        summary: combinedSummary,
       });
     } catch (error) {
       await client.query("ROLLBACK");

@@ -585,6 +585,9 @@ export default function PTFacultyStaffingMVP() {
   const [selectedUploadDivision, setSelectedUploadDivision] = useState("");
   const [pendingUploadFile, setPendingUploadFile] = useState(null);
   const [uploadConflict, setUploadConflict] = useState(null);
+  const [uploadPreview, setUploadPreview] = useState(null);
+  const [previewingUpload, setPreviewingUpload] = useState(false);
+  const [uploadInputKey, setUploadInputKey] = useState(0);
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
 
@@ -739,6 +742,13 @@ export default function PTFacultyStaffingMVP() {
       setSelectedUploadDivision(uploadDivisionOptions[0]);
     }
   }, [selectedUploadDivision, uploadDivisionOptions]);
+
+  useEffect(() => {
+    setUploadPreview(null);
+    setUploadConflict(null);
+    setPendingUploadFile(null);
+    setUploadInputKey((value) => value + 1);
+  }, [selectedUploadDivision, activeTerm.code]);
 
   const selectedFaculty = useMemo(
     () => faculty.find((item) => item.id === selectedFacultyId) || faculty[0],
@@ -1330,6 +1340,86 @@ export default function PTFacultyStaffingMVP() {
     }
   }
 
+
+  function clearPendingUploadState({ clearMessage = false } = {}) {
+    setPendingUploadFile(null);
+    setUploadConflict(null);
+    setUploadPreview(null);
+    setUploadInputKey((value) => value + 1);
+    if (clearMessage) {
+      setBackendMessage("");
+    }
+  }
+
+  async function requestSchedulePreview(file) {
+    if (!file) return;
+    if (!selectedUploadDivision) {
+      setBackendMessage("Select a division before uploading.");
+      return;
+    }
+
+    setPreviewingUpload(true);
+    setBackendMessage("");
+    setUploadConflict(null);
+    setUploadPreview(null);
+    setPendingUploadFile(file);
+    setUploadReport({
+      errors: [],
+      warnings: [],
+      unmappedSubjects: [],
+      importedCount: 0,
+      fileName: file.name,
+      summary: null,
+    });
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("termCode", activeTerm.code);
+      formData.append("divisionName", selectedUploadDivision);
+
+      const response = await fetch(`${API_BASE}/api/upload/schedule/preview`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await response.json();
+
+      setUploadPreview({
+        ok: response.ok && Boolean(data.ok),
+        fileName: file.name,
+        errors: data.errors || (response.ok ? [] : [data.error || "Preview failed."]),
+        warnings: data.warnings || [],
+        unmappedSubjects: data.unmappedSubjects || [],
+        summary: data.summary || null,
+        impact: data.impact || null,
+        divisionName: data.divisionName || selectedUploadDivision,
+      });
+
+      if (!response.ok) {
+        setBackendMessage("Preview found issues. Review before uploading.");
+      }
+    } catch (error) {
+      setUploadPreview({
+        ok: false,
+        fileName: file.name,
+        errors: [error.message || "Could not preview this upload."],
+        warnings: [],
+        unmappedSubjects: [],
+        summary: null,
+        impact: null,
+        divisionName: selectedUploadDivision,
+      });
+      setBackendMessage("Could not reach the backend service.");
+    } finally {
+      setPreviewingUpload(false);
+    }
+  }
+
+  function handleScheduleFileSelection(file) {
+    if (!file) return;
+    requestSchedulePreview(file);
+  }
+
   async function handleScheduleUpload(file, options = {}) {
     const { forceReplace = false } = options;
     const targetFile = file || pendingUploadFile;
@@ -1387,7 +1477,6 @@ export default function PTFacultyStaffingMVP() {
         return;
       }
 
-      setPendingUploadFile(null);
       setSections([]);
       setUploadReport({
         errors: [],
@@ -1401,6 +1490,7 @@ export default function PTFacultyStaffingMVP() {
         ? ` Ignored ${data.summary.ignoredRowsFromOtherDivisions} row(s) outside ${data.divisionName || selectedUploadDivision}.`
         : "";
       setBackendMessage(`${data.divisionName || selectedUploadDivision} uploaded successfully.${data.replacedCount ? ` Replaced ${data.replacedCount} existing section bundle(s) for this division.` : ""}${ignoredRowsNote}`);
+      clearPendingUploadState();
       loadAvailableSections(selectedDisciplineCode);
       if (role === "admin" || role === "chair" || role === "dean") {
         loadChairWorkflow();
@@ -1718,13 +1808,95 @@ export default function PTFacultyStaffingMVP() {
               </div>
             </div>
             <input
+              key={uploadInputKey}
               style={ui.input}
               type="file"
               accept=".csv"
-              disabled={uploadingSchedule}
-              onChange={(e) => handleScheduleUpload(e.target.files?.[0])}
+              disabled={uploadingSchedule || previewingUpload}
+              onChange={(e) => handleScheduleFileSelection(e.target.files?.[0])}
             />
           </div>
+
+
+          {previewingUpload ? (
+            <div style={{ marginTop: 12, color: "var(--text-muted)", fontWeight: 700 }}>
+              Previewing upload impact...
+            </div>
+          ) : null}
+
+          {uploadPreview ? (
+            <div style={{ ...ui.sectionCard, marginTop: 16, borderColor: uploadPreview.ok ? "rgba(36, 51, 122, 0.18)" : "#f59e0b", background: uploadPreview.ok ? "var(--bg-soft)" : "#fffbeb" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontWeight: 800 }}>
+                    Upload impact preview{uploadPreview.fileName ? ` · ${uploadPreview.fileName}` : ""}
+                  </div>
+                  <div style={{ marginTop: 6, color: "var(--text-muted)" }}>
+                    {uploadPreview.divisionName || selectedUploadDivision} · {activeTerm.code}
+                  </div>
+                </div>
+                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                  Nothing changes until you confirm.
+                </div>
+              </div>
+
+              {uploadPreview.summary ? (
+                <div style={{ marginTop: 12, display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))" }}>
+                  <TinyStat label="Source Rows" value={uploadPreview.summary.sourceTotalRows ?? uploadPreview.summary.totalRows ?? 0} />
+                  <TinyStat label="Kept Rows" value={uploadPreview.summary.keptRowsForDivision ?? uploadPreview.summary.totalRows ?? 0} />
+                  <TinyStat label="Ignored Rows" value={uploadPreview.summary.ignoredRowsFromOtherDivisions || 0} />
+                  <TinyStat label="Bundles" value={uploadPreview.summary.importedSectionBundles ?? uploadPreview.summary.assignmentGroups ?? 0} />
+                  <TinyStat label="Will Replace" value={uploadPreview.impact?.sections || 0} />
+                  <TinyStat label="Prefs" value={uploadPreview.impact?.facultyPreferences || 0} />
+                  <TinyStat label="Assignments" value={uploadPreview.impact?.tentativeAssignments || 0} />
+                  <TinyStat label="Chair/Dean" value={uploadPreview.impact?.disciplineWindows || 0} />
+                </div>
+              ) : null}
+
+              {uploadPreview.impact?.hasProtectedWork ? (
+                <div style={{ marginTop: 12, color: "#92400e", fontWeight: 700 }}>
+                  This division already has downstream work attached. Uploading will require an extra confirmation before replacement.
+                </div>
+              ) : null}
+
+              {uploadPreview.errors?.length ? (
+                <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                  {uploadPreview.errors.map((err, idx) => (
+                    <div key={idx} style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", borderRadius: 12, padding: "10px 12px" }}>
+                      {err}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {uploadPreview.warnings?.length ? (
+                <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                  {uploadPreview.warnings.slice(0, 6).map((warn, idx) => (
+                    <div key={idx} style={{ background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1d4ed8", borderRadius: 12, padding: "10px 12px" }}>
+                      {warn}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
+                <button
+                  style={ui.btnPrimary}
+                  onClick={() => handleScheduleUpload()}
+                  disabled={!uploadPreview.ok || uploadingSchedule}
+                >
+                  Confirm Upload
+                </button>
+                <button
+                  style={ui.btn}
+                  onClick={() => clearPendingUploadState({ clearMessage: true })}
+                  disabled={uploadingSchedule}
+                >
+                  Cancel Preview
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {uploadConflict ? (
             <div style={{ ...ui.sectionCard, marginTop: 16, borderColor: "#f59e0b", background: "#fffbeb" }}>
@@ -1743,7 +1915,7 @@ export default function PTFacultyStaffingMVP() {
                 <button style={ui.btnPrimary} onClick={() => handleScheduleUpload(null, { forceReplace: true })} disabled={uploadingSchedule}>
                   Replace Division Anyway
                 </button>
-                <button style={ui.btn} onClick={() => { setUploadConflict(null); setPendingUploadFile(null); setBackendMessage(""); }}>
+                <button style={ui.btn} onClick={() => clearPendingUploadState({ clearMessage: true })}>
                   Cancel Replace
                 </button>
               </div>
