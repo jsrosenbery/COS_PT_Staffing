@@ -34,6 +34,11 @@ async function ensureDefaultTerms() {
   );
 }
 
+async function ensureAssignmentGroupColumns() {
+  await pool.query(`ALTER TABLE assignment_groups ADD COLUMN IF NOT EXISTS instructional_method TEXT`);
+  await pool.query(`ALTER TABLE assignment_groups ADD COLUMN IF NOT EXISTS display_modality TEXT`);
+}
+
 
 const hiddenColumns = new Set([
   "SCHEDULE_TYPE",
