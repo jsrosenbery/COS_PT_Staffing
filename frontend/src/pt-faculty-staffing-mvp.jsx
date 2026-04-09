@@ -1014,6 +1014,54 @@ export default function PTFacultyStaffingMVP() {
   }
 
 
+  async function loadMappingList() {
+    setLoadingMappingList(true);
+    setMappingAdminError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/subject-mapping?scope=global&termCode=${activeTerm.code}`);
+      const data = await response.json();
+      if (!response.ok) {
+        setMappingAdminError(data.error || "Could not load mappings.");
+        return;
+      }
+      setMappingList(data.mappings || []);
+      setShowMappingList(true);
+    } catch (error) {
+      setMappingAdminError(error.message || "Could not load mappings.");
+    } finally {
+      setLoadingMappingList(false);
+    }
+  }
+
+  async function handleExportMappings() {
+    setMappingAdminError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/subject-mapping/export?scope=global&termCode=${activeTerm.code}`);
+      if (!response.ok) {
+        let data = {};
+        try {
+          data = await response.json();
+        } catch (_error) {
+          data = {};
+        }
+        setMappingAdminError(data.error || "Could not export mappings.");
+        return;
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "subject-mapping.csv";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      setMappingAdminError(error.message || "Could not export mappings.");
+    }
+  }
+
+
   useEffect(() => {
     async function loadMappingStatus() {
       try {
