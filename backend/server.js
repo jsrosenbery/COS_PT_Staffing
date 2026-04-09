@@ -55,6 +55,26 @@ function normalize(value) {
   return String(value ?? "").trim();
 }
 
+function getRowValue(row, candidateKeys = []) {
+  const entries = Object.entries(row || {});
+  const normalizedEntries = entries.map(([key, value]) => [
+    String(key || "").toUpperCase().replace(/[^A-Z0-9]/g, ""),
+    value,
+  ]);
+
+  for (const candidate of candidateKeys) {
+    const normalizedCandidate = String(candidate || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "");
+    const found = normalizedEntries.find(([key]) => key === normalizedCandidate);
+    if (found && normalize(found[1])) {
+      return normalize(found[1]);
+    }
+  }
+
+  return "";
+}
+
 
 function mapInstructionalMethodToDisplayModality(rawInstructionalMethod) {
   const value = normalize(rawInstructionalMethod).toUpperCase();
@@ -69,14 +89,16 @@ function mapInstructionalMethodToDisplayModality(rawInstructionalMethod) {
 }
 
 function resolveInstructionalMethod(row) {
-  return normalize(
-    row?.INSTRUCTIONAL_METHOD ||
-    row?.INSTRUCTIONAL_METHODS ||
-    row?.INSTRUCTIONAL_METHOD_CODE ||
-    row?.INSTRUCTIONAL_METHOD_CD ||
-    row?.INSTR_METHOD ||
-    row?.METHOD
-  );
+  return getRowValue(row, [
+    "INSTRUCTIONAL_METHOD",
+    "INSTRUCTIONAL_METHODS",
+    "INSTRUCTIONAL METHOD",
+    "INSTRUCTIONAL METHODS",
+    "INSTRUCTIONAL_METHOD_CODE",
+    "INSTRUCTIONAL_METHOD_CD",
+    "INSTR_METHOD",
+    "METHOD",
+  ]);
 }
 
 function normalizeInstructor(value) {
@@ -373,7 +395,7 @@ function parseScheduleRows(rows, coverageRows) {
     const instructionalMethod = resolveInstructionalMethod(first);
     const displayModality =
       mapInstructionalMethodToDisplayModality(instructionalMethod) ||
-      toFriendlyModality(first.SCHEDULE_TYPE || first.MEETING_TYPE || "");
+      toFriendlyModality(getRowValue(first, ["SCHEDULE_TYPE", "MEETING_TYPE", "SCHEDULE TYPE", "MEETING TYPE"]));
 
     return {
       assignment_group_id: `grp_${cluster.join("_")}`,
@@ -383,7 +405,7 @@ function parseScheduleRows(rows, coverageRows) {
       all_crns: cluster,
       title: allTitles.join(" / ") || normalize(first.TITLE) || "Untitled",
       division: normalize(first.DIVISION),
-      modality: normalize(first.SCHEDULE_TYPE || first.MEETING_TYPE || ""),
+      modality: getRowValue(first, ["SCHEDULE_TYPE", "MEETING_TYPE", "SCHEDULE TYPE", "MEETING TYPE"]),
       instructional_method: instructionalMethod,
       display_modality: displayModality,
       campus: normalize(first.CAMPUS),
@@ -1426,12 +1448,6 @@ app.post("/api/disciplines/dean-approve", async (req, res) => {
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, async () => {
-  try {
-    await runSchema();
-    await ensureDefaultTerms();
-    await ensureAssignmentGroupColumns();
-    console.log(`Backend running on port ${PORT}`);
-  } catch (error) {
-    console.error("Startup initialization failed", error);
-  }
+  console.log(`Backend running on port ${PORT}`);
+  await runSchema();
 });
