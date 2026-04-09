@@ -39,6 +39,115 @@ async function ensureAssignmentGroupColumns() {
   await pool.query(`ALTER TABLE assignment_groups ADD COLUMN IF NOT EXISTS display_modality TEXT`);
 }
 
+async function ensureAssignmentIndexes() {
+  try {
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS assignments_unique_group_per_term ON assignments (term_code, assignment_group_id) WHERE status <> 'released'`);
+  } catch (error) {
+    console.warn("Could not create assignments unique index:", error.message);
+  }
+}
+
+function parseTimeToMinutes(value) {
+  const raw = normalize(value).toUpperCase();
+  if (!raw) return null;
+
+  const match = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+  if (!match) return null;
+
+  let hours = Number(match[1]) % 12;
+  const minutes = Number(match[2]);
+  if (match[3] === "PM") hours += 12;
+  return hours * 60 + minutes;
+}
+
+function normalizeMeetingDays(value) {
+  const raw = normalize(value).toUpperCase();
+  if (!raw) return [];
+  if (["TBA", "ARR", "ASYNC"].includes(raw)) return [];
+  if (/^X+$/.test(raw)) return [];
+  return raw
+    .replace(/\s+/g, "")
+    .replace(/SU/g, "U")
+    .replace(/SA/g, "A")
+    .split("")
+    .filter((token) => "MTWRFAUS".includes(token));
+}
+
+function isAsyncMeeting(meeting = {}) {
+  const days = normalize(meeting.days).toUpperCase();
+  const building = normalize(meeting.building).toUpperCase();
+  const room = normalize(meeting.room).toUpperCase();
+  const start = normalize(meeting.start_time).toUpperCase();
+  const end = normalize(meeting.end_time).toUpperCase();
+
+  return (
+    !normalizeMeetingDays(days).length ||
+    building.includes("ONLINE") ||
+    room === "N/A" ||
+    (start === "12:00AM" && end === "12:00AM")
+  );
+}
+
+function meetingsOverlap(meetingsA = [], meetingsB = []) {
+  for (const meetingA of meetingsA || []) {
+    if (isAsyncMeeting(meetingA)) continue;
+    const daysA = normalizeMeetingDays(meetingA.days);
+    const startA = parseTimeToMinutes(meetingA.start_time);
+    const endA = parseTimeToMinutes(meetingA.end_time);
+    if (!daysA.length || startA === null || endA === null || startA === endA) continue;
+
+    for (const meetingB of meetingsB || []) {
+      if (isAsyncMeeting(meetingB)) continue;
+      const daysB = normalizeMeetingDays(meetingB.days);
+      const startB = parseTimeToMinutes(meetingB.start_time);
+      const endB = parseTimeToMinutes(meetingB.end_time);
+      if (!daysB.length || startB === null || endB === null || startB === endB) continue;
+
+      const sharedDay = daysA.some((day) => daysB.includes(day));
+      const overlapsInTime = startA < endB && startB < endA;
+      if (sharedDay && overlapsInTime) return true;
+    }
+  }
+
+  return false;
+}
+
+async function getMeetingsForAssignmentGroups(termCode, assignmentGroupIds = []) {
+  const ids = Array.from(new Set((assignmentGroupIds || []).filter(Boolean)));
+  if (!termCode || !ids.length) return new Map();
+
+  const result = await pool.query(
+    `SELECT
+       ag.assignment_group_id,
+       agm.days,
+       agm.start_time,
+       agm.end_time,
+       agm.building,
+       agm.room
+     FROM assignment_groups ag
+     LEFT JOIN assignment_group_meetings agm
+       ON ag.assignment_group_id = agm.assignment_group_id
+     WHERE ag.term_code = $1
+       AND ag.assignment_group_id = ANY($2::text[])`,
+    [termCode, ids]
+  );
+
+  const map = new Map();
+  for (const row of result.rows || []) {
+    if (!map.has(row.assignment_group_id)) map.set(row.assignment_group_id, []);
+    if (row.days || row.start_time || row.end_time || row.building || row.room) {
+      map.get(row.assignment_group_id).push({
+        days: row.days,
+        start_time: row.start_time,
+        end_time: row.end_time,
+        building: row.building,
+        room: row.room,
+      });
+    }
+  }
+  return map;
+}
+
 
 const hiddenColumns = new Set([
   "SCHEDULE_TYPE",
@@ -234,6 +343,9 @@ async function runSchema() {
   try {
     const schema = fs.readFileSync("./schema.sql", "utf-8");
     await pool.query(schema);
+    await ensureAssignmentGroupColumns();
+    await ensureAssignmentIndexes();
+    await ensureDefaultTerms();
     console.log("Schema loaded successfully");
   } catch (err) {
     console.error("Error loading schema:", err.message);
@@ -1428,17 +1540,90 @@ app.get("/api/assignments", async (req, res) => {
         a.assigned_at,
         ag.primary_subject_course,
         ag.primary_crn,
-        ag.title
+        ag.title,
+        ag.campus,
+        ag.instructional_method,
+        ag.display_modality,
+        COALESCE(f.first_name || ' ' || f.last_name, a.employee_id) AS faculty_name,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'days', agm.days,
+              'start_time', agm.start_time,
+              'end_time', agm.end_time,
+              'building', agm.building,
+              'room', agm.room
+            )
+            ORDER BY agm.days NULLS LAST, agm.start_time NULLS LAST, agm.end_time NULLS LAST
+          ) FILTER (WHERE agm.id IS NOT NULL),
+          '[]'::json
+        ) AS meetings
        FROM assignments a
        LEFT JOIN assignment_groups ag
          ON ag.assignment_group_id = a.assignment_group_id
         AND ag.term_code = a.term_code
+       LEFT JOIN assignment_group_meetings agm
+         ON ag.assignment_group_id = agm.assignment_group_id
+       LEFT JOIN faculty f
+         ON f.employee_id = a.employee_id
        ${whereClause}
+       GROUP BY
+        a.id,
+        a.term_code,
+        a.discipline_code,
+        a.assignment_group_id,
+        a.employee_id,
+        a.status,
+        a.assigned_at,
+        ag.primary_subject_course,
+        ag.primary_crn,
+        ag.title,
+        ag.campus,
+        ag.instructional_method,
+        ag.display_modality,
+        f.first_name,
+        f.last_name
        ORDER BY a.assigned_at DESC`,
       params
     );
 
     res.json({ ok: true, assignments: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/decision-logs", async (req, res) => {
+  try {
+    const { termCode, disciplineCode } = req.query;
+    if (!termCode) {
+      return res.status(400).json({ error: "termCode is required." });
+    }
+
+    const params = [termCode];
+    let whereClause = "WHERE term_code = $1";
+    if (disciplineCode && disciplineCode !== "ALL") {
+      params.push(disciplineCode);
+      whereClause += ` AND discipline_code = $${params.length}`;
+    }
+
+    const result = await pool.query(
+      `SELECT
+         id,
+         term_code,
+         discipline_code,
+         actor_name,
+         event_type,
+         detail,
+         created_at
+       FROM decision_logs
+       ${whereClause}
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      params
+    );
+
+    res.json({ ok: true, logs: result.rows });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -1532,16 +1717,85 @@ app.get("/api/chair-workflow", async (req, res) => {
 
 app.post("/api/assignments", async (req, res) => {
   try {
-    const { termCode, disciplineCode, assignmentGroupId, employeeId, actorName, reason } = req.body;
+    const { termCode, disciplineCode, assignmentGroupId, employeeId, actorName, reason } = req.body || {};
 
-    await query(
+    if (!termCode || !disciplineCode || !assignmentGroupId || !employeeId) {
+      return res.status(400).json({ error: "termCode, disciplineCode, assignmentGroupId, and employeeId are required." });
+    }
+
+    const existingAssignmentResult = await query(
+      `SELECT id, employee_id, status
+       FROM assignments
+       WHERE term_code = $1
+         AND assignment_group_id = $2
+         AND status <> 'released'
+       ORDER BY assigned_at DESC
+       LIMIT 1`,
+      [termCode, assignmentGroupId]
+    );
+
+    const existingAssignment = existingAssignmentResult.rows?.[0];
+    if (existingAssignment?.employee_id === employeeId) {
+      return res.status(409).json({
+        error: "This section is already tentatively assigned to that instructor.",
+        code: "duplicate_assignment",
+      });
+    }
+
+    if (existingAssignment?.employee_id && existingAssignment.employee_id !== employeeId) {
+      return res.status(409).json({
+        error: "This section already has a tentative assignment. Undo or release it before reassigning.",
+        code: "section_already_assigned",
+        assignedEmployeeId: existingAssignment.employee_id,
+      });
+    }
+
+    const existingEmployeeAssignmentsResult = await query(
+      `SELECT
+         a.id,
+         a.assignment_group_id,
+         ag.primary_subject_course,
+         ag.primary_crn,
+         ag.title
+       FROM assignments a
+       LEFT JOIN assignment_groups ag
+         ON ag.assignment_group_id = a.assignment_group_id
+        AND ag.term_code = a.term_code
+       WHERE a.term_code = $1
+         AND a.employee_id = $2
+         AND a.assignment_group_id <> $3
+         AND a.status <> 'released'`,
+      [termCode, employeeId, assignmentGroupId]
+    );
+
+    const requestedMeetingsMap = await getMeetingsForAssignmentGroups(termCode, [
+      assignmentGroupId,
+      ...existingEmployeeAssignmentsResult.rows.map((row) => row.assignment_group_id),
+    ]);
+    const requestedMeetings = requestedMeetingsMap.get(assignmentGroupId) || [];
+
+    const conflictingAssignment = existingEmployeeAssignmentsResult.rows.find((row) =>
+      meetingsOverlap(requestedMeetings, requestedMeetingsMap.get(row.assignment_group_id) || [])
+    );
+
+    if (conflictingAssignment) {
+      return res.status(409).json({
+        error: `Conflict detected. ${employeeId} is already tentatively assigned to ${conflictingAssignment.primary_subject_course || conflictingAssignment.assignment_group_id}${conflictingAssignment.primary_crn ? ` (${conflictingAssignment.primary_crn})` : ""}.`,
+        code: "meeting_conflict",
+        conflictingAssignmentId: conflictingAssignment.id,
+        conflictingAssignmentGroupId: conflictingAssignment.assignment_group_id,
+      });
+    }
+
+    const inserted = await query(
       `INSERT INTO assignments (
         term_code,
         discipline_code,
         assignment_group_id,
         employee_id,
         status
-      ) VALUES ($1,$2,$3,$4,'tentative')`,
+      ) VALUES ($1,$2,$3,$4,'tentative')
+      RETURNING id`,
       [termCode, disciplineCode, assignmentGroupId, employeeId]
     );
 
@@ -1564,7 +1818,56 @@ app.post("/api/assignments", async (req, res) => {
       ]
     );
 
-    res.json({ ok: true });
+    res.json({ ok: true, assignmentId: inserted.rows?.[0]?.id || null, message: `Assigned ${assignmentGroupId} to ${employeeId}.` });
+  } catch (error) {
+    if (String(error.message || "").includes("assignments_unique_group_per_term")) {
+      return res.status(409).json({ error: "This section already has a tentative assignment. Undo or release it before reassigning.", code: "section_already_assigned" });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete("/api/assignments/:id", async (req, res) => {
+  try {
+    const assignmentId = Number(req.params.id);
+    const { actorName } = req.body || {};
+
+    if (!Number.isFinite(assignmentId)) {
+      return res.status(400).json({ error: "A valid assignment id is required." });
+    }
+
+    const existing = await query(
+      `SELECT term_code, discipline_code, assignment_group_id, employee_id
+       FROM assignments
+       WHERE id = $1`,
+      [assignmentId]
+    );
+
+    const row = existing.rows?.[0];
+    if (!row) {
+      return res.status(404).json({ error: "Tentative assignment not found." });
+    }
+
+    await query(`DELETE FROM assignments WHERE id = $1`, [assignmentId]);
+
+    await query(
+      `INSERT INTO decision_logs (
+        term_code,
+        discipline_code,
+        actor_name,
+        event_type,
+        detail
+      ) VALUES ($1,$2,$3,$4,$5)`,
+      [
+        row.term_code,
+        row.discipline_code,
+        actorName || "System",
+        "assignment_removed",
+        `Removed tentative assignment ${row.assignment_group_id} from ${row.employee_id}`,
+      ]
+    );
+
+    res.json({ ok: true, message: `Removed ${row.assignment_group_id} from ${row.employee_id}.` });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

@@ -223,6 +223,118 @@ function hasMeetingConflict(sectionA, sectionB) {
     && normalizeMeetingPattern(sectionA?.meetings) !== "";
 }
 
+function parseClockToMinutes(value) {
+  const raw = normalize(value).toUpperCase();
+  const match = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/);
+  if (!match) return null;
+  let hours = Number(match[1]) % 12;
+  const minutes = Number(match[2]);
+  if (match[3] === "PM") hours += 12;
+  return hours * 60 + minutes;
+}
+
+function normalizeDayTokens(value) {
+  const raw = normalize(value).toUpperCase();
+  if (!raw || ["TBA", "ARR", "ASYNC"].includes(raw) || /^X+$/.test(raw)) return [];
+  return raw
+    .replace(/\s+/g, "")
+    .replace(/SU/g, "U")
+    .replace(/SA/g, "A")
+    .split("")
+    .filter((token) => "MTWRFAUS".includes(token));
+}
+
+function isAsyncLikeMeeting(meeting = {}) {
+  const days = normalize(meeting.days).toUpperCase();
+  const building = normalize(meeting.building).toUpperCase();
+  const room = normalize(meeting.room).toUpperCase();
+  const start = normalize(meeting.start_time).toUpperCase();
+  const end = normalize(meeting.end_time).toUpperCase();
+
+  return (
+    !normalizeDayTokens(days).length
+    || building.includes("ONLINE")
+    || room === "N/A"
+    || (start === "12:00AM" && end === "12:00AM")
+  );
+}
+
+function meetingsOverlap(meetingsA = [], meetingsB = []) {
+  for (const meetingA of meetingsA || []) {
+    if (isAsyncLikeMeeting(meetingA)) continue;
+    const daysA = normalizeDayTokens(meetingA.days);
+    const startA = parseClockToMinutes(meetingA.start_time);
+    const endA = parseClockToMinutes(meetingA.end_time);
+    if (!daysA.length || startA === null || endA === null || startA === endA) continue;
+
+    for (const meetingB of meetingsB || []) {
+      if (isAsyncLikeMeeting(meetingB)) continue;
+      const daysB = normalizeDayTokens(meetingB.days);
+      const startB = parseClockToMinutes(meetingB.start_time);
+      const endB = parseClockToMinutes(meetingB.end_time);
+      if (!daysB.length || startB === null || endB === null || startB === endB) continue;
+
+      const sharedDay = daysA.some((day) => daysB.includes(day));
+      const overlapsInTime = startA < endB && startB < endA;
+      if (sharedDay && overlapsInTime) return true;
+    }
+  }
+
+  return false;
+}
+
+function sectionMethodLabel(section) {
+  return normalize(section?.instructional_method) || "TBA";
+}
+
+function sectionModalityLabel(section) {
+  return normalize(section?.display_modality || section?.modality) || "TBA";
+}
+
+function pillStyle(background, color, borderColor) {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "5px 10px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 800,
+    background,
+    color,
+    border: `1px solid ${borderColor}`,
+  };
+}
+
+function methodPillStyle(method) {
+  const key = normalize(method).toUpperCase();
+  if (key === "IP") return pillStyle("#dcfce7", "#166534", "#86efac");
+  if (key === "HYB") return pillStyle("#fef3c7", "#92400e", "#fcd34d");
+  if (key === "FLX") return pillStyle("#ede9fe", "#5b21b6", "#c4b5fd");
+  if (key === "ONL") return pillStyle("#dbeafe", "#1d4ed8", "#93c5fd");
+  if (key === "DE") return pillStyle("#ffedd5", "#c2410c", "#fdba74");
+  return pillStyle("#e2e8f0", "#334155", "#cbd5e1");
+}
+
+function modalityPillStyle(modality) {
+  const key = normalize(modality).toLowerCase();
+  if (key.includes("person")) return pillStyle("#dcfce7", "#166534", "#86efac");
+  if (key.includes("hybrid flex") || key.includes("hyflex") || key.includes("flex")) return pillStyle("#ede9fe", "#5b21b6", "#c4b5fd");
+  if (key.includes("hybrid")) return pillStyle("#fef3c7", "#92400e", "#fcd34d");
+  if (key.includes("online")) return pillStyle("#dbeafe", "#1d4ed8", "#93c5fd");
+  if (key.includes("dual")) return pillStyle("#ffedd5", "#c2410c", "#fdba74");
+  return pillStyle("#e2e8f0", "#334155", "#cbd5e1");
+}
+
+function workflowStatePillStyle(kind) {
+  if (kind === "assigned") return pillStyle("#dcfce7", "#166534", "#86efac");
+  if (kind === "top") return pillStyle("#dbeafe", "#1d4ed8", "#93c5fd");
+  if (kind === "bypass") return pillStyle("#ffedd5", "#c2410c", "#fdba74");
+  if (kind === "conflict") return pillStyle("#fee2e2", "#b91c1c", "#fca5a5");
+  if (kind === "filled") return pillStyle("#e2e8f0", "#334155", "#cbd5e1");
+  return pillStyle("#f8fafc", "#475569", "#cbd5e1");
+}
+
 function reorderList(items, startIndex, endIndex) {
   const next = [...items];
   const [removed] = next.splice(startIndex, 1);
@@ -400,6 +512,7 @@ export default function PTFacultyStaffingMVP() {
   const [selectedDisciplineCode, setSelectedDisciplineCode] = useState("ALL");
   const [chairWorkflowRows, setChairWorkflowRows] = useState([]);
   const [tentativeAssignments, setTentativeAssignments] = useState([]);
+  const [decisionLogs, setDecisionLogs] = useState([]);
   const [chairMessage, setChairMessage] = useState("");
   const [loadingChairWorkflow, setLoadingChairWorkflow] = useState(false);
   const [facultyPreferences, setFacultyPreferences] = useState([]);
@@ -993,12 +1106,14 @@ export default function PTFacultyStaffingMVP() {
       if (selectedDisciplineCode && selectedDisciplineCode !== "ALL") {
         params.set("disciplineCode", selectedDisciplineCode);
       }
-      const [workflowResponse, assignmentsResponse] = await Promise.all([
+      const [workflowResponse, assignmentsResponse, decisionLogsResponse] = await Promise.all([
         fetch(`${API_BASE}/api/chair-workflow?${params.toString()}`),
         fetch(`${API_BASE}/api/assignments?${params.toString()}`),
+        fetch(`${API_BASE}/api/decision-logs?${params.toString()}`),
       ]);
       const workflowData = await workflowResponse.json();
       const assignmentsData = await assignmentsResponse.json();
+      const decisionLogsData = await decisionLogsResponse.json();
       if (!workflowResponse.ok) {
         setChairMessage(workflowData.error || "Could not load chair workflow.");
         setChairWorkflowRows([]);
@@ -1011,10 +1126,16 @@ export default function PTFacultyStaffingMVP() {
       } else {
         setTentativeAssignments(assignmentsData.assignments || []);
       }
+      if (!decisionLogsResponse.ok) {
+        setDecisionLogs([]);
+      } else {
+        setDecisionLogs(decisionLogsData.logs || []);
+      }
     } catch (error) {
       setChairMessage(error.message || "Could not load chair workflow.");
       setChairWorkflowRows([]);
       setTentativeAssignments([]);
+      setDecisionLogs([]);
     } finally {
       setLoadingChairWorkflow(false);
     }
@@ -1051,90 +1172,126 @@ export default function PTFacultyStaffingMVP() {
         setChairMessage(data.error || "Could not save tentative assignment.");
         return;
       }
-      setChairMessage(`Tentatively assigned ${row.primary_subject_course} to ${row.faculty_name}.`);
+      setChairMessage(data.message || `Tentatively assigned ${row.primary_subject_course} to ${row.faculty_name}.`);
       await loadChairWorkflow();
     } catch (error) {
       setChairMessage(error.message || "Could not save tentative assignment.");
     }
   }
 
+  async function undoTentativeAssignment(assignment) {
+    if (!assignment?.id) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/assignments/${assignment.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorName: role === "chair" ? selectedChairName : role === "dean" ? selectedDeanName : "Scheduler / Admin",
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setChairMessage(data.error || "Could not remove tentative assignment.");
+        return;
+      }
+      setChairMessage(data.message || `Removed ${assignment.primary_subject_course || assignment.assignment_group_id}.`);
+      await loadChairWorkflow();
+    } catch (error) {
+      setChairMessage(error.message || "Could not remove tentative assignment.");
+    }
+  }
 
-  const assignedElsewhereByEmployee = useMemo(() => {
+  function compareWorkflowRows(a, b) {
+    const srA = Number.isFinite(Number(a.seniority_rank)) ? Number(a.seniority_rank) : 999999;
+    const srB = Number.isFinite(Number(b.seniority_rank)) ? Number(b.seniority_rank) : 999999;
+    if (srA !== srB) return srA - srB;
+    return (a.preference_rank || 999999) - (b.preference_rank || 999999);
+  }
+
+  const tentativeAssignmentsByEmployee = useMemo(() => {
     const map = new Map();
     tentativeAssignments.forEach((assignment) => {
       const arr = map.get(assignment.employee_id) || [];
-      arr.push(assignment.assignment_group_id);
+      arr.push(assignment);
       map.set(assignment.employee_id, arr);
     });
     return map;
   }, [tentativeAssignments]);
 
+  const tentativeAssignmentByGroup = useMemo(() => {
+    const map = new Map();
+    tentativeAssignments.forEach((assignment) => {
+      map.set(assignment.assignment_group_id, assignment);
+    });
+    return map;
+  }, [tentativeAssignments]);
+
+  const workflowRowsWithState = useMemo(() => (
+    chairWorkflowRows.map((row) => {
+      const otherAssignments = (tentativeAssignmentsByEmployee.get(row.employee_id) || [])
+        .filter((assignment) => assignment.assignment_group_id !== row.assignment_group_id);
+      const conflictingAssignment = otherAssignments.find((assignment) =>
+        meetingsOverlap(assignment.meetings || [], row.meetings || [])
+      );
+      const sectionAssignment = tentativeAssignmentByGroup.get(row.assignment_group_id);
+      const assignedToThisSection = sectionAssignment?.employee_id === row.employee_id;
+
+      return {
+        ...row,
+        has_tentative_assignment: assignedToThisSection,
+        assigned_elsewhere: otherAssignments.length > 0,
+        conflicting_assignment: conflictingAssignment || null,
+        has_assignment_conflict: Boolean(conflictingAssignment),
+        section_assigned_to_other: Boolean(sectionAssignment && sectionAssignment.employee_id !== row.employee_id),
+      };
+    })
+  ), [chairWorkflowRows, tentativeAssignmentsByEmployee, tentativeAssignmentByGroup]);
+
   const activeSectionCandidates = useMemo(() => {
     const grouped = new Map();
-    chairWorkflowRows.forEach((row) => {
-      const assignedGroups = assignedElsewhereByEmployee.get(row.employee_id) || [];
-      const assignedToDifferentSection =
-        assignedGroups.length > 0 && !assignedGroups.includes(row.assignment_group_id);
-      if (assignedToDifferentSection) {
-        return;
-      }
+    workflowRowsWithState.forEach((row) => {
+      if (row.has_assignment_conflict || row.section_assigned_to_other) return;
       const arr = grouped.get(row.assignment_group_id) || [];
       arr.push(row);
       grouped.set(row.assignment_group_id, arr);
     });
 
     grouped.forEach((arr, key) => {
-      arr.sort((a, b) => {
-        const srA = Number.isFinite(Number(a.seniority_rank)) ? Number(a.seniority_rank) : 999999;
-        const srB = Number.isFinite(Number(b.seniority_rank)) ? Number(b.seniority_rank) : 999999;
-        if (srA !== srB) return srA - srB;
-        return (a.preference_rank || 999999) - (b.preference_rank || 999999);
-      });
-      grouped.set(key, arr);
+      grouped.set(key, [...arr].sort(compareWorkflowRows));
     });
 
     return grouped;
-  }, [chairWorkflowRows, assignedElsewhereByEmployee]);
+  }, [workflowRowsWithState]);
 
-  const instructorWorkflow = useMemo(() => {
+  const sectionQueue = useMemo(() => {
     const grouped = new Map();
-    chairWorkflowRows.forEach((row) => {
-      const assignedGroups = assignedElsewhereByEmployee.get(row.employee_id) || [];
-      const arr = grouped.get(row.employee_id) || [];
-      arr.push({
-        ...row,
-        has_tentative_assignment: assignedGroups.includes(row.assignment_group_id),
-        assigned_elsewhere: assignedGroups.length > 0 && !assignedGroups.includes(row.assignment_group_id),
-        is_current_top_candidate:
-          (activeSectionCandidates.get(row.assignment_group_id) || [])[0]?.employee_id === row.employee_id,
-        section_assigned_to_other:
-          tentativeAssignments.some(
-            (assignment) =>
-              assignment.assignment_group_id === row.assignment_group_id &&
-              assignment.employee_id !== row.employee_id
-          ),
-      });
-      grouped.set(row.employee_id, arr);
+    workflowRowsWithState.forEach((row) => {
+      const arr = grouped.get(row.assignment_group_id) || [];
+      arr.push(row);
+      grouped.set(row.assignment_group_id, arr);
     });
 
-    return Array.from(grouped.values())
-      .map((rows) =>
-        rows.sort((a, b) => {
-          const srA = Number.isFinite(Number(a.seniority_rank)) ? Number(a.seniority_rank) : 999999;
-          const srB = Number.isFinite(Number(b.seniority_rank)) ? Number(b.seniority_rank) : 999999;
-          if (srA !== srB) return srA - srB;
-          return (a.preference_rank || 999999) - (b.preference_rank || 999999);
-        })
-      )
-      .sort((a, b) => {
-        const firstA = a[0] || {};
-        const firstB = b[0] || {};
-        const srA = Number.isFinite(Number(firstA.seniority_rank)) ? Number(firstA.seniority_rank) : 999999;
-        const srB = Number.isFinite(Number(firstB.seniority_rank)) ? Number(firstB.seniority_rank) : 999999;
-        if (srA !== srB) return srA - srB;
-        return String(firstA.faculty_name || "").localeCompare(String(firstB.faculty_name || ""));
-      });
-  }, [chairWorkflowRows, activeSectionCandidates, tentativeAssignments, assignedElsewhereByEmployee]);
+    return Array.from(grouped.entries())
+      .map(([assignmentGroupId, rows]) => {
+        const sortedRows = [...rows].sort(compareWorkflowRows);
+        const template = sortedRows[0] || {};
+        return {
+          assignment_group_id: assignmentGroupId,
+          discipline_code: template.discipline_code,
+          primary_subject_course: template.primary_subject_course,
+          primary_crn: template.primary_crn,
+          title: template.title,
+          campus: template.campus,
+          instructional_method: template.instructional_method,
+          display_modality: template.display_modality,
+          meetings: template.meetings,
+          candidates: sortedRows,
+          eligibleCandidates: activeSectionCandidates.get(assignmentGroupId) || [],
+          currentAssignment: tentativeAssignmentByGroup.get(assignmentGroupId) || null,
+        };
+      })
+      .sort((a, b) => String(a.primary_subject_course || "").localeCompare(String(b.primary_subject_course || "")) || String(a.primary_crn || "").localeCompare(String(b.primary_crn || "")));
+  }, [workflowRowsWithState, activeSectionCandidates, tentativeAssignmentByGroup]);
 
   const summary = {
     ready: disciplines.filter((d) => d.status === "ready").length,
@@ -1787,7 +1944,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </div>
                         <div style={{ marginTop: 6 }}>{item.title || ""}</div>
                         <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
-                          {formatMeetings(item.meetings)} • {item.campus || ""} • {item.display_modality || item.modality || ""}
+                          {formatMeetings(item.meetings)} • {item.campus || ""} • {sectionMethodLabel(item)} • {sectionModalityLabel(item)}
                         </div>
                         <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
                           <button disabled={index === 0} style={ui.btn} onClick={() => movePreference(index, index - 1)}>Move Up</button>
@@ -1866,8 +2023,12 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <td style={ui.td}>{formatMeetings(section.meetings)}</td>
                       <td style={ui.td}>{formatUnits(section.units)}</td>
                       <td style={ui.td}>{section.campus || ""}</td>
-                      <td style={ui.td}>{section.instructional_method || ""}</td>
-                      <td style={ui.td}>{section.display_modality || section.modality || ""}</td>
+                      <td style={ui.td}>
+                        <span style={methodPillStyle(sectionMethodLabel(section))}>{sectionMethodLabel(section)}</span>
+                      </td>
+                      <td style={ui.td}>
+                        <span style={modalityPillStyle(sectionModalityLabel(section))}>{sectionModalityLabel(section)}</span>
+                      </td>
                       {role === "faculty" ? (
                         <td style={ui.td}>
                           <button style={ui.btnPrimary} onClick={() => addPreference(section)}>
@@ -1893,6 +2054,178 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </table>
           </div>
         </div>
+
+        {(role === "admin" || role === "chair" || role === "dean") ? (
+          <div style={ui.card}>
+            <div style={ui.between}>
+              <div>
+                <h2 style={ui.cardTitle}>Instructor-First Assignment Workflow</h2>
+                <div style={ui.cardDesc}>
+                  Seniority stays in front, preference rank breaks ties, and tentative assignments now recalculate by real meeting conflicts instead of a blanket one-section-only rule.
+                </div>
+              </div>
+              <button style={ui.btnPrimary} onClick={loadChairWorkflow}>
+                {loadingChairWorkflow ? "Refreshing..." : "Refresh Workflow"}
+              </button>
+            </div>
+
+            {chairMessage ? (
+              <div style={{ marginTop: 12, color: chairMessage.toLowerCase().includes("could not") || chairMessage.toLowerCase().includes("conflict") || chairMessage.toLowerCase().includes("required") || chairMessage.toLowerCase().includes("already") ? "#b91c1c" : "#166534", fontWeight: 700 }}>
+                {chairMessage}
+              </div>
+            ) : null}
+
+            <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
+              {sectionQueue.length} queued section(s), {tentativeAssignments.length} tentative assignment(s), {decisionLogs.length} recent decision log entr{decisionLogs.length === 1 ? "y" : "ies"}.
+            </div>
+
+            <div className="cos-panel-grid" style={{ ...ui.panelGrid, marginTop: 16 }}>
+              <div style={{ display: "grid", gap: 12 }}>
+                {sectionQueue.length ? sectionQueue.map((section) => {
+                  const topCandidate = section.eligibleCandidates[0] || null;
+                  return (
+                    <div key={section.assignment_group_id} style={{ ...ui.sectionCard, borderColor: section.currentAssignment ? "#bbf7d0" : "var(--border-color)", background: section.currentAssignment ? "rgba(220, 252, 231, 0.28)" : "var(--bg-card)" }}>
+                      <div style={{ ...ui.between, alignItems: "flex-start" }}>
+                        <div>
+                          <div style={{ fontWeight: 800 }}>{section.primary_subject_course} • {section.primary_crn}</div>
+                          <div style={{ marginTop: 4 }}>{section.title || "Untitled"}</div>
+                          <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                            {formatMeetings(section.meetings)}
+                            {section.campus ? ` • ${section.campus}` : ""}
+                            {section.discipline_code ? ` • ${section.discipline_code}` : ""}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                          <span style={methodPillStyle(sectionMethodLabel(section))}>{sectionMethodLabel(section)}</span>
+                          <span style={modalityPillStyle(sectionModalityLabel(section))}>{sectionModalityLabel(section)}</span>
+                          {section.currentAssignment ? (
+                            <span style={workflowStatePillStyle("assigned")}>Assigned</span>
+                          ) : topCandidate ? (
+                            <span style={workflowStatePillStyle("top")}>Next in line ready</span>
+                          ) : (
+                            <span style={workflowStatePillStyle("conflict")}>No eligible candidate</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {section.currentAssignment ? (
+                        <div style={{ marginTop: 10, color: "#166534", fontWeight: 700 }}>
+                          Tentatively assigned to {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
+                        </div>
+                      ) : null}
+
+                      <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                        {section.candidates.slice(0, 5).map((row) => {
+                          const isTop = topCandidate?.employee_id === row.employee_id;
+                          return (
+                            <div key={`${section.assignment_group_id}-${row.employee_id}`} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: row.has_tentative_assignment ? "rgba(220, 252, 231, 0.22)" : row.has_assignment_conflict ? "rgba(254, 226, 226, 0.22)" : "var(--bg-soft)" }}>
+                              <div style={{ ...ui.between, alignItems: "flex-start" }}>
+                                <div>
+                                  <div style={{ fontWeight: 700 }}>{row.faculty_name}</div>
+                                  <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
+                                    Seniority #{row.seniority_rank || "—"} • Preference #{row.preference_rank || "—"}
+                                  </div>
+                                  {row.has_assignment_conflict ? (
+                                    <div style={{ marginTop: 6, color: "#b91c1c", fontSize: 12, fontWeight: 700 }}>
+                                      Time conflict with {row.conflicting_assignment?.primary_subject_course || row.conflicting_assignment?.assignment_group_id}.
+                                    </div>
+                                  ) : null}
+                                  {!row.has_assignment_conflict && row.assigned_elsewhere ? (
+                                    <div style={{ marginTop: 6, color: "#92400e", fontSize: 12, fontWeight: 700 }}>
+                                      Has other tentative assignment(s), but no time collision.
+                                    </div>
+                                  ) : null}
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                    {row.has_tentative_assignment ? <span style={workflowStatePillStyle("assigned")}>Assigned</span> : null}
+                                    {!row.has_tentative_assignment && row.section_assigned_to_other ? <span style={workflowStatePillStyle("filled")}>Section filled</span> : null}
+                                    {!row.has_tentative_assignment && row.has_assignment_conflict ? <span style={workflowStatePillStyle("conflict")}>Time conflict</span> : null}
+                                    {!row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isTop ? <span style={workflowStatePillStyle("top")}>Top candidate</span> : null}
+                                    {!row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && !isTop ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
+                                  </div>
+                                  {row.has_tentative_assignment ? (
+                                    <button style={ui.btn} disabled>Assigned</button>
+                                  ) : row.section_assigned_to_other ? (
+                                    <button style={ui.btn} disabled>Filled</button>
+                                  ) : row.has_assignment_conflict ? (
+                                    <button style={ui.btn} disabled>Time Conflict</button>
+                                  ) : (
+                                    <button style={isTop ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, topCandidate?.employee_id)}>
+                                      {isTop ? "Assign" : "Assign with Rationale"}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }) : (
+                  <div style={{ ...ui.sectionCard, color: "var(--text-muted)" }}>
+                    No instructor preference queue is available yet. Save faculty preferences first, then refresh this workflow.
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "grid", gap: 16 }}>
+                <div style={ui.sectionCard}>
+                  <div style={{ fontWeight: 800 }}>Tentative Assignments</div>
+                  <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
+                    Live persistence snapshot with one-click undo.
+                  </div>
+                  <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                    {tentativeAssignments.length ? tentativeAssignments.map((assignment) => (
+                      <div key={assignment.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: "var(--bg-soft)" }}>
+                        <div style={{ ...ui.between, alignItems: "flex-start" }}>
+                          <div>
+                            <div style={{ fontWeight: 700 }}>{assignment.primary_subject_course} • {assignment.primary_crn}</div>
+                            <div style={{ marginTop: 4 }}>{assignment.faculty_name || assignment.employee_id}</div>
+                            <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                              {formatMeetings(assignment.meetings)}
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                              <span style={methodPillStyle(sectionMethodLabel(assignment))}>{sectionMethodLabel(assignment)}</span>
+                              <span style={modalityPillStyle(sectionModalityLabel(assignment))}>{sectionModalityLabel(assignment)}</span>
+                            </div>
+                          </div>
+                          <button style={ui.btn} onClick={() => undoTentativeAssignment(assignment)}>Undo</button>
+                        </div>
+                      </div>
+                    )) : (
+                      <div style={{ color: "var(--text-subtle)" }}>No tentative assignments saved yet.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={ui.sectionCard}>
+                  <div style={{ fontWeight: 800 }}>Decision Log</div>
+                  <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
+                    Every assignment, bypass, and undo leaves breadcrumbs instead of disappearing into fog.
+                  </div>
+                  <div style={{ display: "grid", gap: 10, marginTop: 12, maxHeight: 540, overflowY: "auto", paddingRight: 4 }}>
+                    {decisionLogs.length ? decisionLogs.map((entry) => (
+                      <div key={entry.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: "var(--bg-soft)" }}>
+                        <div style={{ ...ui.between, alignItems: "flex-start" }}>
+                          <div style={{ fontWeight: 700 }}>{entry.actor_name}</div>
+                          <span style={workflowStatePillStyle(entry.event_type === "assignment_removed" ? "filled" : entry.event_type === "bypassed_preference" ? "bypass" : "top")}>{entry.event_type.replace(/_/g, " ")}</span>
+                        </div>
+                        <div style={{ marginTop: 6, fontSize: 13 }}>{entry.detail}</div>
+                        <div style={{ marginTop: 6, color: "var(--text-subtle)", fontSize: 12 }}>
+                          {entry.discipline_code || "All disciplines"} • {new Date(entry.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                    )) : (
+                      <div style={{ color: "var(--text-subtle)" }}>No decision log entries yet.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
       </div>
     </div>
