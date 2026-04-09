@@ -375,7 +375,47 @@ function workflowStatePillStyle(kind) {
   if (kind === "bypass") return pillStyle("#ffedd5", "#c2410c", "#fdba74");
   if (kind === "conflict") return pillStyle("#fee2e2", "#b91c1c", "#fca5a5");
   if (kind === "filled") return pillStyle("#e2e8f0", "#334155", "#cbd5e1");
+  if (kind === "advanced") return pillStyle("#ede9fe", "#5b21b6", "#c4b5fd");
+  if (kind === "loaded") return pillStyle("#ecfccb", "#3f6212", "#bef264");
   return pillStyle("#f8fafc", "#475569", "#cbd5e1");
+}
+
+function divisionStatusMeta(status) {
+  if (status === "advanced") {
+    return {
+      label: "Advanced",
+      kind: "advanced",
+      note: "Chair or dean activity already exists.",
+    };
+  }
+  if (status === "in_progress") {
+    return {
+      label: "In Progress",
+      kind: "top",
+      note: "Preferences or tentative assignments are in play.",
+    };
+  }
+  if (status === "loaded") {
+    return {
+      label: "Loaded",
+      kind: "loaded",
+      note: "Schedule is loaded, but downstream work has not started.",
+    };
+  }
+  return {
+    label: "Clean",
+    kind: "filled",
+    note: "No division-specific schedule activity yet.",
+  };
+}
+
+function logEventKind(entry = {}) {
+  const eventType = normalize(entry?.event_type).toLowerCase();
+  if (["assignment_removed"].includes(eventType)) return "filled";
+  if (["bypassed_preference", "reassigned", "schedule_reupload"].includes(eventType)) return "bypass";
+  if (["chair_finalized", "dean_approved"].includes(eventType)) return "advanced";
+  if (["schedule_upload", "assigned", "faculty_submission"].includes(eventType)) return "top";
+  return "filled";
 }
 
 function reorderList(items, startIndex, endIndex) {
@@ -588,6 +628,8 @@ export default function PTFacultyStaffingMVP() {
   const [uploadPreview, setUploadPreview] = useState(null);
   const [previewingUpload, setPreviewingUpload] = useState(false);
   const [uploadInputKey, setUploadInputKey] = useState(0);
+  const [divisionStatuses, setDivisionStatuses] = useState([]);
+  const [loadingDivisionStatuses, setLoadingDivisionStatuses] = useState(false);
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
 
@@ -737,6 +779,34 @@ export default function PTFacultyStaffingMVP() {
     ).sort((a, b) => a.localeCompare(b))
   ), []);
 
+  const divisionStatusMap = useMemo(() => {
+    const map = new Map();
+    (divisionStatuses || []).forEach((row) => {
+      if (row?.division) map.set(row.division, row);
+    });
+    return map;
+  }, [divisionStatuses]);
+
+  const divisionStatusCards = useMemo(() => {
+    return uploadDivisionOptions.map((division) => {
+      const statusRow = divisionStatusMap.get(division) || {
+        division,
+        status: "clean",
+        sectionCount: 0,
+        preferenceCount: 0,
+        submissionCount: 0,
+        tentativeAssignmentCount: 0,
+        approvedAssignmentCount: 0,
+        chairFinalizedCount: 0,
+        deanApprovedCount: 0,
+      };
+      return {
+        ...statusRow,
+        meta: divisionStatusMeta(statusRow.status),
+      };
+    });
+  }, [uploadDivisionOptions, divisionStatusMap]);
+
   useEffect(() => {
     if (!selectedUploadDivision && uploadDivisionOptions.length) {
       setSelectedUploadDivision(uploadDivisionOptions[0]);
@@ -749,6 +819,10 @@ export default function PTFacultyStaffingMVP() {
     setPendingUploadFile(null);
     setUploadInputKey((value) => value + 1);
   }, [selectedUploadDivision, activeTerm.code]);
+
+  useEffect(() => {
+    loadDivisionStatuses();
+  }, [activeTerm?.code]);
 
   const selectedFaculty = useMemo(
     () => faculty.find((item) => item.id === selectedFacultyId) || faculty[0],
@@ -907,6 +981,14 @@ export default function PTFacultyStaffingMVP() {
       });
   }, [chairWorkflowRows, tentativeAssignments, sectionFilters]);
 
+  const currentAssignmentByGroup = useMemo(() => {
+    const map = new Map();
+    tentativeAssignments.forEach((assignment) => {
+      if (assignment?.assignment_group_id) map.set(assignment.assignment_group_id, assignment);
+    });
+    return map;
+  }, [tentativeAssignments]);
+
   const conflictIds = useMemo(() => {
     const ids = new Set();
     facultyPreferences.forEach((preference, index) => {
@@ -971,6 +1053,24 @@ export default function PTFacultyStaffingMVP() {
 
 
 
+  async function loadDivisionStatuses() {
+    if (!activeTerm?.code) return;
+    setLoadingDivisionStatuses(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/division-statuses?termCode=${encodeURIComponent(activeTerm.code)}`);
+      const data = await response.json();
+      if (!response.ok) {
+        setDivisionStatuses([]);
+        return;
+      }
+      setDivisionStatuses(Array.isArray(data.divisions) ? data.divisions : []);
+    } catch (_error) {
+      setDivisionStatuses([]);
+    } finally {
+      setLoadingDivisionStatuses(false);
+    }
+  }
+
   async function loadChairWorkflow() {
     if (!activeTerm?.code) return;
     setLoadingChairWorkflow(true);
@@ -1015,6 +1115,7 @@ export default function PTFacultyStaffingMVP() {
       setChairWorkflowRows(Array.isArray(workflowData.rows) ? workflowData.rows : []);
       setTentativeAssignments(Array.isArray(assignmentsData.assignments) ? assignmentsData.assignments : []);
       setDecisionLogs(Array.isArray(logsData.logs) ? logsData.logs : []);
+      loadDivisionStatuses();
     } catch (error) {
       setChairMessage(error.message || "Could not load workflow.");
       setChairWorkflowRows([]);
@@ -1086,6 +1187,42 @@ export default function PTFacultyStaffingMVP() {
       await loadChairWorkflow();
     } catch (error) {
       setChairMessage(error.message || "Could not remove tentative assignment.");
+    }
+  }
+
+
+  async function reassignTentativeAssignment(assignment, candidateRow) {
+    if (!assignment?.id || !candidateRow?.employee_id) return;
+    const reason = window.prompt(
+      `Reassign ${assignment.primary_subject_course || assignment.assignment_group_id} from ${assignment.faculty_name || assignment.employee_id} to ${candidateRow.faculty_name || candidateRow.employee_id}. Enter a brief rationale:`,
+      ""
+    ) || "";
+    if (!reason.trim()) {
+      setChairMessage("A rationale is required when reassigning a section.");
+      return;
+    }
+
+    setChairMessage("");
+    try {
+      const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
+      const response = await fetch(`${API_BASE}/api/assignments/${assignment.id}/reassign`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employeeId: candidateRow.employee_id,
+          actorName,
+          reason: reason.trim(),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setChairMessage(data.error || "Could not reassign section.");
+        return;
+      }
+      setChairMessage(data.message || "Tentative assignment reassigned.");
+      await loadChairWorkflow();
+    } catch (error) {
+      setChairMessage(error.message || "Could not reassign section.");
     }
   }
   async function loadFacultyPreferences(facultyId = selectedFacultyId) {
@@ -1790,6 +1927,44 @@ export default function PTFacultyStaffingMVP() {
           <div style={ui.cardDesc}>
             Upload one division at a time after subject mapping is in place. You can upload a full college-wide file and the system will keep only rows that match the selected division, then replace only that division for the active term.
           </div>
+          <div style={{ marginTop: 16 }}>
+            <div style={{ ...ui.between, marginBottom: 10, gap: 12, flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 800 }}>Division Status</div>
+              <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                {loadingDivisionStatuses ? "Refreshing division activity..." : "Clean, loaded, in progress, or advanced at a glance."}
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+              {divisionStatusCards.map((item) => (
+                <button
+                  key={item.division}
+                  type="button"
+                  onClick={() => setSelectedUploadDivision(item.division)}
+                  style={{
+                    textAlign: "left",
+                    border: selectedUploadDivision === item.division ? "1px solid rgba(240,84,35,0.45)" : "1px solid var(--border-soft)",
+                    background: selectedUploadDivision === item.division ? "linear-gradient(135deg, rgba(36,51,122,0.10), rgba(240,84,35,0.08), rgba(127,190,65,0.10))" : "var(--bg-soft)",
+                    borderRadius: 16,
+                    padding: 12,
+                    cursor: "pointer",
+                    color: "var(--text-main)",
+                  }}
+                >
+                  <div style={{ ...ui.between, alignItems: "center", gap: 8 }}>
+                    <div style={{ fontWeight: 800 }}>{item.division}</div>
+                    <span style={workflowStatePillStyle(item.meta.kind)}>{item.meta.label}</span>
+                  </div>
+                  <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 13 }}>{item.meta.note}</div>
+                  <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <span style={workflowStatePillStyle("filled")}>{item.sectionCount || 0} sections</span>
+                    {(item.preferenceCount || item.submissionCount) ? <span style={workflowStatePillStyle("top")}>{(item.preferenceCount || 0) + (item.submissionCount || 0)} prefs/submissions</span> : null}
+                    {item.tentativeAssignmentCount ? <span style={workflowStatePillStyle("assigned")}>{item.tentativeAssignmentCount} tentative</span> : null}
+                    {(item.chairFinalizedCount || item.deanApprovedCount || item.approvedAssignmentCount) ? <span style={workflowStatePillStyle("advanced")}>{(item.chairFinalizedCount || 0) + (item.deanApprovedCount || 0) + (item.approvedAssignmentCount || 0)} finalized/approved</span> : null}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
           <div style={{ marginTop: 16, display: "grid", gap: 12, maxWidth: 720 }}>
             <div>
               <div style={{ marginBottom: 6, fontWeight: 700 }}>Division</div>
@@ -2484,7 +2659,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
               <div>
                 <h2 style={ui.cardTitle}>Instructor-First Assignment Workflow</h2>
                 <div style={ui.cardDesc}>
-                  Seniority stays in front, preference rank breaks ties, and tentative assignments now recalculate by real meeting conflicts instead of a blanket one-section-only rule.
+                  Seniority stays in front, preference rank breaks ties, tentative assignments recalculate by real meeting conflicts, and chairs can now reassign without detouring through an unassign-first shuffle.
                 </div>
               </div>
               <button style={ui.btnPrimary} onClick={loadChairWorkflow}>
@@ -2540,14 +2715,21 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                         {section.candidates.slice(0, 5).map((row) => {
                           const isTop = topCandidate?.employee_id === row.employee_id;
+                          const currentAssignment = currentAssignmentByGroup.get(section.assignment_group_id) || section.currentAssignment || null;
+                          const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
                           return (
-                            <div key={`${section.assignment_group_id}-${row.employee_id}`} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: row.has_tentative_assignment ? "rgba(220, 252, 231, 0.22)" : row.has_assignment_conflict ? "rgba(254, 226, 226, 0.22)" : "var(--bg-soft)" }}>
+                            <div key={`${section.assignment_group_id}-${row.employee_id}`} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: row.has_tentative_assignment || isCurrentAssignee ? "rgba(220, 252, 231, 0.22)" : row.has_assignment_conflict ? "rgba(254, 226, 226, 0.22)" : "var(--bg-soft)" }}>
                               <div style={{ ...ui.between, alignItems: "flex-start" }}>
                                 <div>
                                   <div style={{ fontWeight: 700 }}>{row.faculty_name}</div>
                                   <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
                                     Seniority #{row.seniority_rank || "—"} • Preference #{row.preference_rank || "—"}
                                   </div>
+                                  {isCurrentAssignee ? (
+                                    <div style={{ marginTop: 6, color: "#166534", fontSize: 12, fontWeight: 700 }}>
+                                      Current tentative assignee.
+                                    </div>
+                                  ) : null}
                                   {row.has_assignment_conflict ? (
                                     <div style={{ marginTop: 6, color: "#b91c1c", fontSize: 12, fontWeight: 700 }}>
                                       Time conflict with {row.conflicting_assignment?.primary_subject_course || row.conflicting_assignment?.assignment_group_id}.
@@ -2561,18 +2743,23 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                 </div>
                                 <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                                    {row.has_tentative_assignment ? <span style={workflowStatePillStyle("assigned")}>Assigned</span> : null}
-                                    {!row.has_tentative_assignment && row.section_assigned_to_other ? <span style={workflowStatePillStyle("filled")}>Section filled</span> : null}
-                                    {!row.has_tentative_assignment && row.has_assignment_conflict ? <span style={workflowStatePillStyle("conflict")}>Time conflict</span> : null}
-                                    {!row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isTop ? <span style={workflowStatePillStyle("top")}>Top candidate</span> : null}
-                                    {!row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && !isTop ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
+                                    {isCurrentAssignee || row.has_tentative_assignment ? <span style={workflowStatePillStyle("assigned")}>{isCurrentAssignee ? "Current assignee" : "Assigned"}</span> : null}
+                                    {!isCurrentAssignee && !row.has_tentative_assignment && row.section_assigned_to_other ? <span style={workflowStatePillStyle("filled")}>Section filled</span> : null}
+                                    {!isCurrentAssignee && !row.has_tentative_assignment && row.has_assignment_conflict ? <span style={workflowStatePillStyle("conflict")}>Time conflict</span> : null}
+                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isTop ? <span style={workflowStatePillStyle("top")}>Top candidate</span> : null}
+                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && !isTop ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
+                                    {section.currentAssignment && !isCurrentAssignee && !row.has_assignment_conflict ? <span style={workflowStatePillStyle("bypass")}>Reassign requires rationale</span> : null}
                                   </div>
-                                  {row.has_tentative_assignment ? (
-                                    <button style={ui.btn} disabled>Assigned</button>
-                                  ) : row.section_assigned_to_other ? (
-                                    <button style={ui.btn} disabled>Filled</button>
+                                  {isCurrentAssignee || row.has_tentative_assignment ? (
+                                    <button style={ui.btn} disabled>{isCurrentAssignee ? "Current" : "Assigned"}</button>
                                   ) : row.has_assignment_conflict ? (
                                     <button style={ui.btn} disabled>Time Conflict</button>
+                                  ) : section.currentAssignment ? (
+                                    <button style={ui.btn} onClick={() => reassignTentativeAssignment(currentAssignment, row)}>
+                                      Reassign
+                                    </button>
+                                  ) : row.section_assigned_to_other ? (
+                                    <button style={ui.btn} disabled>Filled</button>
                                   ) : (
                                     <button style={isTop ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, topCandidate?.employee_id)}>
                                       {isTop ? "Assign" : "Assign with Rationale"}
@@ -2597,7 +2784,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 <div style={ui.sectionCard}>
                   <div style={{ fontWeight: 800 }}>Tentative Assignments</div>
                   <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
-                    Live persistence snapshot with one-click unassign.
+                    Live persistence snapshot with one-click unassign and queue-based reassignment.
                   </div>
                   <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                     {tentativeAssignments.length ? tentativeAssignments.map((assignment) => (
@@ -2624,16 +2811,37 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
 
                 <div style={ui.sectionCard}>
-                  <div style={{ fontWeight: 800 }}>Decision Log</div>
-                  <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
-                    Every assignment, bypass, and undo leaves breadcrumbs instead of disappearing into fog.
+                  <div style={{ ...ui.between, gap: 12, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontWeight: 800 }}>Audit & Decision Log</div>
+                      <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
+                        Uploads, submissions, assignments, reassignments, and approvals all leave a timestamped trail.
+                      </div>
+                    </div>
+                    <button
+                      style={ui.btn}
+                      onClick={() => downloadCsvFromRows(
+                        decisionLogs.map((entry) => ({
+                          created_at: entry.created_at,
+                          actor_name: entry.actor_name,
+                          event_type: entry.event_type,
+                          discipline_code: entry.discipline_code,
+                          detail: entry.detail,
+                        })),
+                        `scope-audit-log-${activeTerm.code}.csv`,
+                        ["created_at", "actor_name", "event_type", "discipline_code", "detail"]
+                      )}
+                      disabled={!decisionLogs.length}
+                    >
+                      Export Audit Log
+                    </button>
                   </div>
                   <div style={{ display: "grid", gap: 10, marginTop: 12, maxHeight: 540, overflowY: "auto", paddingRight: 4 }}>
                     {decisionLogs.length ? decisionLogs.map((entry) => (
                       <div key={entry.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: "var(--bg-soft)" }}>
-                        <div style={{ ...ui.between, alignItems: "flex-start" }}>
+                        <div style={{ ...ui.between, alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
                           <div style={{ fontWeight: 700 }}>{entry.actor_name}</div>
-                          <span style={workflowStatePillStyle(entry.event_type === "assignment_removed" ? "filled" : entry.event_type === "bypassed_preference" ? "bypass" : "top")}>{entry.event_type.replace(/_/g, " ")}</span>
+                          <span style={workflowStatePillStyle(logEventKind(entry))}>{entry.event_type.replace(/_/g, " ")}</span>
                         </div>
                         <div style={{ marginTop: 6, fontSize: 13 }}>{entry.detail}</div>
                         <div style={{ marginTop: 6, color: "var(--text-subtle)", fontSize: 12 }}>
@@ -2641,7 +2849,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </div>
                       </div>
                     )) : (
-                      <div style={{ color: "var(--text-subtle)" }}>No decision log entries yet.</div>
+                      <div style={{ color: "var(--text-subtle)" }}>No audit entries yet.</div>
                     )}
                   </div>
                 </div>

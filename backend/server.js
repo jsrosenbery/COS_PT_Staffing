@@ -47,6 +47,27 @@ async function ensureAssignmentIndexes() {
   }
 }
 
+async function writeDecisionLog(client, { termCode, disciplineCode, actorName, eventType, detail }) {
+  if (!termCode || !eventType || !detail) return;
+  await client.query(
+    `INSERT INTO decision_logs (
+      term_code,
+      discipline_code,
+      actor_name,
+      event_type,
+      detail
+    ) VALUES ($1,$2,$3,$4,$5)`,
+    [
+      termCode,
+      disciplineCode || "ALL",
+      actorName || "System",
+      eventType,
+      detail,
+    ]
+  );
+}
+
+
 function parseTimeToMinutes(value) {
   const raw = normalize(value).toUpperCase();
   if (!raw) return null;
@@ -1550,6 +1571,14 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
         }
       }
 
+      await writeDecisionLog(client, {
+        termCode,
+        disciplineCode: normalizedUploadDivision.toUpperCase(),
+        actorName: "Scheduler / Admin",
+        eventType: uploadImpact.counts.sections > 0 ? "schedule_reupload" : "schedule_upload",
+        detail: `${divisionName} upload imported ${scopedSections.length} bundle(s) for ${termCode}${uploadImpact.counts.sections > 0 ? ` and replaced ${uploadImpact.counts.sections} existing bundle(s)` : ""}.`,
+      });
+
       await client.query("COMMIT");
 
       res.json({
@@ -1927,12 +1956,178 @@ app.post("/api/faculty/submission", async (req, res) => {
       );
     }
 
+    await writeDecisionLog(pool, {
+      termCode,
+      disciplineCode,
+      actorName: employeeId || "Faculty",
+      eventType: "faculty_submission",
+      detail: `${employeeId || "Faculty"} submitted ${selections.length} ranked preference(s).`,
+    });
+
     res.json({ ok: true, submissionId });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
+
+
+app.get("/api/division-statuses", async (req, res) => {
+  try {
+    const { termCode } = req.query;
+    if (!termCode) {
+      return res.status(400).json({ error: "termCode is required." });
+    }
+
+    const divisionsResult = await pool.query(
+      `SELECT
+         division,
+         COUNT(*)::int AS section_count
+       FROM assignment_groups
+       WHERE term_code = $1
+         AND COALESCE(division, '') <> ''
+       GROUP BY division
+       ORDER BY division`,
+      [termCode]
+    );
+
+    const prefsResult = await pool.query(
+      `SELECT
+         ag.division,
+         COUNT(*)::int AS count
+       FROM faculty_preferences fp
+       INNER JOIN assignment_groups ag
+         ON ag.assignment_group_id = fp.assignment_group_id
+        AND ag.term_code = fp.term_code
+       WHERE fp.term_code = $1
+         AND COALESCE(ag.division, '') <> ''
+       GROUP BY ag.division`,
+      [termCode]
+    );
+
+    const assignmentsResult = await pool.query(
+      `SELECT
+         ag.division,
+         COUNT(*) FILTER (WHERE a.status = 'approved')::int AS approved_count,
+         COUNT(*) FILTER (WHERE a.status <> 'released' AND a.status <> 'approved')::int AS tentative_count
+       FROM assignments a
+       INNER JOIN assignment_groups ag
+         ON ag.assignment_group_id = a.assignment_group_id
+        AND ag.term_code = a.term_code
+       WHERE a.term_code = $1
+         AND COALESCE(ag.division, '') <> ''
+       GROUP BY ag.division`,
+      [termCode]
+    );
+
+    const submissionsResult = await pool.query(
+      `SELECT
+         agd.division,
+         COUNT(*)::int AS count
+       FROM faculty_submissions fs
+       INNER JOIN (
+         SELECT DISTINCT term_code, discipline_code, division
+         FROM assignment_groups
+         WHERE term_code = $1
+           AND COALESCE(division, '') <> ''
+           AND COALESCE(discipline_code, '') <> ''
+       ) agd
+         ON agd.term_code = fs.term_code
+        AND agd.discipline_code = fs.discipline_code
+       WHERE fs.term_code = $1
+         AND fs.submitted = TRUE
+       GROUP BY agd.division`,
+      [termCode]
+    );
+
+    const windowsResult = await pool.query(
+      `SELECT
+         agd.division,
+         COUNT(*) FILTER (WHERE COALESCE(dw.status, 'ready') = 'chair_finalized')::int AS chair_finalized_count,
+         COUNT(*) FILTER (WHERE COALESCE(dw.status, 'ready') = 'dean_approved')::int AS dean_approved_count
+       FROM discipline_windows dw
+       INNER JOIN (
+         SELECT DISTINCT term_code, discipline_code, division
+         FROM assignment_groups
+         WHERE term_code = $1
+           AND COALESCE(division, '') <> ''
+           AND COALESCE(discipline_code, '') <> ''
+       ) agd
+         ON agd.term_code = dw.term_code
+        AND agd.discipline_code = dw.discipline_code
+       WHERE dw.term_code = $1
+       GROUP BY agd.division`,
+      [termCode]
+    );
+
+    const stats = new Map();
+    const ensureDivision = (division) => {
+      if (!division) return null;
+      if (!stats.has(division)) {
+        stats.set(division, {
+          division,
+          sectionCount: 0,
+          preferenceCount: 0,
+          submissionCount: 0,
+          tentativeAssignmentCount: 0,
+          approvedAssignmentCount: 0,
+          chairFinalizedCount: 0,
+          deanApprovedCount: 0,
+        });
+      }
+      return stats.get(division);
+    };
+
+    for (const row of divisionsResult.rows || []) {
+      const target = ensureDivision(row.division);
+      if (target) target.sectionCount = Number(row.section_count || 0);
+    }
+    for (const row of prefsResult.rows || []) {
+      const target = ensureDivision(row.division);
+      if (target) target.preferenceCount = Number(row.count || 0);
+    }
+    for (const row of assignmentsResult.rows || []) {
+      const target = ensureDivision(row.division);
+      if (target) {
+        target.tentativeAssignmentCount = Number(row.tentative_count || 0);
+        target.approvedAssignmentCount = Number(row.approved_count || 0);
+      }
+    }
+    for (const row of submissionsResult.rows || []) {
+      const target = ensureDivision(row.division);
+      if (target) target.submissionCount = Number(row.count || 0);
+    }
+    for (const row of windowsResult.rows || []) {
+      const target = ensureDivision(row.division);
+      if (target) {
+        target.chairFinalizedCount = Number(row.chair_finalized_count || 0);
+        target.deanApprovedCount = Number(row.dean_approved_count || 0);
+      }
+    }
+
+    const divisions = Array.from(stats.values())
+      .map((row) => {
+        let status = "clean";
+        if (row.deanApprovedCount > 0 || row.chairFinalizedCount > 0 || row.approvedAssignmentCount > 0) {
+          status = "advanced";
+        } else if (row.preferenceCount > 0 || row.submissionCount > 0 || row.tentativeAssignmentCount > 0) {
+          status = "in_progress";
+        } else if (row.sectionCount > 0) {
+          status = "loaded";
+        }
+
+        return {
+          ...row,
+          status,
+        };
+      })
+      .sort((a, b) => String(a.division || "").localeCompare(String(b.division || "")));
+
+    res.json({ ok: true, divisions });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 app.get("/api/assignments", async (req, res) => {
   try {
@@ -2038,7 +2233,7 @@ app.get("/api/decision-logs", async (req, res) => {
        FROM decision_logs
        ${whereClause}
        ORDER BY created_at DESC
-       LIMIT 100`,
+       LIMIT 200`,
       params
     );
 
@@ -2218,24 +2413,15 @@ app.post("/api/assignments", async (req, res) => {
       [termCode, disciplineCode, assignmentGroupId, employeeId]
     );
 
-    await query(
-      `INSERT INTO decision_logs (
-        term_code,
-        discipline_code,
-        actor_name,
-        event_type,
-        detail
-      ) VALUES ($1,$2,$3,$4,$5)`,
-      [
-        termCode,
-        disciplineCode,
-        actorName || "System",
-        reason ? "bypassed_preference" : "assigned",
-        reason
-          ? `Assigned ${assignmentGroupId} to ${employeeId} with rationale: ${reason}`
-          : `Assigned ${assignmentGroupId} to ${employeeId}`,
-      ]
-    );
+    await writeDecisionLog(pool, {
+      termCode,
+      disciplineCode,
+      actorName: actorName || "System",
+      eventType: reason ? "bypassed_preference" : "assigned",
+      detail: reason
+        ? `Assigned ${assignmentGroupId} to ${employeeId} with rationale: ${reason}`
+        : `Assigned ${assignmentGroupId} to ${employeeId}`,
+    });
 
     res.json({ ok: true, assignmentId: inserted.rows?.[0]?.id || null, message: `Assigned ${assignmentGroupId} to ${employeeId}.` });
   } catch (error) {
@@ -2269,22 +2455,13 @@ app.delete("/api/assignments/:id", async (req, res) => {
 
     await query(`DELETE FROM assignments WHERE id = $1`, [assignmentId]);
 
-    await query(
-      `INSERT INTO decision_logs (
-        term_code,
-        discipline_code,
-        actor_name,
-        event_type,
-        detail
-      ) VALUES ($1,$2,$3,$4,$5)`,
-      [
-        row.term_code,
-        row.discipline_code,
-        actorName || "System",
-        "assignment_removed",
-        `Removed tentative assignment ${row.assignment_group_id} from ${row.employee_id}`,
-      ]
-    );
+    await writeDecisionLog(pool, {
+      termCode: row.term_code,
+      disciplineCode: row.discipline_code,
+      actorName: actorName || "System",
+      eventType: "assignment_removed",
+      detail: `Removed tentative assignment ${row.assignment_group_id} from ${row.employee_id}`,
+    });
 
     res.json({ ok: true, message: `Removed ${row.assignment_group_id} from ${row.employee_id}.` });
   } catch (error) {
@@ -2292,9 +2469,114 @@ app.delete("/api/assignments/:id", async (req, res) => {
   }
 });
 
+
+app.put("/api/assignments/:id/reassign", async (req, res) => {
+  try {
+    const assignmentId = Number(req.params.id);
+    const { employeeId, actorName, reason } = req.body || {};
+
+    if (!Number.isFinite(assignmentId)) {
+      return res.status(400).json({ error: "A valid assignment id is required." });
+    }
+    if (!employeeId) {
+      return res.status(400).json({ error: "employeeId is required." });
+    }
+    if (!normalize(reason)) {
+      return res.status(400).json({ error: "A rationale is required when reassigning a section." });
+    }
+
+    const existingResult = await query(
+      `SELECT
+         a.id,
+         a.term_code,
+         a.discipline_code,
+         a.assignment_group_id,
+         a.employee_id,
+         ag.primary_subject_course,
+         ag.primary_crn
+       FROM assignments a
+       LEFT JOIN assignment_groups ag
+         ON ag.assignment_group_id = a.assignment_group_id
+        AND ag.term_code = a.term_code
+       WHERE a.id = $1`,
+      [assignmentId]
+    );
+
+    const existing = existingResult.rows?.[0];
+    if (!existing) {
+      return res.status(404).json({ error: "Tentative assignment not found." });
+    }
+
+    if (existing.employee_id === employeeId) {
+      return res.status(409).json({ error: "This section is already assigned to that instructor.", code: "duplicate_assignment" });
+    }
+
+    const otherAssignmentsResult = await query(
+      `SELECT
+         a.id,
+         a.assignment_group_id,
+         ag.primary_subject_course,
+         ag.primary_crn,
+         ag.title
+       FROM assignments a
+       LEFT JOIN assignment_groups ag
+         ON ag.assignment_group_id = a.assignment_group_id
+        AND ag.term_code = a.term_code
+       WHERE a.term_code = $1
+         AND a.employee_id = $2
+         AND a.id <> $3
+         AND a.status <> 'released'`,
+      [existing.term_code, employeeId, assignmentId]
+    );
+
+    const meetingsMap = await getMeetingsForAssignmentGroups(existing.term_code, [
+      existing.assignment_group_id,
+      ...otherAssignmentsResult.rows.map((row) => row.assignment_group_id),
+    ]);
+    const requestedMeetings = meetingsMap.get(existing.assignment_group_id) || [];
+
+    const conflictingAssignment = otherAssignmentsResult.rows.find((row) =>
+      meetingsOverlap(requestedMeetings, meetingsMap.get(row.assignment_group_id) || [])
+    );
+
+    if (conflictingAssignment) {
+      return res.status(409).json({
+        error: `Conflict detected. ${employeeId} is already tentatively assigned to ${conflictingAssignment.primary_subject_course || conflictingAssignment.assignment_group_id}${conflictingAssignment.primary_crn ? ` (${conflictingAssignment.primary_crn})` : ""}.`,
+        code: "meeting_conflict",
+        conflictingAssignmentId: conflictingAssignment.id,
+        conflictingAssignmentGroupId: conflictingAssignment.assignment_group_id,
+      });
+    }
+
+    await query(
+      `UPDATE assignments
+       SET employee_id = $2,
+           assigned_at = NOW(),
+           discipline_code = COALESCE(NULLIF($3, ''), discipline_code)
+       WHERE id = $1`,
+      [assignmentId, employeeId, existing.discipline_code]
+    );
+
+    await writeDecisionLog(pool, {
+      termCode: existing.term_code,
+      disciplineCode: existing.discipline_code,
+      actorName: actorName || "System",
+      eventType: "reassigned",
+      detail: `Reassigned ${existing.assignment_group_id} from ${existing.employee_id} to ${employeeId}. Rationale: ${reason}`,
+    });
+
+    res.json({
+      ok: true,
+      message: `Reassigned ${existing.primary_subject_course || existing.assignment_group_id} to ${employeeId}.`,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/api/disciplines/finalize", async (req, res) => {
   try {
-    const { termCode, disciplineCode } = req.body;
+    const { termCode, disciplineCode, actorName } = req.body;
 
     await query(
       `UPDATE discipline_windows
@@ -2302,6 +2584,14 @@ app.post("/api/disciplines/finalize", async (req, res) => {
        WHERE term_code = $1 AND discipline_code = $2`,
       [termCode, disciplineCode]
     );
+
+    await writeDecisionLog(pool, {
+      termCode,
+      disciplineCode,
+      actorName: actorName || "Division Chair",
+      eventType: "chair_finalized",
+      detail: `Chair finalized ${disciplineCode} for ${termCode}.`,
+    });
 
     res.json({ ok: true });
   } catch (error) {
@@ -2311,7 +2601,7 @@ app.post("/api/disciplines/finalize", async (req, res) => {
 
 app.post("/api/disciplines/dean-approve", async (req, res) => {
   try {
-    const { termCode, disciplineCode } = req.body;
+    const { termCode, disciplineCode, actorName } = req.body;
 
     await query(
       `UPDATE discipline_windows
@@ -2326,6 +2616,14 @@ app.post("/api/disciplines/dean-approve", async (req, res) => {
        WHERE term_code = $1 AND discipline_code = $2 AND status <> 'released'`,
       [termCode, disciplineCode]
     );
+
+    await writeDecisionLog(pool, {
+      termCode,
+      disciplineCode,
+      actorName: actorName || "Dean",
+      eventType: "dean_approved",
+      detail: `Dean approved ${disciplineCode} for ${termCode}.`,
+    });
 
     res.json({ ok: true });
   } catch (error) {
