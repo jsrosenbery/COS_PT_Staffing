@@ -1426,6 +1426,12 @@ app.post("/api/disciplines/dean-approve", async (req, res) => {
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, async () => {
-  console.log(`Backend running on port ${PORT}`);
-  await runSchema();
+  try {
+    await runSchema();
+    await ensureDefaultTerms();
+    await ensureAssignmentGroupColumns();
+    console.log(`Backend running on port ${PORT}`);
+  } catch (error) {
+    console.error("Startup initialization failed", error);
+  }
 });
