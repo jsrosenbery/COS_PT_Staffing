@@ -465,8 +465,6 @@ app.get("/api/preferences", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
-          ag.instructional_method,
-          ag.display_modality,
           ag.campus,
           ag.units,
           COALESCE(
@@ -504,12 +502,8 @@ app.get("/api/preferences", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
-          ag.instructional_method,
-          ag.display_modality,
           ag.campus,
-          ag.units,
-          ag.instructional_method,
-          ag.display_modality
+          ag.units
         ORDER BY fp.faculty_name NULLS LAST, fp.faculty_id, fp.preference_rank
       `,
       params
@@ -704,8 +698,6 @@ app.get("/api/available-sections", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
-          ag.instructional_method,
-          ag.display_modality,
           ag.campus,
           ag.units,
           ag.pt_eligible,
@@ -737,12 +729,8 @@ app.get("/api/available-sections", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
-          ag.instructional_method,
-          ag.display_modality,
           ag.campus,
           ag.units,
-          ag.instructional_method,
-          ag.display_modality,
           ag.pt_eligible,
           ag.is_grouped
         ORDER BY ag.discipline_code, ag.primary_subject_course, ag.primary_crn
@@ -1354,6 +1342,134 @@ app.post("/api/faculty/submission", async (req, res) => {
   }
 });
 
+
+app.get("/api/assignments", async (req, res) => {
+  try {
+    const { termCode, disciplineCode } = req.query;
+    if (!termCode) {
+      return res.status(400).json({ error: "termCode is required." });
+    }
+
+    const params = [termCode];
+    let whereClause = "WHERE a.term_code = $1";
+    if (disciplineCode) {
+      params.push(disciplineCode);
+      whereClause += ` AND a.discipline_code = $${params.length}`;
+    }
+
+    const result = await pool.query(
+      `SELECT
+        a.id,
+        a.term_code,
+        a.discipline_code,
+        a.assignment_group_id,
+        a.employee_id,
+        a.status,
+        a.assigned_at,
+        ag.primary_subject_course,
+        ag.primary_crn,
+        ag.title
+       FROM assignments a
+       LEFT JOIN assignment_groups ag
+         ON ag.assignment_group_id = a.assignment_group_id
+        AND ag.term_code = a.term_code
+       ${whereClause}
+       ORDER BY a.assigned_at DESC`,
+      params
+    );
+
+    res.json({ ok: true, assignments: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get("/api/chair-workflow", async (req, res) => {
+  try {
+    const { termCode, disciplineCode } = req.query;
+    if (!termCode) {
+      return res.status(400).json({ error: "termCode is required." });
+    }
+
+    const params = [termCode];
+    let whereClause = "WHERE fp.term_code = $1";
+    if (disciplineCode && disciplineCode !== "ALL") {
+      params.push(disciplineCode);
+      whereClause += ` AND fp.discipline_code = $${params.length}`;
+    }
+
+    const result = await pool.query(
+      `SELECT
+         fp.faculty_id,
+         fp.employee_id,
+         fp.faculty_name,
+         fp.term_code,
+         fp.assignment_group_id,
+         fp.discipline_code,
+         fp.preference_rank,
+         ag.primary_subject_course,
+         ag.primary_crn,
+         ag.title,
+         ag.division,
+         ag.campus,
+         ag.instructional_method,
+         ag.display_modality,
+         ds.seniority_rank,
+         ds.seniority_date,
+         COALESCE(
+           json_agg(
+             json_build_object(
+               'days', agm.days,
+               'start_time', agm.start_time,
+               'end_time', agm.end_time,
+               'building', agm.building,
+               'room', agm.room
+             )
+             ORDER BY agm.days NULLS LAST, agm.start_time NULLS LAST, agm.end_time NULLS LAST
+           ) FILTER (WHERE agm.id IS NOT NULL),
+           '[]'::json
+         ) AS meetings
+       FROM faculty_preferences fp
+       LEFT JOIN assignment_groups ag
+         ON ag.assignment_group_id = fp.assignment_group_id
+        AND ag.term_code = fp.term_code
+       LEFT JOIN assignment_group_meetings agm
+         ON ag.assignment_group_id = agm.assignment_group_id
+       LEFT JOIN discipline_seniority ds
+         ON ds.term_code = fp.term_code
+        AND ds.discipline_code = fp.discipline_code
+        AND ds.employee_id = fp.employee_id
+       ${whereClause}
+       GROUP BY
+         fp.faculty_id,
+         fp.employee_id,
+         fp.faculty_name,
+         fp.term_code,
+         fp.assignment_group_id,
+         fp.discipline_code,
+         fp.preference_rank,
+         ag.primary_subject_course,
+         ag.primary_crn,
+         ag.title,
+         ag.division,
+         ag.campus,
+         ag.instructional_method,
+         ag.display_modality,
+         ds.seniority_rank,
+         ds.seniority_date
+       ORDER BY
+         COALESCE(ds.seniority_rank, 999999),
+         fp.faculty_name,
+         fp.preference_rank`,
+      params
+    );
+
+    res.json({ ok: true, rows: result.rows });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/api/assignments", async (req, res) => {
   try {
     const { termCode, disciplineCode, assignmentGroupId, employeeId, actorName, reason } = req.body;
@@ -1365,7 +1481,7 @@ app.post("/api/assignments", async (req, res) => {
         assignment_group_id,
         employee_id,
         status
-      ) VALUES ($1,$2,$3,$4,'draft')`,
+      ) VALUES ($1,$2,$3,$4,'tentative')`,
       [termCode, disciplineCode, assignmentGroupId, employeeId]
     );
 

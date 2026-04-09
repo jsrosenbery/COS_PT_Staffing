@@ -398,6 +398,10 @@ export default function PTFacultyStaffingMVP() {
   const [loadingSections, setLoadingSections] = useState(false);
   const [sectionsError, setSectionsError] = useState("");
   const [selectedDisciplineCode, setSelectedDisciplineCode] = useState("ALL");
+  const [chairWorkflowRows, setChairWorkflowRows] = useState([]);
+  const [tentativeAssignments, setTentativeAssignments] = useState([]);
+  const [chairMessage, setChairMessage] = useState("");
+  const [loadingChairWorkflow, setLoadingChairWorkflow] = useState(false);
   const [facultyPreferences, setFacultyPreferences] = useState([]);
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [preferencesMessage, setPreferencesMessage] = useState("");
@@ -476,6 +480,12 @@ export default function PTFacultyStaffingMVP() {
   useEffect(() => {
     loadTerms();
   }, []);
+
+  useEffect(() => {
+    if ((role === "chair" || role === "admin" || role === "dean") && activeTerm?.code) {
+      loadChairWorkflow();
+    }
+  }, [role, activeTerm?.code, selectedDisciplineCode, selectedChairName, selectedDeanName]);
 
 
   const themeVars = darkMode
@@ -972,6 +982,159 @@ export default function PTFacultyStaffingMVP() {
       setMappingAdminError(error.message || "Could not export mappings.");
     }
   }
+
+
+  async function loadChairWorkflow() {
+    if (!activeTerm?.code) return;
+    setLoadingChairWorkflow(true);
+    setChairMessage("");
+    try {
+      const params = new URLSearchParams({ termCode: activeTerm.code });
+      if (selectedDisciplineCode && selectedDisciplineCode !== "ALL") {
+        params.set("disciplineCode", selectedDisciplineCode);
+      }
+      const [workflowResponse, assignmentsResponse] = await Promise.all([
+        fetch(`${API_BASE}/api/chair-workflow?${params.toString()}`),
+        fetch(`${API_BASE}/api/assignments?${params.toString()}`),
+      ]);
+      const workflowData = await workflowResponse.json();
+      const assignmentsData = await assignmentsResponse.json();
+      if (!workflowResponse.ok) {
+        setChairMessage(workflowData.error || "Could not load chair workflow.");
+        setChairWorkflowRows([]);
+      } else {
+        setChairWorkflowRows(workflowData.rows || []);
+      }
+      if (!assignmentsResponse.ok) {
+        setChairMessage(assignmentsData.error || "Could not load tentative assignments.");
+        setTentativeAssignments([]);
+      } else {
+        setTentativeAssignments(assignmentsData.assignments || []);
+      }
+    } catch (error) {
+      setChairMessage(error.message || "Could not load chair workflow.");
+      setChairWorkflowRows([]);
+      setTentativeAssignments([]);
+    } finally {
+      setLoadingChairWorkflow(false);
+    }
+  }
+
+  async function assignSectionToInstructor(row, topCandidateEmployeeId) {
+    const isBypass = topCandidateEmployeeId && row.employee_id !== topCandidateEmployeeId;
+    let reason = "";
+    if (isBypass) {
+      reason = window.prompt(
+        "This is not the current top-ranked candidate for this section. Please enter the MOU-based reason for bypassing the top candidate:"
+      ) || "";
+      if (!reason.trim()) {
+        setChairMessage("An explanation is required when bypassing the current top candidate.");
+        return;
+      }
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/api/assignments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          termCode: activeTerm.code,
+          disciplineCode: row.discipline_code,
+          assignmentGroupId: row.assignment_group_id,
+          employeeId: row.employee_id,
+          actorName: role === "chair" ? selectedChairName : role === "dean" ? selectedDeanName : "Scheduler / Admin",
+          reason,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setChairMessage(data.error || "Could not save tentative assignment.");
+        return;
+      }
+      setChairMessage(`Tentatively assigned ${row.primary_subject_course} to ${row.faculty_name}.`);
+      await loadChairWorkflow();
+    } catch (error) {
+      setChairMessage(error.message || "Could not save tentative assignment.");
+    }
+  }
+
+
+  const assignedElsewhereByEmployee = useMemo(() => {
+    const map = new Map();
+    tentativeAssignments.forEach((assignment) => {
+      const arr = map.get(assignment.employee_id) || [];
+      arr.push(assignment.assignment_group_id);
+      map.set(assignment.employee_id, arr);
+    });
+    return map;
+  }, [tentativeAssignments]);
+
+  const activeSectionCandidates = useMemo(() => {
+    const grouped = new Map();
+    chairWorkflowRows.forEach((row) => {
+      const assignedGroups = assignedElsewhereByEmployee.get(row.employee_id) || [];
+      const assignedToDifferentSection =
+        assignedGroups.length > 0 && !assignedGroups.includes(row.assignment_group_id);
+      if (assignedToDifferentSection) {
+        return;
+      }
+      const arr = grouped.get(row.assignment_group_id) || [];
+      arr.push(row);
+      grouped.set(row.assignment_group_id, arr);
+    });
+
+    grouped.forEach((arr, key) => {
+      arr.sort((a, b) => {
+        const srA = Number.isFinite(Number(a.seniority_rank)) ? Number(a.seniority_rank) : 999999;
+        const srB = Number.isFinite(Number(b.seniority_rank)) ? Number(b.seniority_rank) : 999999;
+        if (srA !== srB) return srA - srB;
+        return (a.preference_rank || 999999) - (b.preference_rank || 999999);
+      });
+      grouped.set(key, arr);
+    });
+
+    return grouped;
+  }, [chairWorkflowRows, assignedElsewhereByEmployee]);
+
+  const instructorWorkflow = useMemo(() => {
+    const grouped = new Map();
+    chairWorkflowRows.forEach((row) => {
+      const assignedGroups = assignedElsewhereByEmployee.get(row.employee_id) || [];
+      const arr = grouped.get(row.employee_id) || [];
+      arr.push({
+        ...row,
+        has_tentative_assignment: assignedGroups.includes(row.assignment_group_id),
+        assigned_elsewhere: assignedGroups.length > 0 && !assignedGroups.includes(row.assignment_group_id),
+        is_current_top_candidate:
+          (activeSectionCandidates.get(row.assignment_group_id) || [])[0]?.employee_id === row.employee_id,
+        section_assigned_to_other:
+          tentativeAssignments.some(
+            (assignment) =>
+              assignment.assignment_group_id === row.assignment_group_id &&
+              assignment.employee_id !== row.employee_id
+          ),
+      });
+      grouped.set(row.employee_id, arr);
+    });
+
+    return Array.from(grouped.values())
+      .map((rows) =>
+        rows.sort((a, b) => {
+          const srA = Number.isFinite(Number(a.seniority_rank)) ? Number(a.seniority_rank) : 999999;
+          const srB = Number.isFinite(Number(b.seniority_rank)) ? Number(b.seniority_rank) : 999999;
+          if (srA !== srB) return srA - srB;
+          return (a.preference_rank || 999999) - (b.preference_rank || 999999);
+        })
+      )
+      .sort((a, b) => {
+        const firstA = a[0] || {};
+        const firstB = b[0] || {};
+        const srA = Number.isFinite(Number(firstA.seniority_rank)) ? Number(firstA.seniority_rank) : 999999;
+        const srB = Number.isFinite(Number(firstB.seniority_rank)) ? Number(firstB.seniority_rank) : 999999;
+        if (srA !== srB) return srA - srB;
+        return String(firstA.faculty_name || "").localeCompare(String(firstB.faculty_name || ""));
+      });
+  }, [chairWorkflowRows, activeSectionCandidates, tentativeAssignments, assignedElsewhereByEmployee]);
 
   const summary = {
     ready: disciplines.filter((d) => d.status === "ready").length,
