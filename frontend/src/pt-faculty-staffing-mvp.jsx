@@ -322,6 +322,18 @@ function sectionModalityLabel(section) {
   return normalize(section?.modality) || "TBA";
 }
 
+function matchesSectionFilters(section, filters) {
+  const campus = normalize(section?.campus);
+  const method = sectionMethodLabel(section);
+  const modality = sectionModalityLabel(section);
+
+  const campusMatch = !filters?.campuses?.length || filters.campuses.includes(campus);
+  const methodMatch = !filters?.methods?.length || filters.methods.includes(method);
+  const modalityMatch = !filters?.modalities?.length || filters.modalities.includes(modality);
+
+  return campusMatch && methodMatch && modalityMatch;
+}
+
 function pillStyle(background, color, borderColor) {
   return {
     display: "inline-flex",
@@ -500,6 +512,20 @@ const ui = {
     marginBottom: 8,
   },
   panelGrid: { display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 2fr) minmax(320px, 1fr)" },
+  filterChip: {
+    padding: "8px 12px",
+    borderRadius: 999,
+    border: "1px solid var(--border-color)",
+    background: "var(--bg-card)",
+    color: "var(--text-main)",
+    cursor: "pointer",
+    fontWeight: 700,
+  },
+  filterChipActive: {
+    background: "linear-gradient(135deg, rgba(36,51,122,0.12), rgba(240,84,35,0.14), rgba(127,190,65,0.16))",
+    border: "1px solid rgba(240,84,35,0.35)",
+    color: "var(--text-main)",
+  },
 };
 
 export default function PTFacultyStaffingMVP() {
@@ -555,6 +581,7 @@ export default function PTFacultyStaffingMVP() {
   const [loadingMappingList, setLoadingMappingList] = useState(false);
   const [mappingAdminError, setMappingAdminError] = useState("");
   const [showMappingList, setShowMappingList] = useState(false);
+  const [sectionFilters, setSectionFilters] = useState({ campuses: [], methods: [], modalities: [] });
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
 
@@ -756,12 +783,35 @@ export default function PTFacultyStaffingMVP() {
     ).sort();
   }, [roleScopedSections]);
 
+  const filterOptionSections = useMemo(() => {
+    const workflowTemplates = chairWorkflowRows.map((row) => ({
+      campus: row.campus,
+      instructional_method: row.instructional_method,
+      display_modality: row.display_modality,
+      modality: row.modality,
+      meetings: row.meetings,
+    }));
+    return [...roleScopedSections, ...workflowTemplates];
+  }, [roleScopedSections, chairWorkflowRows]);
+
+  const campusFilterOptions = useMemo(() => {
+    return Array.from(new Set(filterOptionSections.map((section) => normalize(section?.campus)).filter(Boolean))).sort();
+  }, [filterOptionSections]);
+
+  const methodFilterOptions = useMemo(() => {
+    return Array.from(new Set(filterOptionSections.map((section) => sectionMethodLabel(section)).filter(Boolean))).sort();
+  }, [filterOptionSections]);
+
+  const modalityFilterOptions = useMemo(() => {
+    return Array.from(new Set(filterOptionSections.map((section) => sectionModalityLabel(section)).filter(Boolean))).sort();
+  }, [filterOptionSections]);
+
   const visibleSections = useMemo(() => {
     return roleScopedSections.filter((section) => {
-      if (selectedDisciplineCode === "ALL") return true;
-      return section.discipline_code === selectedDisciplineCode;
+      if (selectedDisciplineCode !== "ALL" && section.discipline_code !== selectedDisciplineCode) return false;
+      return matchesSectionFilters(section, sectionFilters);
     });
-  }, [roleScopedSections, selectedDisciplineCode]);
+  }, [roleScopedSections, selectedDisciplineCode, sectionFilters]);
 
   const conflictIds = useMemo(() => {
     const ids = new Set();
@@ -908,6 +958,21 @@ export default function PTFacultyStaffingMVP() {
     } finally {
       setSavingPreferences(false);
     }
+  }
+
+  function toggleSectionFilter(kind, value) {
+    setSectionFilters((current) => {
+      const values = current[kind] || [];
+      const exists = values.includes(value);
+      return {
+        ...current,
+        [kind]: exists ? values.filter((item) => item !== value) : [...values, value],
+      };
+    });
+  }
+
+  function clearSectionFilters() {
+    setSectionFilters({ campuses: [], methods: [], modalities: [] });
   }
 
   async function exportPreferences() {
@@ -1321,8 +1386,9 @@ export default function PTFacultyStaffingMVP() {
           currentAssignment: tentativeAssignmentByGroup.get(assignmentGroupId) || null,
         };
       })
+      .filter((section) => matchesSectionFilters(section, sectionFilters))
       .sort((a, b) => String(a.primary_subject_course || "").localeCompare(String(b.primary_subject_course || "")) || String(a.primary_crn || "").localeCompare(String(b.primary_crn || "")));
-  }, [workflowRowsWithState, activeSectionCandidates, tentativeAssignmentByGroup]);
+  }, [workflowRowsWithState, activeSectionCandidates, tentativeAssignmentByGroup, sectionFilters]);
 
   const summary = {
     ready: disciplines.filter((d) => d.status === "ready").length,
@@ -1359,9 +1425,12 @@ export default function PTFacultyStaffingMVP() {
                   College of the Sequoias
                 </div>
                 <h1 style={{ fontSize: 36, margin: "4px 0 0 0", fontWeight: 900, letterSpacing: "-0.04em" }}>
-                  SCOPE
+                  S.C.O.P.E.
                 </h1>
-                <div style={{ marginTop: 10, fontSize: 14, maxWidth: 720, lineHeight: 1.5, opacity: 0.96 }}>
+                <div style={{ marginTop: 8, fontSize: 16, fontWeight: 800, maxWidth: 720, lineHeight: 1.35, opacity: 0.98 }}>
+                  Staffing Coordination & Preference Engine
+                </div>
+                <div style={{ marginTop: 8, fontSize: 14, maxWidth: 720, lineHeight: 1.5, opacity: 0.96 }}>
                   Smarter faculty staffing starts here.
                 </div>
               </div>
@@ -1899,6 +1968,81 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           </div>
 
+          <div style={{ ...ui.sectionCard, marginTop: 14 }}>
+            <div style={{ ...ui.between, alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontWeight: 800 }}>Display Filters</div>
+                <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
+                  Filters stay in place while you work on this page, and reset naturally after a refresh or when you come back later.
+                </div>
+              </div>
+              <button style={ui.btn} onClick={clearSectionFilters}>Clear Filters</button>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+                Campus
+              </div>
+              <div style={{ ...ui.row, gap: 8 }}>
+                {campusFilterOptions.length ? campusFilterOptions.map((campus) => {
+                  const active = sectionFilters.campuses.includes(campus);
+                  return (
+                    <button
+                      key={campus}
+                      type="button"
+                      style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
+                      onClick={() => toggleSectionFilter("campuses", campus)}
+                    >
+                      {campus}
+                    </button>
+                  );
+                }) : <span style={{ color: "var(--text-subtle)" }}>No campus values loaded yet.</span>}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+                Method
+              </div>
+              <div style={{ ...ui.row, gap: 8 }}>
+                {methodFilterOptions.length ? methodFilterOptions.map((method) => {
+                  const active = sectionFilters.methods.includes(method);
+                  return (
+                    <button
+                      key={method}
+                      type="button"
+                      style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
+                      onClick={() => toggleSectionFilter("methods", method)}
+                    >
+                      {method}
+                    </button>
+                  );
+                }) : <span style={{ color: "var(--text-subtle)" }}>No method values loaded yet.</span>}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+                Modality
+              </div>
+              <div style={{ ...ui.row, gap: 8 }}>
+                {modalityFilterOptions.length ? modalityFilterOptions.map((modality) => {
+                  const active = sectionFilters.modalities.includes(modality);
+                  return (
+                    <button
+                      key={modality}
+                      type="button"
+                      style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
+                      onClick={() => toggleSectionFilter("modalities", modality)}
+                    >
+                      {modality}
+                    </button>
+                  );
+                }) : <span style={{ color: "var(--text-subtle)" }}>No modality values loaded yet.</span>}
+              </div>
+            </div>
+          </div>
+
           {loadingSections ? (
             <div style={{ marginTop: 12, color: "var(--text-muted)", fontWeight: 700 }}>
               Loading available sections...
@@ -1913,7 +2057,8 @@ OH,ORNAMENTAL_HORTICULTURE`}
 
           <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
             Showing {visibleSections.length} section(s)
-            {selectedDisciplineCode !== "ALL" ? ` for ${selectedDisciplineCode}` : ""}.
+            {selectedDisciplineCode !== "ALL" ? ` for ${selectedDisciplineCode}` : ""}
+            {(sectionFilters.campuses.length || sectionFilters.methods.length || sectionFilters.modalities.length) ? " with active display filters." : "."}
           </div>
           {role !== "admin" ? (
             <div style={{ marginTop: 8, color: "var(--text-subtle)", fontSize: 13 }}>
