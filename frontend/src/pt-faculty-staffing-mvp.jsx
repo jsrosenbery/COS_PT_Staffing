@@ -1234,6 +1234,203 @@ export default function PTFacultyStaffingMVP() {
     }
   }
 
+  async function loadChairWorkflow() {
+    if (!activeTerm?.code) return;
+    setLoadingChairWorkflow(true);
+    setChairMessage("");
+    try {
+      const params = new URLSearchParams({ termCode: activeTerm.code });
+      if (selectedDisciplineCode && selectedDisciplineCode !== "ALL") {
+        params.set("disciplineCode", selectedDisciplineCode);
+      }
+      const [workflowResponse, assignmentsResponse, decisionLogsResponse] = await Promise.all([
+        fetch(`${API_BASE}/api/chair-workflow?${params.toString()}`),
+        fetch(`${API_BASE}/api/assignments?${params.toString()}`),
+        fetch(`${API_BASE}/api/decision-logs?${params.toString()}`),
+      ]);
+      const workflowData = await workflowResponse.json();
+      const assignmentsData = await assignmentsResponse.json();
+      const decisionLogsData = await decisionLogsResponse.json();
+      if (!workflowResponse.ok) {
+        setChairMessage(workflowData.error || "Could not load chair workflow.");
+        setChairWorkflowRows([]);
+      } else {
+        setChairWorkflowRows(workflowData.rows || []);
+      }
+      if (!assignmentsResponse.ok) {
+        setChairMessage(assignmentsData.error || "Could not load tentative assignments.");
+        setTentativeAssignments([]);
+      } else {
+        setTentativeAssignments(assignmentsData.assignments || []);
+      }
+      if (!decisionLogsResponse.ok) {
+        setDecisionLogs([]);
+      } else {
+        setDecisionLogs(decisionLogsData.logs || []);
+      }
+    } catch (error) {
+      setChairMessage(error.message || "Could not load chair workflow.");
+      setChairWorkflowRows([]);
+      setTentativeAssignments([]);
+      setDecisionLogs([]);
+    } finally {
+      setLoadingChairWorkflow(false);
+    }
+  }
+
+  async function assignSectionToInstructor(row, topCandidateEmployeeId) {
+    const isBypass = topCandidateEmployeeId && row.employee_id !== topCandidateEmployeeId;
+    let reason = "";
+    if (isBypass) {
+      reason = window.prompt(
+        "This is not the current top-ranked candidate for this section. Please enter the MOU-based reason for bypassing the top candidate:"
+      ) || "";
+      if (!reason.trim()) {
+        setChairMessage("An explanation is required when bypassing the current top candidate.");
+        return;
+      }
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/api/assignments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          termCode: activeTerm.code,
+          disciplineCode: row.discipline_code,
+          assignmentGroupId: row.assignment_group_id,
+          employeeId: row.employee_id,
+          actorName: role === "chair" ? selectedChairName : role === "dean" ? selectedDeanName : "Scheduler / Admin",
+          reason,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setChairMessage(data.error || "Could not save tentative assignment.");
+        return;
+      }
+      setChairMessage(data.message || `Tentatively assigned ${row.primary_subject_course} to ${row.faculty_name}.`);
+      await loadChairWorkflow();
+    } catch (error) {
+      setChairMessage(error.message || "Could not save tentative assignment.");
+    }
+  }
+
+  async function undoTentativeAssignment(assignment) {
+    if (!assignment?.id) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/assignments/${assignment.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actorName: role === "chair" ? selectedChairName : role === "dean" ? selectedDeanName : "Scheduler / Admin",
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setChairMessage(data.error || "Could not remove tentative assignment.");
+        return;
+      }
+      setChairMessage(data.message || `Removed ${assignment.primary_subject_course || assignment.assignment_group_id}.`);
+      await loadChairWorkflow();
+    } catch (error) {
+      setChairMessage(error.message || "Could not remove tentative assignment.");
+    }
+  }
+
+  function compareWorkflowRows(a, b) {
+    const srA = Number.isFinite(Number(a.seniority_rank)) ? Number(a.seniority_rank) : 999999;
+    const srB = Number.isFinite(Number(b.seniority_rank)) ? Number(b.seniority_rank) : 999999;
+    if (srA !== srB) return srA - srB;
+    return (a.preference_rank || 999999) - (b.preference_rank || 999999);
+  }
+
+  const tentativeAssignmentsByEmployee = useMemo(() => {
+    const map = new Map();
+    tentativeAssignments.forEach((assignment) => {
+      const arr = map.get(assignment.employee_id) || [];
+      arr.push(assignment);
+      map.set(assignment.employee_id, arr);
+    });
+    return map;
+  }, [tentativeAssignments]);
+
+  const tentativeAssignmentByGroup = useMemo(() => {
+    const map = new Map();
+    tentativeAssignments.forEach((assignment) => {
+      map.set(assignment.assignment_group_id, assignment);
+    });
+    return map;
+  }, [tentativeAssignments]);
+
+  const workflowRowsWithState = useMemo(() => (
+    chairWorkflowRows.map((row) => {
+      const otherAssignments = (tentativeAssignmentsByEmployee.get(row.employee_id) || [])
+        .filter((assignment) => assignment.assignment_group_id !== row.assignment_group_id);
+      const conflictingAssignment = otherAssignments.find((assignment) =>
+        meetingsOverlap(assignment.meetings || [], row.meetings || [])
+      );
+      const sectionAssignment = tentativeAssignmentByGroup.get(row.assignment_group_id);
+      const assignedToThisSection = sectionAssignment?.employee_id === row.employee_id;
+
+      return {
+        ...row,
+        has_tentative_assignment: assignedToThisSection,
+        assigned_elsewhere: otherAssignments.length > 0,
+        conflicting_assignment: conflictingAssignment || null,
+        has_assignment_conflict: Boolean(conflictingAssignment),
+        section_assigned_to_other: Boolean(sectionAssignment && sectionAssignment.employee_id !== row.employee_id),
+      };
+    })
+  ), [chairWorkflowRows, tentativeAssignmentsByEmployee, tentativeAssignmentByGroup]);
+
+  const activeSectionCandidates = useMemo(() => {
+    const grouped = new Map();
+    workflowRowsWithState.forEach((row) => {
+      if (row.has_assignment_conflict || row.section_assigned_to_other) return;
+      const arr = grouped.get(row.assignment_group_id) || [];
+      arr.push(row);
+      grouped.set(row.assignment_group_id, arr);
+    });
+
+    grouped.forEach((arr, key) => {
+      grouped.set(key, [...arr].sort(compareWorkflowRows));
+    });
+
+    return grouped;
+  }, [workflowRowsWithState]);
+
+  const sectionQueue = useMemo(() => {
+    const grouped = new Map();
+    workflowRowsWithState.forEach((row) => {
+      const arr = grouped.get(row.assignment_group_id) || [];
+      arr.push(row);
+      grouped.set(row.assignment_group_id, arr);
+    });
+
+    return Array.from(grouped.entries())
+      .map(([assignmentGroupId, rows]) => {
+        const sortedRows = [...rows].sort(compareWorkflowRows);
+        const template = sortedRows[0] || {};
+        return {
+          assignment_group_id: assignmentGroupId,
+          discipline_code: template.discipline_code,
+          primary_subject_course: template.primary_subject_course,
+          primary_crn: template.primary_crn,
+          title: template.title,
+          campus: template.campus,
+          instructional_method: template.instructional_method,
+          display_modality: template.display_modality,
+          meetings: template.meetings,
+          candidates: sortedRows,
+          eligibleCandidates: activeSectionCandidates.get(assignmentGroupId) || [],
+          currentAssignment: tentativeAssignmentByGroup.get(assignmentGroupId) || null,
+        };
+      })
+      .filter((section) => matchesSectionFilters(section, sectionFilters))
+      .sort((a, b) => String(a.primary_subject_course || "").localeCompare(String(b.primary_subject_course || "")) || String(a.primary_crn || "").localeCompare(String(b.primary_crn || "")));
+  }, [workflowRowsWithState, activeSectionCandidates, tentativeAssignmentByGroup, sectionFilters]);
+
   const summary = {
     ready: disciplines.filter((d) => d.status === "ready").length,
     open: disciplines.filter((d) => d.status === "open").length,
