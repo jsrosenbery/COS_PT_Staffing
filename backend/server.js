@@ -55,26 +55,6 @@ function normalize(value) {
   return String(value ?? "").trim();
 }
 
-function getRowValue(row, candidateKeys = []) {
-  const entries = Object.entries(row || {});
-  const normalizedEntries = entries.map(([key, value]) => [
-    String(key || "").toUpperCase().replace(/[^A-Z0-9]/g, ""),
-    value,
-  ]);
-
-  for (const candidate of candidateKeys) {
-    const normalizedCandidate = String(candidate || "")
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, "");
-    const found = normalizedEntries.find(([key]) => key === normalizedCandidate);
-    if (found && normalize(found[1])) {
-      return normalize(found[1]);
-    }
-  }
-
-  return "";
-}
-
 
 function mapInstructionalMethodToDisplayModality(rawInstructionalMethod) {
   const value = normalize(rawInstructionalMethod).toUpperCase();
@@ -89,16 +69,14 @@ function mapInstructionalMethodToDisplayModality(rawInstructionalMethod) {
 }
 
 function resolveInstructionalMethod(row) {
-  return getRowValue(row, [
-    "INSTRUCTIONAL_METHOD",
-    "INSTRUCTIONAL_METHODS",
-    "INSTRUCTIONAL METHOD",
-    "INSTRUCTIONAL METHODS",
-    "INSTRUCTIONAL_METHOD_CODE",
-    "INSTRUCTIONAL_METHOD_CD",
-    "INSTR_METHOD",
-    "METHOD",
-  ]);
+  return normalize(
+    row?.INSTRUCTIONAL_METHOD ||
+    row?.INSTRUCTIONAL_METHODS ||
+    row?.INSTRUCTIONAL_METHOD_CODE ||
+    row?.INSTRUCTIONAL_METHOD_CD ||
+    row?.INSTR_METHOD ||
+    row?.METHOD
+  );
 }
 
 function normalizeInstructor(value) {
@@ -395,7 +373,7 @@ function parseScheduleRows(rows, coverageRows) {
     const instructionalMethod = resolveInstructionalMethod(first);
     const displayModality =
       mapInstructionalMethodToDisplayModality(instructionalMethod) ||
-      toFriendlyModality(getRowValue(first, ["SCHEDULE_TYPE", "MEETING_TYPE", "SCHEDULE TYPE", "MEETING TYPE"]));
+      toFriendlyModality(first.SCHEDULE_TYPE || first.MEETING_TYPE || "");
 
     return {
       assignment_group_id: `grp_${cluster.join("_")}`,
@@ -405,7 +383,7 @@ function parseScheduleRows(rows, coverageRows) {
       all_crns: cluster,
       title: allTitles.join(" / ") || normalize(first.TITLE) || "Untitled",
       division: normalize(first.DIVISION),
-      modality: getRowValue(first, ["SCHEDULE_TYPE", "MEETING_TYPE", "SCHEDULE TYPE", "MEETING TYPE"]),
+      modality: normalize(first.SCHEDULE_TYPE || first.MEETING_TYPE || ""),
       instructional_method: instructionalMethod,
       display_modality: displayModality,
       campus: normalize(first.CAMPUS),
@@ -487,6 +465,8 @@ app.get("/api/preferences", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
+          ag.instructional_method,
+          ag.display_modality,
           ag.campus,
           ag.units,
           COALESCE(
@@ -524,6 +504,8 @@ app.get("/api/preferences", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
+          ag.instructional_method,
+          ag.display_modality,
           ag.campus,
           ag.units
         ORDER BY fp.faculty_name NULLS LAST, fp.faculty_id, fp.preference_rank
@@ -720,6 +702,8 @@ app.get("/api/available-sections", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
+          ag.instructional_method,
+          ag.display_modality,
           ag.campus,
           ag.units,
           ag.pt_eligible,
