@@ -411,6 +411,7 @@ function inferDiscipline(subjectCourse, coverageRows) {
   const match = coverageRows.find((row) => row.subject_code.toUpperCase() === subject);
   return {
     disciplineCode: match?.discipline_code || null,
+    divisionName: match?.division_name || null,
     subjectCode: subject,
   };
 }
@@ -436,12 +437,15 @@ async function getCoverage(termCode) {
        FROM subject_mappings
        WHERE term_code IS NULL OR term_code = $1
      )
-     SELECT DISTINCT ON (UPPER(subject_code))
-       term_code,
-       discipline_code,
-       subject_code
-     FROM combined
-     ORDER BY UPPER(subject_code), priority DESC, discipline_code`,
+     SELECT DISTINCT ON (UPPER(c.subject_code))
+       c.term_code,
+       c.discipline_code,
+       c.subject_code,
+       d.division_name
+     FROM combined c
+     LEFT JOIN disciplines d
+       ON d.discipline_code = c.discipline_code
+     ORDER BY UPPER(c.subject_code), c.priority DESC, c.discipline_code`,
     [termCode]
   );
   return result.rows;
@@ -483,6 +487,79 @@ function normalizeParsedRowKeys(row) {
     normalized[normalizeHeader(key)] = value;
   });
   return normalized;
+}
+
+function analyzeUploadDivisionScope(rows, selectedDivision) {
+  const selectedDivisionNorm = normalizeDivisionName(selectedDivision);
+  const analyzedRows = (rows || []).map((row) => {
+    const rawDivision = getRowValue(row, ["DIVISION", "division", "Division"]);
+    return {
+      row,
+      rawDivision,
+      normalizedDivision: rawDivision ? normalizeDivisionName(rawDivision) : "",
+    };
+  });
+
+  const detectedDivisions = Array.from(
+    new Set(analyzedRows.map((item) => item.rawDivision).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
+
+  const detectedDivisionNorms = Array.from(
+    new Set(analyzedRows.map((item) => item.normalizedDivision).filter(Boolean))
+  );
+
+  const hasDivisionSignals = detectedDivisionNorms.length > 0;
+  const hasMultipleDivisions = detectedDivisionNorms.length > 1;
+  const hasRowsOutsideSelected = analyzedRows.some(
+    (item) => item.normalizedDivision && item.normalizedDivision !== selectedDivisionNorm
+  );
+
+  if (!hasDivisionSignals) {
+    return {
+      rows,
+      filterApplied: false,
+      detectedDivisions,
+      matchedRowCount: rows.length,
+      ignoredRowCount: 0,
+      warnings: [],
+      error: null,
+    };
+  }
+
+  const matchedRows = analyzedRows
+    .filter((item) => item.normalizedDivision === selectedDivisionNorm)
+    .map((item) => item.row);
+
+  if (!matchedRows.length) {
+    return {
+      rows: [],
+      filterApplied: true,
+      detectedDivisions,
+      matchedRowCount: 0,
+      ignoredRowCount: rows.length,
+      warnings: [],
+      error: `This file contains division-tagged rows, but none match ${selectedDivision}. Available divisions in the file: ${detectedDivisions.join(", ")}.`,
+    };
+  }
+
+  const ignoredRowCount = rows.length - matchedRows.length;
+  const warnings = [];
+
+  if (hasMultipleDivisions || hasRowsOutsideSelected) {
+    warnings.push(
+      `Division-aware upload kept ${matchedRows.length} row(s) for ${selectedDivision} and ignored ${ignoredRowCount} row(s) from other division(s).`
+    );
+  }
+
+  return {
+    rows: matchedRows,
+    filterApplied: hasMultipleDivisions || hasRowsOutsideSelected,
+    detectedDivisions,
+    matchedRowCount: matchedRows.length,
+    ignoredRowCount,
+    warnings,
+    error: null,
+  };
 }
 
 async function runSchema() {
@@ -673,7 +750,7 @@ function parseScheduleRows(rows, coverageRows) {
       new Set(bundleRows.map((r) => normalize(r.COREQUISITE_CRN)).filter(Boolean))
     );
 
-    const { disciplineCode, subjectCode } = inferDiscipline(first.SUBJECT_COURSE, coverageRows);
+    const { disciplineCode, divisionName: inferredDivisionName, subjectCode } = inferDiscipline(first.SUBJECT_COURSE, coverageRows);
 
     if (!disciplineCode) {
       const unresolvedSubjectCode =
@@ -701,7 +778,7 @@ function parseScheduleRows(rows, coverageRows) {
       primary_crn: cluster[0],
       all_crns: cluster,
       title: allTitles.join(" / ") || normalize(first.TITLE) || "Untitled",
-      division: getFirstBundleValue(bundleRows, ["DIVISION", "division", "Division"]),
+      division: getFirstBundleValue(bundleRows, ["DIVISION", "division", "Division"]) || inferredDivisionName || "",
       modality: rawModality,
       instructional_method: instructionalMethod,
       display_modality: displayModality,
@@ -1194,16 +1271,44 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
       return { ...row, __clean: cleaned };
     });
 
+    const divisionScope = analyzeUploadDivisionScope(rows, divisionName);
+    if (divisionScope.error) {
+      return res.status(400).json({
+        ok: false,
+        errors: [divisionScope.error],
+        warnings: divisionScope.warnings || [],
+        unmappedSubjects: [],
+        summary: {
+          totalRows: rows.length,
+          sourceTotalRows: rows.length,
+          keptRowsForDivision: 0,
+          ignoredRowsFromOtherDivisions: rows.length,
+          detectedDivisions: divisionScope.detectedDivisions || [],
+          divisionFilterApplied: true,
+        },
+      });
+    }
+
+    const scopedRows = divisionScope.rows;
     const coverageRows = await getCoverage(termCode);
-    const result = parseScheduleRows(rows, coverageRows);
+    const result = parseScheduleRows(scopedRows, coverageRows);
+    const combinedWarnings = [...(divisionScope.warnings || []), ...(result.warnings || [])];
+    const combinedSummary = {
+      ...(result.summary || {}),
+      sourceTotalRows: rows.length,
+      keptRowsForDivision: scopedRows.length,
+      ignoredRowsFromOtherDivisions: divisionScope.ignoredRowCount || 0,
+      detectedDivisions: divisionScope.detectedDivisions || [],
+      divisionFilterApplied: Boolean(divisionScope.filterApplied),
+    };
 
     if (result.errors.length) {
       return res.status(400).json({
         ok: false,
         errors: result.errors,
-        warnings: result.warnings,
+        warnings: combinedWarnings,
         unmappedSubjects: result.unmappedSubjects || [],
-        summary: result.summary,
+        summary: combinedSummary,
       });
     }
 
@@ -1229,16 +1334,22 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
     }
 
     if (divisionMismatchRows.length) {
+      combinedWarnings.push(
+        `Ignored ${divisionMismatchRows.length} parsed assignment group(s) that resolved to a different division than ${divisionName}.`
+      );
+      combinedSummary.filteredOutSectionBundles = divisionMismatchRows.length;
+      combinedSummary.mismatchedRows = divisionMismatchRows.slice(0, 10);
+    }
+
+    if (!scopedSections.length) {
       return res.status(400).json({
         ok: false,
-        errors: [
-          `This upload is scoped to ${divisionName}, but ${divisionMismatchRows.length} section bundle(s) are tagged to a different division in the file.`,
-        ],
-        warnings: result.warnings || [],
+        errors: [`No open section bundles matched ${divisionName} after division-aware filtering.`],
+        warnings: combinedWarnings,
+        unmappedSubjects: result.unmappedSubjects || [],
         summary: {
-          ...(result.summary || {}),
+          ...combinedSummary,
           divisionName,
-          mismatchedRows: divisionMismatchRows.slice(0, 10),
         },
       });
     }
@@ -1346,11 +1457,16 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
       res.json({
         ok: true,
         importedCount: scopedSections.length,
-        warnings: result.warnings,
+        warnings: combinedWarnings,
         unmappedSubjects: result.unmappedSubjects || [],
         divisionName,
         replacedCount: uploadImpact.counts.sections || 0,
         protectedWork: uploadImpact.counts,
+        summary: {
+          ...combinedSummary,
+          divisionName,
+          importedSectionBundles: scopedSections.length,
+        },
       });
     } catch (error) {
       await client.query("ROLLBACK");
