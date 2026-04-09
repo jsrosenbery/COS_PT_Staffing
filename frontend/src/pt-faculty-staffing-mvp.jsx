@@ -833,6 +833,70 @@ export default function PTFacultyStaffingMVP() {
     });
   }, [roleScopedSections, selectedDisciplineCode, sectionFilters]);
 
+
+  const sectionQueue = useMemo(() => {
+    const grouped = new Map();
+    const activeAssignments = tentativeAssignments.filter((assignment) => assignment.status !== "released");
+
+    chairWorkflowRows.forEach((row) => {
+      if (!matchesSectionFilters(row, sectionFilters)) return;
+      const key = row.assignment_group_id;
+      const currentAssignment = activeAssignments.find((assignment) => assignment.assignment_group_id === key) || null;
+      const employeeAssignments = activeAssignments.filter((assignment) => assignment.employee_id === row.employee_id && assignment.assignment_group_id !== key);
+      const conflictingAssignment = employeeAssignments.find((assignment) => hasMeetingConflict(row, assignment)) || null;
+      const enrichedRow = {
+        ...row,
+        has_tentative_assignment: currentAssignment?.employee_id === row.employee_id,
+        section_assigned_to_other: Boolean(currentAssignment && currentAssignment.employee_id !== row.employee_id),
+        assigned_elsewhere: employeeAssignments.length > 0,
+        has_assignment_conflict: Boolean(conflictingAssignment),
+        conflicting_assignment: conflictingAssignment,
+      };
+
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          assignment_group_id: row.assignment_group_id,
+          primary_subject_course: row.primary_subject_course,
+          primary_crn: row.primary_crn,
+          title: row.title,
+          division: row.division,
+          campus: row.campus,
+          discipline_code: row.discipline_code,
+          instructional_method: row.instructional_method,
+          display_modality: row.display_modality,
+          modality: row.modality,
+          meetings: row.meetings,
+          candidates: [],
+          currentAssignment,
+        });
+      }
+
+      const entry = grouped.get(key);
+      entry.currentAssignment = entry.currentAssignment || currentAssignment;
+      entry.candidates.push(enrichedRow);
+    });
+
+    return Array.from(grouped.values())
+      .map((section) => {
+        const candidates = [...section.candidates].sort((a, b) => {
+          const aRank = Number.isFinite(Number(a.seniority_rank)) ? Number(a.seniority_rank) : 999999;
+          const bRank = Number.isFinite(Number(b.seniority_rank)) ? Number(b.seniority_rank) : 999999;
+          if (aRank !== bRank) return aRank - bRank;
+          const aPref = Number.isFinite(Number(a.preference_rank)) ? Number(a.preference_rank) : 999999;
+          const bPref = Number.isFinite(Number(b.preference_rank)) ? Number(b.preference_rank) : 999999;
+          if (aPref !== bPref) return aPref - bPref;
+          return String(a.faculty_name || a.employee_id || "").localeCompare(String(b.faculty_name || b.employee_id || ""));
+        });
+        const eligibleCandidates = candidates.filter((row) => !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict);
+        return { ...section, candidates, eligibleCandidates };
+      })
+      .sort((a, b) => {
+        const ac = `${a.primary_subject_course || ""} ${a.primary_crn || ""}`.trim();
+        const bc = `${b.primary_subject_course || ""} ${b.primary_crn || ""}`.trim();
+        return ac.localeCompare(bc);
+      });
+  }, [chairWorkflowRows, tentativeAssignments, sectionFilters]);
+
   const conflictIds = useMemo(() => {
     const ids = new Set();
     facultyPreferences.forEach((preference, index) => {
@@ -895,6 +959,125 @@ export default function PTFacultyStaffingMVP() {
   }
 
 
+
+
+  async function loadChairWorkflow() {
+    if (!activeTerm?.code) return;
+    setLoadingChairWorkflow(true);
+    setChairMessage("");
+    try {
+      const workflowParams = new URLSearchParams({ termCode: activeTerm.code });
+      const scopedDiscipline = selectedDisciplineCode && selectedDisciplineCode !== "ALL" ? selectedDisciplineCode : "";
+      if (scopedDiscipline) workflowParams.set("disciplineCode", scopedDiscipline);
+
+      const [workflowResponse, assignmentsResponse, logsResponse] = await Promise.all([
+        fetch(`${API_BASE}/api/chair-workflow?${workflowParams.toString()}`),
+        fetch(`${API_BASE}/api/assignments?${workflowParams.toString()}`),
+        fetch(`${API_BASE}/api/decision-logs?${workflowParams.toString()}`),
+      ]);
+
+      const workflowData = await workflowResponse.json();
+      const assignmentsData = await assignmentsResponse.json();
+      const logsData = await logsResponse.json();
+
+      if (!workflowResponse.ok) {
+        setChairMessage(workflowData.error || "Could not load workflow.");
+        setChairWorkflowRows([]);
+        setTentativeAssignments([]);
+        setDecisionLogs([]);
+        return;
+      }
+      if (!assignmentsResponse.ok) {
+        setChairMessage(assignmentsData.error || "Could not load tentative assignments.");
+        setChairWorkflowRows(workflowData.rows || []);
+        setTentativeAssignments([]);
+        setDecisionLogs([]);
+        return;
+      }
+      if (!logsResponse.ok) {
+        setChairMessage(logsData.error || "Could not load decision logs.");
+        setChairWorkflowRows(workflowData.rows || []);
+        setTentativeAssignments(assignmentsData.assignments || []);
+        setDecisionLogs([]);
+        return;
+      }
+
+      setChairWorkflowRows(Array.isArray(workflowData.rows) ? workflowData.rows : []);
+      setTentativeAssignments(Array.isArray(assignmentsData.assignments) ? assignmentsData.assignments : []);
+      setDecisionLogs(Array.isArray(logsData.logs) ? logsData.logs : []);
+    } catch (error) {
+      setChairMessage(error.message || "Could not load workflow.");
+      setChairWorkflowRows([]);
+      setTentativeAssignments([]);
+      setDecisionLogs([]);
+    } finally {
+      setLoadingChairWorkflow(false);
+    }
+  }
+
+  async function assignSectionToInstructor(row, topEmployeeId) {
+    if (!row?.assignment_group_id || !row?.employee_id || !activeTerm?.code) return;
+    const isBypass = Boolean(topEmployeeId && topEmployeeId !== row.employee_id);
+    let reason = "";
+    if (isBypass) {
+      reason = window.prompt("Bypassing the current top candidate requires a rationale. Enter a brief explanation:", "") || "";
+      if (!reason.trim()) {
+        setChairMessage("A rationale is required when bypassing the top candidate.");
+        return;
+      }
+    }
+
+    setChairMessage("");
+    try {
+      const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
+      const response = await fetch(`${API_BASE}/api/assignments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          termCode: activeTerm.code,
+          disciplineCode: row.discipline_code,
+          assignmentGroupId: row.assignment_group_id,
+          employeeId: row.employee_id,
+          actorName,
+          reason: reason.trim() || undefined,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setChairMessage(data.error || "Could not save tentative assignment.");
+        return;
+      }
+      setChairMessage(data.message || "Tentative assignment saved.");
+      await loadChairWorkflow();
+    } catch (error) {
+      setChairMessage(error.message || "Could not save tentative assignment.");
+    }
+  }
+
+  async function undoTentativeAssignment(assignment) {
+    if (!assignment?.id) return;
+    const confirmed = window.confirm(`Unassign ${assignment.primary_subject_course || assignment.assignment_group_id} from ${assignment.faculty_name || assignment.employee_id}?`);
+    if (!confirmed) return;
+
+    setChairMessage("");
+    try {
+      const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
+      const response = await fetch(`${API_BASE}/api/assignments/${assignment.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorName }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setChairMessage(data.error || "Could not remove tentative assignment.");
+        return;
+      }
+      setChairMessage(data.message || "Tentative assignment removed.");
+      await loadChairWorkflow();
+    } catch (error) {
+      setChairMessage(error.message || "Could not remove tentative assignment.");
+    }
+  }
   async function loadFacultyPreferences(facultyId = selectedFacultyId) {
     if (role !== "faculty" || !activeTerm?.code) return;
     try {
