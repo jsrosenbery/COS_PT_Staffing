@@ -148,6 +148,88 @@ async function getMeetingsForAssignmentGroups(termCode, assignmentGroupIds = [])
   return map;
 }
 
+function normalizeDivisionName(value) {
+  return normalize(value).replace(/&/g, "and").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+async function getDivisionUploadImpact(client, termCode, divisionName) {
+  const divisionNorm = normalizeDivisionName(divisionName);
+  if (!termCode || !divisionNorm) {
+    return { assignmentGroups: [], counts: { sections: 0, facultyPreferences: 0, facultySubmissions: 0, tentativeAssignments: 0, disciplineWindows: 0 } };
+  }
+
+  const groupsResult = await client.query(
+    `SELECT assignment_group_id, discipline_code, primary_subject_course, primary_crn
+     FROM assignment_groups
+     WHERE term_code = $1
+       AND LOWER(REPLACE(COALESCE(division, ''), '&', 'and')) = $2`,
+    [termCode, divisionNorm]
+  );
+
+  const assignmentGroups = groupsResult.rows || [];
+  const assignmentGroupIds = assignmentGroups.map((row) => row.assignment_group_id).filter(Boolean);
+  const disciplineCodes = Array.from(new Set(assignmentGroups.map((row) => row.discipline_code).filter(Boolean)));
+
+  const countQuery = async (sql, params) => {
+    const result = await client.query(sql, params);
+    return Number(result.rows?.[0]?.count || 0);
+  };
+
+  const facultyPreferences = assignmentGroupIds.length
+    ? await countQuery(
+        `SELECT COUNT(*)::int AS count
+         FROM faculty_preferences
+         WHERE term_code = $1
+           AND assignment_group_id = ANY($2::text[])`,
+        [termCode, assignmentGroupIds]
+      )
+    : 0;
+
+  const facultySubmissions = disciplineCodes.length
+    ? await countQuery(
+        `SELECT COUNT(*)::int AS count
+         FROM faculty_submissions
+         WHERE term_code = $1
+           AND discipline_code = ANY($2::text[])
+           AND submitted = TRUE`,
+        [termCode, disciplineCodes]
+      )
+    : 0;
+
+  const tentativeAssignments = assignmentGroupIds.length
+    ? await countQuery(
+        `SELECT COUNT(*)::int AS count
+         FROM assignments
+         WHERE term_code = $1
+           AND assignment_group_id = ANY($2::text[])
+           AND status <> 'released'`,
+        [termCode, assignmentGroupIds]
+      )
+    : 0;
+
+  const disciplineWindows = disciplineCodes.length
+    ? await countQuery(
+        `SELECT COUNT(*)::int AS count
+         FROM discipline_windows
+         WHERE term_code = $1
+           AND discipline_code = ANY($2::text[])
+           AND COALESCE(status, 'ready') <> 'ready'`,
+        [termCode, disciplineCodes]
+      )
+    : 0;
+
+  return {
+    assignmentGroups,
+    counts: {
+      sections: assignmentGroups.length,
+      facultyPreferences,
+      facultySubmissions,
+      tentativeAssignments,
+      disciplineWindows,
+    },
+  };
+}
+
 
 const hiddenColumns = new Set([
   "SCHEDULE_TYPE",
@@ -1090,12 +1172,15 @@ app.get("/api/health", async (_req, res) => {
 
 app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
   try {
-    const { termCode } = req.body;
+    const { termCode, divisionName, forceReplace } = req.body;
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded." });
     }
     if (!termCode) {
       return res.status(400).json({ error: "termCode is required." });
+    }
+    if (!divisionName) {
+      return res.status(400).json({ error: "divisionName is required." });
     }
 
     const csvText = req.file.buffer.toString("utf-8");
@@ -1122,35 +1207,81 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
       });
     }
 
+    const normalizedUploadDivision = normalizeDivisionName(divisionName);
+    const divisionMismatchRows = [];
+    const scopedSections = [];
+
+    for (const section of result.sections || []) {
+      const sectionDivision = normalize(section.division);
+      const normalizedSectionDivision = normalizeDivisionName(sectionDivision || divisionName);
+
+      if (sectionDivision && normalizedSectionDivision !== normalizedUploadDivision) {
+        divisionMismatchRows.push({
+          assignment_group_id: section.assignment_group_id,
+          primary_subject_course: section.primary_subject_course,
+          primary_crn: section.primary_crn,
+          foundDivision: section.division,
+        });
+        continue;
+      }
+
+      scopedSections.push({ ...section, division: sectionDivision || divisionName });
+    }
+
+    if (divisionMismatchRows.length) {
+      return res.status(400).json({
+        ok: false,
+        errors: [
+          `This upload is scoped to ${divisionName}, but ${divisionMismatchRows.length} section bundle(s) are tagged to a different division in the file.`,
+        ],
+        warnings: result.warnings || [],
+        summary: {
+          ...(result.summary || {}),
+          divisionName,
+          mismatchedRows: divisionMismatchRows.slice(0, 10),
+        },
+      });
+    }
+
     const client = await pool.connect();
 
     try {
       await client.query("BEGIN");
 
-      const disciplineCodes = Array.from(
-        new Set(result.sections.map((s) => s.discipline_code).filter(Boolean))
-      );
+      const uploadImpact = await getDivisionUploadImpact(client, termCode, divisionName);
+      const protectedWorkCount = Object.entries(uploadImpact.counts)
+        .filter(([key]) => key !== "sections")
+        .reduce((sum, [, value]) => sum + Number(value || 0), 0);
 
-      if (disciplineCodes.length) {
-        await client.query(
-          `DELETE FROM assignment_group_meetings
-           WHERE assignment_group_id IN (
-             SELECT assignment_group_id FROM assignment_groups
-             WHERE term_code = $1
-             AND discipline_code = ANY($2::text[])
-           )`,
-          [termCode, disciplineCodes]
-        );
-
-        await client.query(
-          `DELETE FROM assignment_groups
-           WHERE term_code = $1
-           AND discipline_code = ANY($2::text[])`,
-          [termCode, disciplineCodes]
-        );
+      if (uploadImpact.counts.sections > 0 && protectedWorkCount > 0 && String(forceReplace).toLowerCase() !== "true") {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          ok: false,
+          code: "existing_work_detected",
+          error: `Replacing ${divisionName} for ${termCode} will remove schedule bundles that already have related staffing work attached.`,
+          divisionName,
+          protectedWork: uploadImpact.counts,
+        });
       }
 
-      for (const section of result.sections) {
+      await client.query(
+        `DELETE FROM assignment_group_meetings
+         WHERE assignment_group_id IN (
+           SELECT assignment_group_id FROM assignment_groups
+           WHERE term_code = $1
+             AND LOWER(REPLACE(COALESCE(division, ''), '&', 'and')) = $2
+         )`,
+        [termCode, normalizedUploadDivision]
+      );
+
+      await client.query(
+        `DELETE FROM assignment_groups
+         WHERE term_code = $1
+           AND LOWER(REPLACE(COALESCE(division, ''), '&', 'and')) = $2`,
+        [termCode, normalizedUploadDivision]
+      );
+
+      for (const section of scopedSections) {
         await client.query(
           `INSERT INTO assignment_groups (
             term_code,
@@ -1211,20 +1342,22 @@ app.post("/api/upload/schedule", upload.single("file"), async (req, res) => {
       }
 
       await client.query("COMMIT");
+
+      res.json({
+        ok: true,
+        importedCount: scopedSections.length,
+        warnings: result.warnings,
+        unmappedSubjects: result.unmappedSubjects || [],
+        divisionName,
+        replacedCount: uploadImpact.counts.sections || 0,
+        protectedWork: uploadImpact.counts,
+      });
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
     } finally {
       client.release();
     }
-
-    res.json({
-      ok: true,
-      importedCount: result.sections.length,
-      warnings: result.warnings,
-      unmappedSubjects: result.unmappedSubjects || [],
-      summary: result.summary,
-    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
