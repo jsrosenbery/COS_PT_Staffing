@@ -1688,6 +1688,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   <th style={ui.th}>Units</th>
                   <th style={ui.th}>Campus</th>
                   <th style={ui.th}>Method</th>
+                  <th style={ui.th}>Modality</th>
                   {role === "faculty" ? <th style={ui.th}>Action</th> : null}
                 </tr>
               </thead>
@@ -1703,6 +1704,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <td style={ui.td}>{formatUnits(section.units)}</td>
                       <td style={ui.td}>{section.campus || ""}</td>
                       <td style={ui.td}>{section.instructional_method || ""}</td>
+                      <td style={ui.td}>{section.display_modality || section.modality || ""}</td>
                       {role === "faculty" ? (
                         <td style={ui.td}>
                           <button style={ui.btnPrimary} onClick={() => addPreference(section)}>
@@ -1719,7 +1721,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   ))
                 ) : (
                   <tr>
-                    <td style={ui.td} colSpan={role === "faculty" ? 9 : 8}>
+                    <td style={ui.td} colSpan={role === "faculty" ? 10 : 9}>
                       No PT-eligible open sections found yet. Upload a schedule, then click Refresh Sections.
                     </td>
                   </tr>

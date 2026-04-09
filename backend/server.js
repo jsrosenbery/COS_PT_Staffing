@@ -507,7 +507,9 @@ app.get("/api/preferences", async (req, res) => {
           ag.instructional_method,
           ag.display_modality,
           ag.campus,
-          ag.units
+          ag.units,
+          ag.instructional_method,
+          ag.display_modality
         ORDER BY fp.faculty_name NULLS LAST, fp.faculty_id, fp.preference_rank
       `,
       params
@@ -735,8 +737,12 @@ app.get("/api/available-sections", async (req, res) => {
           ag.title,
           ag.division,
           ag.modality,
+          ag.instructional_method,
+          ag.display_modality,
           ag.campus,
           ag.units,
+          ag.instructional_method,
+          ag.display_modality,
           ag.pt_eligible,
           ag.is_grouped
         ORDER BY ag.discipline_code, ag.primary_subject_course, ag.primary_crn
