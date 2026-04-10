@@ -2348,6 +2348,218 @@ OH,ORNAMENTAL_HORTICULTURE`}
           </div>
         ) : null}
 
+        {(role === "admin" || role === "chair" || role === "dean") ? (
+          <div style={ui.card}>
+            <div style={{ ...ui.between, marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)" }}>Command Center</div>
+                <div style={{ marginTop: 6, color: "var(--text-muted)" }}>Assignment workflow, tentative placements, and audit history now sit above the long section list for faster admin work.</div>
+              </div>
+            </div>
+            <div style={ui.between}>
+              <div>
+                <h2 style={ui.cardTitle}>Instructor-First Assignment Workflow</h2>
+                <div style={ui.cardDesc}>Put the queue near the controls, not buried under the long section table. This is the main action lane for scheduler and chair work.</div>
+                <div style={ui.cardDesc}>
+                  Seniority stays in front, preference rank breaks ties, tentative assignments recalculate by real meeting conflicts, and chairs can now reassign without detouring through an unassign-first shuffle.
+                </div>
+              </div>
+              <button style={ui.btnPrimary} onClick={loadChairWorkflow}>
+                {loadingChairWorkflow ? "Refreshing..." : "Refresh Workflow"}
+              </button>
+            </div>
+
+            {chairMessage ? (
+              <div style={{ marginTop: 12, color: chairMessage.toLowerCase().includes("could not") || chairMessage.toLowerCase().includes("conflict") || chairMessage.toLowerCase().includes("required") || chairMessage.toLowerCase().includes("already") ? "#b91c1c" : "#166534", fontWeight: 700 }}>
+                {chairMessage}
+              </div>
+            ) : null}
+
+            <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
+              {sectionQueue.length} queued section(s), {tentativeAssignments.length} tentative assignment(s), {decisionLogs.length} recent decision log entr{decisionLogs.length === 1 ? "y" : "ies"}.
+            </div>
+
+            <div className="cos-panel-grid" style={{ ...ui.panelGrid, marginTop: 16 }}>
+              <div style={{ display: "grid", gap: 12 }}>
+                {sectionQueue.length ? sectionQueue.map((section) => {
+                  const topCandidate = section.eligibleCandidates[0] || null;
+                  return (
+                    <div key={section.assignment_group_id} style={{ ...ui.sectionCard, borderColor: section.currentAssignment ? "#bbf7d0" : "var(--border-color)", background: section.currentAssignment ? "rgba(220, 252, 231, 0.28)" : "var(--bg-card)" }}>
+                      <div style={{ ...ui.between, alignItems: "flex-start" }}>
+                        <div>
+                          <div style={{ fontWeight: 800 }}>{section.primary_subject_course} • {section.primary_crn}</div>
+                          <div style={{ marginTop: 4 }}>{section.title || "Untitled"}</div>
+                          <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                            {formatMeetings(section.meetings)}
+                            {section.campus ? ` • ${section.campus}` : ""}
+                            {section.discipline_code ? ` • ${section.discipline_code}` : ""}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                          <span style={methodPillStyle(sectionMethodLabel(section))}>{sectionMethodLabel(section)}</span>
+                          <span style={modalityPillStyle(sectionModalityLabel(section))}>{sectionModalityLabel(section)}</span>
+                          {section.currentAssignment ? (
+                            <span style={workflowStatePillStyle("assigned")}>Assigned</span>
+                          ) : topCandidate ? (
+                            <span style={workflowStatePillStyle("top")}>Next in line ready</span>
+                          ) : (
+                            <span style={workflowStatePillStyle("conflict")}>No eligible candidate</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {section.currentAssignment ? (
+                        <div style={{ marginTop: 10, color: "#166534", fontWeight: 700 }}>
+                          Tentatively assigned to {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
+                        </div>
+                      ) : null}
+
+                      <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                        {section.candidates.slice(0, 5).map((row) => {
+                          const isTop = topCandidate?.employee_id === row.employee_id;
+                          const currentAssignment = currentAssignmentByGroup.get(section.assignment_group_id) || section.currentAssignment || null;
+                          const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
+                          return (
+                            <div key={`${section.assignment_group_id}-${row.employee_id}`} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: row.has_tentative_assignment || isCurrentAssignee ? "rgba(220, 252, 231, 0.22)" : row.has_assignment_conflict ? "rgba(254, 226, 226, 0.22)" : "var(--bg-soft)" }}>
+                              <div style={{ ...ui.between, alignItems: "flex-start" }}>
+                                <div>
+                                  <div style={{ fontWeight: 700 }}>{row.faculty_name}</div>
+                                  <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
+                                    Seniority #{row.seniority_rank || "—"} • Preference #{row.preference_rank || "—"}
+                                  </div>
+                                  {isCurrentAssignee ? (
+                                    <div style={{ marginTop: 6, color: "#166534", fontSize: 12, fontWeight: 700 }}>
+                                      Current tentative assignee.
+                                    </div>
+                                  ) : null}
+                                  {row.has_assignment_conflict ? (
+                                    <div style={{ marginTop: 6, color: "#b91c1c", fontSize: 12, fontWeight: 700 }}>
+                                      Time conflict with {row.conflicting_assignment?.primary_subject_course || row.conflicting_assignment?.assignment_group_id}.
+                                    </div>
+                                  ) : null}
+                                  {!row.has_assignment_conflict && row.assigned_elsewhere ? (
+                                    <div style={{ marginTop: 6, color: "#92400e", fontSize: 12, fontWeight: 700 }}>
+                                      Has other tentative assignment(s), but no time collision.
+                                    </div>
+                                  ) : null}
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                    {isCurrentAssignee || row.has_tentative_assignment ? <span style={workflowStatePillStyle("assigned")}>{isCurrentAssignee ? "Current assignee" : "Assigned"}</span> : null}
+                                    {!isCurrentAssignee && !row.has_tentative_assignment && row.section_assigned_to_other ? <span style={workflowStatePillStyle("filled")}>Section filled</span> : null}
+                                    {!isCurrentAssignee && !row.has_tentative_assignment && row.has_assignment_conflict ? <span style={workflowStatePillStyle("conflict")}>Time conflict</span> : null}
+                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isTop ? <span style={workflowStatePillStyle("top")}>Top candidate</span> : null}
+                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && !isTop ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
+                                    {section.currentAssignment && !isCurrentAssignee && !row.has_assignment_conflict ? <span style={workflowStatePillStyle("bypass")}>Reassign requires rationale</span> : null}
+                                  </div>
+                                  {isCurrentAssignee || row.has_tentative_assignment ? (
+                                    <button style={ui.btn} disabled>{isCurrentAssignee ? "Current" : "Assigned"}</button>
+                                  ) : row.has_assignment_conflict ? (
+                                    <button style={ui.btn} disabled>Time Conflict</button>
+                                  ) : section.currentAssignment ? (
+                                    <button style={ui.btn} onClick={() => reassignTentativeAssignment(currentAssignment, row)}>
+                                      Reassign
+                                    </button>
+                                  ) : row.section_assigned_to_other ? (
+                                    <button style={ui.btn} disabled>Filled</button>
+                                  ) : (
+                                    <button style={isTop ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, topCandidate?.employee_id)}>
+                                      {isTop ? "Assign" : "Assign with Rationale"}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }) : (
+                  <div style={{ ...ui.sectionCard, color: "var(--text-muted)" }}>
+                    No instructor preference queue is available yet. Save faculty preferences first, then refresh this workflow.
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "grid", gap: 16 }}>
+                <div style={ui.sectionCard}>
+                  <div style={{ fontWeight: 800 }}>Tentative Assignments</div>
+                  <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
+                    Live persistence snapshot with one-click unassign and queue-based reassignment.
+                  </div>
+                  <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                    {tentativeAssignments.length ? tentativeAssignments.map((assignment) => (
+                      <div key={assignment.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: "var(--bg-soft)" }}>
+                        <div style={{ ...ui.between, alignItems: "flex-start" }}>
+                          <div>
+                            <div style={{ fontWeight: 700 }}>{assignment.primary_subject_course} • {assignment.primary_crn}</div>
+                            <div style={{ marginTop: 4 }}>{assignment.faculty_name || assignment.employee_id}</div>
+                            <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                              {formatMeetings(assignment.meetings)}
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                              <span style={methodPillStyle(sectionMethodLabel(assignment))}>{sectionMethodLabel(assignment)}</span>
+                              <span style={modalityPillStyle(sectionModalityLabel(assignment))}>{sectionModalityLabel(assignment)}</span>
+                            </div>
+                          </div>
+                          <button style={ui.btn} onClick={() => undoTentativeAssignment(assignment)}>Unassign</button>
+                        </div>
+                      </div>
+                    )) : (
+                      <div style={{ color: "var(--text-subtle)" }}>No tentative assignments saved yet.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={ui.sectionCard}>
+                  <div style={{ ...ui.between, gap: 12, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ fontWeight: 800 }}>Audit & Decision Log</div>
+                      <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
+                        Uploads, submissions, assignments, reassignments, and approvals all leave a timestamped trail.
+                      </div>
+                    </div>
+                    <button
+                      style={ui.btn}
+                      onClick={() => downloadCsvFromRows(
+                        decisionLogs.map((entry) => ({
+                          created_at: entry.created_at,
+                          actor_name: entry.actor_name,
+                          event_type: entry.event_type,
+                          discipline_code: entry.discipline_code,
+                          detail: entry.detail,
+                        })),
+                        `scope-audit-log-${activeTerm.code}.csv`,
+                        ["created_at", "actor_name", "event_type", "discipline_code", "detail"]
+                      )}
+                      disabled={!decisionLogs.length}
+                    >
+                      Export Audit Log
+                    </button>
+                  </div>
+                  <div style={{ display: "grid", gap: 10, marginTop: 12, maxHeight: 540, overflowY: "auto", paddingRight: 4 }}>
+                    {decisionLogs.length ? decisionLogs.map((entry) => (
+                      <div key={entry.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: "var(--bg-soft)" }}>
+                        <div style={{ ...ui.between, alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
+                          <div style={{ fontWeight: 700 }}>{entry.actor_name}</div>
+                          <span style={workflowStatePillStyle(logEventKind(entry))}>{entry.event_type.replace(/_/g, " ")}</span>
+                        </div>
+                        <div style={{ marginTop: 6, fontSize: 13 }}>{entry.detail}</div>
+                        <div style={{ marginTop: 6, color: "var(--text-subtle)", fontSize: 12 }}>
+                          {entry.discipline_code || "All disciplines"} • {new Date(entry.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                    )) : (
+                      <div style={{ color: "var(--text-subtle)" }}>No audit entries yet.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <div style={ui.card}>
           <div style={ui.between}>
             <div>
@@ -2653,210 +2865,6 @@ OH,ORNAMENTAL_HORTICULTURE`}
           </div>
         </div>
 
-        {(role === "admin" || role === "chair" || role === "dean") ? (
-          <div style={ui.card}>
-            <div style={ui.between}>
-              <div>
-                <h2 style={ui.cardTitle}>Instructor-First Assignment Workflow</h2>
-                <div style={ui.cardDesc}>
-                  Seniority stays in front, preference rank breaks ties, tentative assignments recalculate by real meeting conflicts, and chairs can now reassign without detouring through an unassign-first shuffle.
-                </div>
-              </div>
-              <button style={ui.btnPrimary} onClick={loadChairWorkflow}>
-                {loadingChairWorkflow ? "Refreshing..." : "Refresh Workflow"}
-              </button>
-            </div>
-
-            {chairMessage ? (
-              <div style={{ marginTop: 12, color: chairMessage.toLowerCase().includes("could not") || chairMessage.toLowerCase().includes("conflict") || chairMessage.toLowerCase().includes("required") || chairMessage.toLowerCase().includes("already") ? "#b91c1c" : "#166534", fontWeight: 700 }}>
-                {chairMessage}
-              </div>
-            ) : null}
-
-            <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
-              {sectionQueue.length} queued section(s), {tentativeAssignments.length} tentative assignment(s), {decisionLogs.length} recent decision log entr{decisionLogs.length === 1 ? "y" : "ies"}.
-            </div>
-
-            <div className="cos-panel-grid" style={{ ...ui.panelGrid, marginTop: 16 }}>
-              <div style={{ display: "grid", gap: 12 }}>
-                {sectionQueue.length ? sectionQueue.map((section) => {
-                  const topCandidate = section.eligibleCandidates[0] || null;
-                  return (
-                    <div key={section.assignment_group_id} style={{ ...ui.sectionCard, borderColor: section.currentAssignment ? "#bbf7d0" : "var(--border-color)", background: section.currentAssignment ? "rgba(220, 252, 231, 0.28)" : "var(--bg-card)" }}>
-                      <div style={{ ...ui.between, alignItems: "flex-start" }}>
-                        <div>
-                          <div style={{ fontWeight: 800 }}>{section.primary_subject_course} • {section.primary_crn}</div>
-                          <div style={{ marginTop: 4 }}>{section.title || "Untitled"}</div>
-                          <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
-                            {formatMeetings(section.meetings)}
-                            {section.campus ? ` • ${section.campus}` : ""}
-                            {section.discipline_code ? ` • ${section.discipline_code}` : ""}
-                          </div>
-                        </div>
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                          <span style={methodPillStyle(sectionMethodLabel(section))}>{sectionMethodLabel(section)}</span>
-                          <span style={modalityPillStyle(sectionModalityLabel(section))}>{sectionModalityLabel(section)}</span>
-                          {section.currentAssignment ? (
-                            <span style={workflowStatePillStyle("assigned")}>Assigned</span>
-                          ) : topCandidate ? (
-                            <span style={workflowStatePillStyle("top")}>Next in line ready</span>
-                          ) : (
-                            <span style={workflowStatePillStyle("conflict")}>No eligible candidate</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {section.currentAssignment ? (
-                        <div style={{ marginTop: 10, color: "#166534", fontWeight: 700 }}>
-                          Tentatively assigned to {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
-                        </div>
-                      ) : null}
-
-                      <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                        {section.candidates.slice(0, 5).map((row) => {
-                          const isTop = topCandidate?.employee_id === row.employee_id;
-                          const currentAssignment = currentAssignmentByGroup.get(section.assignment_group_id) || section.currentAssignment || null;
-                          const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
-                          return (
-                            <div key={`${section.assignment_group_id}-${row.employee_id}`} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: row.has_tentative_assignment || isCurrentAssignee ? "rgba(220, 252, 231, 0.22)" : row.has_assignment_conflict ? "rgba(254, 226, 226, 0.22)" : "var(--bg-soft)" }}>
-                              <div style={{ ...ui.between, alignItems: "flex-start" }}>
-                                <div>
-                                  <div style={{ fontWeight: 700 }}>{row.faculty_name}</div>
-                                  <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
-                                    Seniority #{row.seniority_rank || "—"} • Preference #{row.preference_rank || "—"}
-                                  </div>
-                                  {isCurrentAssignee ? (
-                                    <div style={{ marginTop: 6, color: "#166534", fontSize: 12, fontWeight: 700 }}>
-                                      Current tentative assignee.
-                                    </div>
-                                  ) : null}
-                                  {row.has_assignment_conflict ? (
-                                    <div style={{ marginTop: 6, color: "#b91c1c", fontSize: 12, fontWeight: 700 }}>
-                                      Time conflict with {row.conflicting_assignment?.primary_subject_course || row.conflicting_assignment?.assignment_group_id}.
-                                    </div>
-                                  ) : null}
-                                  {!row.has_assignment_conflict && row.assigned_elsewhere ? (
-                                    <div style={{ marginTop: 6, color: "#92400e", fontSize: 12, fontWeight: 700 }}>
-                                      Has other tentative assignment(s), but no time collision.
-                                    </div>
-                                  ) : null}
-                                </div>
-                                <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                                    {isCurrentAssignee || row.has_tentative_assignment ? <span style={workflowStatePillStyle("assigned")}>{isCurrentAssignee ? "Current assignee" : "Assigned"}</span> : null}
-                                    {!isCurrentAssignee && !row.has_tentative_assignment && row.section_assigned_to_other ? <span style={workflowStatePillStyle("filled")}>Section filled</span> : null}
-                                    {!isCurrentAssignee && !row.has_tentative_assignment && row.has_assignment_conflict ? <span style={workflowStatePillStyle("conflict")}>Time conflict</span> : null}
-                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isTop ? <span style={workflowStatePillStyle("top")}>Top candidate</span> : null}
-                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && !isTop ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
-                                    {section.currentAssignment && !isCurrentAssignee && !row.has_assignment_conflict ? <span style={workflowStatePillStyle("bypass")}>Reassign requires rationale</span> : null}
-                                  </div>
-                                  {isCurrentAssignee || row.has_tentative_assignment ? (
-                                    <button style={ui.btn} disabled>{isCurrentAssignee ? "Current" : "Assigned"}</button>
-                                  ) : row.has_assignment_conflict ? (
-                                    <button style={ui.btn} disabled>Time Conflict</button>
-                                  ) : section.currentAssignment ? (
-                                    <button style={ui.btn} onClick={() => reassignTentativeAssignment(currentAssignment, row)}>
-                                      Reassign
-                                    </button>
-                                  ) : row.section_assigned_to_other ? (
-                                    <button style={ui.btn} disabled>Filled</button>
-                                  ) : (
-                                    <button style={isTop ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, topCandidate?.employee_id)}>
-                                      {isTop ? "Assign" : "Assign with Rationale"}
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                }) : (
-                  <div style={{ ...ui.sectionCard, color: "var(--text-muted)" }}>
-                    No instructor preference queue is available yet. Save faculty preferences first, then refresh this workflow.
-                  </div>
-                )}
-              </div>
-
-              <div style={{ display: "grid", gap: 16 }}>
-                <div style={ui.sectionCard}>
-                  <div style={{ fontWeight: 800 }}>Tentative Assignments</div>
-                  <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
-                    Live persistence snapshot with one-click unassign and queue-based reassignment.
-                  </div>
-                  <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                    {tentativeAssignments.length ? tentativeAssignments.map((assignment) => (
-                      <div key={assignment.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: "var(--bg-soft)" }}>
-                        <div style={{ ...ui.between, alignItems: "flex-start" }}>
-                          <div>
-                            <div style={{ fontWeight: 700 }}>{assignment.primary_subject_course} • {assignment.primary_crn}</div>
-                            <div style={{ marginTop: 4 }}>{assignment.faculty_name || assignment.employee_id}</div>
-                            <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
-                              {formatMeetings(assignment.meetings)}
-                            </div>
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                              <span style={methodPillStyle(sectionMethodLabel(assignment))}>{sectionMethodLabel(assignment)}</span>
-                              <span style={modalityPillStyle(sectionModalityLabel(assignment))}>{sectionModalityLabel(assignment)}</span>
-                            </div>
-                          </div>
-                          <button style={ui.btn} onClick={() => undoTentativeAssignment(assignment)}>Unassign</button>
-                        </div>
-                      </div>
-                    )) : (
-                      <div style={{ color: "var(--text-subtle)" }}>No tentative assignments saved yet.</div>
-                    )}
-                  </div>
-                </div>
-
-                <div style={ui.sectionCard}>
-                  <div style={{ ...ui.between, gap: 12, flexWrap: "wrap" }}>
-                    <div>
-                      <div style={{ fontWeight: 800 }}>Audit & Decision Log</div>
-                      <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
-                        Uploads, submissions, assignments, reassignments, and approvals all leave a timestamped trail.
-                      </div>
-                    </div>
-                    <button
-                      style={ui.btn}
-                      onClick={() => downloadCsvFromRows(
-                        decisionLogs.map((entry) => ({
-                          created_at: entry.created_at,
-                          actor_name: entry.actor_name,
-                          event_type: entry.event_type,
-                          discipline_code: entry.discipline_code,
-                          detail: entry.detail,
-                        })),
-                        `scope-audit-log-${activeTerm.code}.csv`,
-                        ["created_at", "actor_name", "event_type", "discipline_code", "detail"]
-                      )}
-                      disabled={!decisionLogs.length}
-                    >
-                      Export Audit Log
-                    </button>
-                  </div>
-                  <div style={{ display: "grid", gap: 10, marginTop: 12, maxHeight: 540, overflowY: "auto", paddingRight: 4 }}>
-                    {decisionLogs.length ? decisionLogs.map((entry) => (
-                      <div key={entry.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: "var(--bg-soft)" }}>
-                        <div style={{ ...ui.between, alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
-                          <div style={{ fontWeight: 700 }}>{entry.actor_name}</div>
-                          <span style={workflowStatePillStyle(logEventKind(entry))}>{entry.event_type.replace(/_/g, " ")}</span>
-                        </div>
-                        <div style={{ marginTop: 6, fontSize: 13 }}>{entry.detail}</div>
-                        <div style={{ marginTop: 6, color: "var(--text-subtle)", fontSize: 12 }}>
-                          {entry.discipline_code || "All disciplines"} • {new Date(entry.created_at).toLocaleString()}
-                        </div>
-                      </div>
-                    )) : (
-                      <div style={{ color: "var(--text-subtle)" }}>No audit entries yet.</div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : null}
 
       </div>
     </div>
