@@ -418,6 +418,10 @@ function logEventKind(entry = {}) {
   return "filled";
 }
 
+function includesNormalized(haystack, needle) {
+  return normalize(haystack).toLowerCase().includes(normalize(needle).toLowerCase());
+}
+
 function reorderList(items, startIndex, endIndex) {
   const next = [...items];
   const [removed] = next.splice(startIndex, 1);
@@ -566,6 +570,25 @@ const ui = {
     border: "1px solid rgba(240,84,35,0.35)",
     color: "var(--text-main)",
   },
+  metricTile: {
+    border: "1px solid var(--border-soft)",
+    borderRadius: 18,
+    padding: 14,
+    background: "var(--bg-soft)",
+  },
+  miniKicker: {
+    fontSize: 11,
+    fontWeight: 800,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    color: "var(--text-subtle)",
+  },
+  commandLane: {
+    border: "1px solid var(--border-soft)",
+    borderRadius: 18,
+    padding: 14,
+    background: "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0))",
+  },
 };
 
 export default function PTFacultyStaffingMVP() {
@@ -630,6 +653,9 @@ export default function PTFacultyStaffingMVP() {
   const [uploadInputKey, setUploadInputKey] = useState(0);
   const [divisionStatuses, setDivisionStatuses] = useState([]);
   const [loadingDivisionStatuses, setLoadingDivisionStatuses] = useState(false);
+  const [auditSearch, setAuditSearch] = useState("");
+  const [auditTypeFilter, setAuditTypeFilter] = useState("ALL");
+  const [workflowView, setWorkflowView] = useState("all");
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
 
@@ -909,6 +935,53 @@ export default function PTFacultyStaffingMVP() {
   const modalityFilterOptions = useMemo(() => {
     return Array.from(new Set(filterOptionSections.map((section) => sectionModalityLabel(section)).filter(Boolean))).sort();
   }, [filterOptionSections]);
+
+  const workflowMetrics = useMemo(() => {
+    const assigned = sectionQueue.filter((section) => Boolean(section.currentAssignment)).length;
+    const ready = sectionQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length)).length;
+    const blocked = sectionQueue.filter((section) => !section.currentAssignment && !section.eligibleCandidates?.length).length;
+    const reassignmentPool = sectionQueue.filter((section) => Boolean(section.currentAssignment)).length;
+    return { assigned, ready, blocked, reassignmentPool, total: sectionQueue.length };
+  }, [sectionQueue]);
+
+  const filteredSectionQueue = useMemo(() => {
+    if (workflowView === "assigned") return sectionQueue.filter((section) => Boolean(section.currentAssignment));
+    if (workflowView === "ready") return sectionQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length));
+    if (workflowView === "blocked") return sectionQueue.filter((section) => !section.currentAssignment && !section.eligibleCandidates?.length);
+    return sectionQueue;
+  }, [sectionQueue, workflowView]);
+
+  const auditEventOptions = useMemo(() => {
+    return Array.from(new Set(decisionLogs.map((entry) => normalize(entry.event_type)).filter(Boolean))).sort();
+  }, [decisionLogs]);
+
+  const filteredDecisionLogs = useMemo(() => {
+    return decisionLogs.filter((entry) => {
+      const typeMatch = auditTypeFilter === "ALL" || normalize(entry.event_type) === auditTypeFilter;
+      const textMatch = !auditSearch || [entry.actor_name, entry.event_type, entry.discipline_code, entry.detail]
+        .some((value) => includesNormalized(value, auditSearch));
+      return typeMatch && textMatch;
+    });
+  }, [decisionLogs, auditSearch, auditTypeFilter]);
+
+  const activeSectionFilterCount = sectionFilters.campuses.length + sectionFilters.methods.length + sectionFilters.modalities.length;
+
+  const divisionReportRows = useMemo(() => {
+    return [...divisionStatuses]
+      .sort((a, b) => normalize(a.division_name).localeCompare(normalize(b.division_name)))
+      .map((row) => {
+        const meta = divisionStatusMeta(row.status);
+        return {
+          division_name: row.division_name,
+          status: meta.label,
+          note: meta.note,
+          open_sections: row.open_sections_count ?? 0,
+          faculty_preferences: row.preferences_count ?? 0,
+          tentative_assignments: row.assignments_count ?? 0,
+          decision_log_entries: row.decision_logs_count ?? 0,
+        };
+      });
+  }, [divisionStatuses]);
 
   const visibleSections = useMemo(() => {
     return roleScopedSections.filter((section) => {
@@ -2353,20 +2426,101 @@ OH,ORNAMENTAL_HORTICULTURE`}
             <div style={{ ...ui.between, marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)" }}>Command Center</div>
-                <div style={{ marginTop: 6, color: "var(--text-muted)" }}>Assignment workflow, tentative placements, and audit history now sit above the long section list for faster admin work.</div>
+                <div style={{ marginTop: 6, color: "var(--text-muted)" }}>Sharper lanes for controls, workflow, and reference data, so the page reads like a cockpit instead of a cargo hold.</div>
               </div>
             </div>
-            <div style={ui.between}>
-              <div>
-                <h2 style={ui.cardTitle}>Instructor-First Assignment Workflow</h2>
-                <div style={ui.cardDesc}>Put the queue near the controls, not buried under the long section table. This is the main action lane for scheduler and chair work.</div>
-                <div style={ui.cardDesc}>
-                  Seniority stays in front, preference rank breaks ties, tentative assignments recalculate by real meeting conflicts, and chairs can now reassign without detouring through an unassign-first shuffle.
+            <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+              <div style={ui.commandLane}>
+                <div style={ui.miniKicker}>Controls</div>
+                <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>Workflow Controls</h2>
+                <div style={ui.cardDesc}>Refresh the queue, export data, and pivot the view without hunting through the page.</div>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                  <button style={ui.btnPrimary} onClick={loadChairWorkflow}>
+                    {loadingChairWorkflow ? "Refreshing..." : "Refresh Workflow"}
+                  </button>
+                  <button style={ui.btn} onClick={exportPreferences}>
+                    Export Preferences
+                  </button>
+                  <button
+                    style={ui.btn}
+                    onClick={() => downloadCsvFromRows(
+                      divisionReportRows,
+                      `scope-division-summary-${activeTerm.code}.csv`,
+                      ["division_name", "status", "note", "open_sections", "faculty_preferences", "tentative_assignments", "decision_log_entries"]
+                    )}
+                    disabled={!divisionReportRows.length}
+                  >
+                    Export Division Summary
+                  </button>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+                  {[
+                    ["all", `All (${workflowMetrics.total})`],
+                    ["ready", `Ready (${workflowMetrics.ready})`],
+                    ["assigned", `Assigned (${workflowMetrics.assigned})`],
+                    ["blocked", `Blocked (${workflowMetrics.blocked})`],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      style={{ ...ui.filterChip, ...(workflowView === value ? ui.filterChipActive : {}) }}
+                      onClick={() => setWorkflowView(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
               </div>
-              <button style={ui.btnPrimary} onClick={loadChairWorkflow}>
-                {loadingChairWorkflow ? "Refreshing..." : "Refresh Workflow"}
-              </button>
+
+              <div style={ui.commandLane}>
+                <div style={ui.miniKicker}>Workflow</div>
+                <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>Assignment State</h2>
+                <div style={ui.cardDesc}>Seniority stays first, preference rank still breaks ties, and reassignment remains available when a chair needs discretion.</div>
+                <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))", marginTop: 12 }}>
+                  <div style={ui.metricTile}>
+                    <div style={ui.miniKicker}>Ready</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{workflowMetrics.ready}</div>
+                    <div style={ui.small}>Queue items with at least one conflict-free candidate.</div>
+                  </div>
+                  <div style={ui.metricTile}>
+                    <div style={ui.miniKicker}>Assigned</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{workflowMetrics.assigned}</div>
+                    <div style={ui.small}>Sections holding a tentative assignee right now.</div>
+                  </div>
+                  <div style={ui.metricTile}>
+                    <div style={ui.miniKicker}>Blocked</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{workflowMetrics.blocked}</div>
+                    <div style={ui.small}>No clear candidate is available without intervention.</div>
+                  </div>
+                  <div style={ui.metricTile}>
+                    <div style={ui.miniKicker}>Reassignment Pool</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{workflowMetrics.reassignmentPool}</div>
+                    <div style={ui.small}>Already placed sections that can still be adjusted.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={ui.commandLane}>
+                <div style={ui.miniKicker}>Reference Data</div>
+                <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>Current Scope</h2>
+                <div style={ui.cardDesc}>Filters are display-only, not restrictive. Chairs keep full assignment authority, and modality never hard-locks eligibility.</div>
+                <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                  <div style={ui.metricTile}>
+                    <div style={ui.small}>Active term</div>
+                    <div style={{ fontWeight: 800, marginTop: 6 }}>{activeTerm.name} ({activeTerm.code})</div>
+                  </div>
+                  <div style={ui.metricTile}>
+                    <div style={ui.small}>Current role scope</div>
+                    <div style={{ fontWeight: 800, marginTop: 6 }}>
+                      {role === "admin" ? "College-wide administrative view" : role === "chair" ? selectedChairName : role === "dean" ? selectedDeanName : facultyName(selectedFaculty || {})}
+                    </div>
+                  </div>
+                  <div style={ui.metricTile}>
+                    <div style={ui.small}>Display filters active</div>
+                    <div style={{ fontWeight: 800, marginTop: 6 }}>{activeSectionFilterCount}</div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {chairMessage ? (
@@ -2376,12 +2530,12 @@ OH,ORNAMENTAL_HORTICULTURE`}
             ) : null}
 
             <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
-              {sectionQueue.length} queued section(s), {tentativeAssignments.length} tentative assignment(s), {decisionLogs.length} recent decision log entr{decisionLogs.length === 1 ? "y" : "ies"}.
+              {filteredSectionQueue.length} visible queued section(s), {tentativeAssignments.length} tentative assignment(s), {filteredDecisionLogs.length} visible audit entr{filteredDecisionLogs.length === 1 ? "y" : "ies"}.
             </div>
 
             <div className="cos-panel-grid" style={{ ...ui.panelGrid, marginTop: 16 }}>
               <div style={{ display: "grid", gap: 12 }}>
-                {sectionQueue.length ? sectionQueue.map((section) => {
+                {filteredSectionQueue.length ? filteredSectionQueue.map((section) => {
                   const topCandidate = section.eligibleCandidates[0] || null;
                   return (
                     <div key={section.assignment_group_id} style={{ ...ui.sectionCard, borderColor: section.currentAssignment ? "#bbf7d0" : "var(--border-color)", background: section.currentAssignment ? "rgba(220, 252, 231, 0.28)" : "var(--bg-card)" }}>
@@ -2523,7 +2677,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     <button
                       style={ui.btn}
                       onClick={() => downloadCsvFromRows(
-                        decisionLogs.map((entry) => ({
+                        filteredDecisionLogs.map((entry) => ({
                           created_at: entry.created_at,
                           actor_name: entry.actor_name,
                           event_type: entry.event_type,
@@ -2533,13 +2687,33 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         `scope-audit-log-${activeTerm.code}.csv`,
                         ["created_at", "actor_name", "event_type", "discipline_code", "detail"]
                       )}
-                      disabled={!decisionLogs.length}
+                      disabled={!filteredDecisionLogs.length}
                     >
                       Export Audit Log
                     </button>
                   </div>
+                  <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1.4fr 1fr auto", marginTop: 12, alignItems: "center" }}>
+                    <input
+                      style={ui.input}
+                      value={auditSearch}
+                      onChange={(e) => setAuditSearch(e.target.value)}
+                      placeholder="Search actor, event, discipline, or detail"
+                    />
+                    <select style={ui.select} value={auditTypeFilter} onChange={(e) => setAuditTypeFilter(e.target.value)}>
+                      <option value="ALL">All event types</option>
+                      {auditEventOptions.map((eventType) => (
+                        <option key={eventType} value={eventType}>{eventType.replace(/_/g, " ")}</option>
+                      ))}
+                    </select>
+                    <button style={ui.btn} onClick={() => { setAuditSearch(""); setAuditTypeFilter("ALL"); }}>
+                      Clear
+                    </button>
+                  </div>
+                  <div style={{ marginTop: 10, color: "var(--text-subtle)", fontSize: 12 }}>
+                    Showing {filteredDecisionLogs.length} of {decisionLogs.length} audit entr{decisionLogs.length === 1 ? "y" : "ies"}.
+                  </div>
                   <div style={{ display: "grid", gap: 10, marginTop: 12, maxHeight: 540, overflowY: "auto", paddingRight: 4 }}>
-                    {decisionLogs.length ? decisionLogs.map((entry) => (
+                    {filteredDecisionLogs.length ? filteredDecisionLogs.map((entry) => (
                       <div key={entry.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: "var(--bg-soft)" }}>
                         <div style={{ ...ui.between, alignItems: "flex-start", gap: 10, flexWrap: "wrap" }}>
                           <div style={{ fontWeight: 700 }}>{entry.actor_name}</div>
@@ -2551,7 +2725,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </div>
                       </div>
                     )) : (
-                      <div style={{ color: "var(--text-subtle)" }}>No audit entries yet.</div>
+                      <div style={{ color: "var(--text-subtle)" }}>No audit entries match the current filters.</div>
                     )}
                   </div>
                 </div>
