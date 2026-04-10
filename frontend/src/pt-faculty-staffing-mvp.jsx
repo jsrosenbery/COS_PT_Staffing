@@ -1025,61 +1025,6 @@ export default function PTFacultyStaffingMVP() {
     return Array.from(new Set(filterOptionSections.map((section) => sectionModalityLabel(section)).filter(Boolean))).sort();
   }, [filterOptionSections]);
 
-  const workflowMetrics = useMemo(() => {
-    const assigned = sectionQueue.filter((section) => Boolean(section.currentAssignment)).length;
-    const ready = sectionQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length)).length;
-    const blocked = sectionQueue.filter((section) => !section.currentAssignment && !section.eligibleCandidates?.length).length;
-    const reassignmentPool = sectionQueue.filter((section) => Boolean(section.currentAssignment)).length;
-    return { assigned, ready, blocked, reassignmentPool, total: sectionQueue.length };
-  }, [sectionQueue]);
-
-  const filteredSectionQueue = useMemo(() => {
-    if (workflowView === "assigned") return sectionQueue.filter((section) => Boolean(section.currentAssignment));
-    if (workflowView === "ready") return sectionQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length));
-    if (workflowView === "blocked") return sectionQueue.filter((section) => !section.currentAssignment && !section.eligibleCandidates?.length);
-    return sectionQueue;
-  }, [sectionQueue, workflowView]);
-
-  const auditEventOptions = useMemo(() => {
-    return Array.from(new Set(decisionLogs.map((entry) => normalize(entry.event_type)).filter(Boolean))).sort();
-  }, [decisionLogs]);
-
-  const filteredDecisionLogs = useMemo(() => {
-    return decisionLogs.filter((entry) => {
-      const typeMatch = auditTypeFilter === "ALL" || normalize(entry.event_type) === auditTypeFilter;
-      const textMatch = !auditSearch || [entry.actor_name, entry.event_type, entry.discipline_code, entry.detail]
-        .some((value) => includesNormalized(value, auditSearch));
-      return typeMatch && textMatch;
-    });
-  }, [decisionLogs, auditSearch, auditTypeFilter]);
-
-  const activeSectionFilterCount = sectionFilters.campuses.length + sectionFilters.methods.length + sectionFilters.modalities.length;
-
-  const divisionReportRows = useMemo(() => {
-    return [...divisionStatuses]
-      .sort((a, b) => normalize(a.division_name).localeCompare(normalize(b.division_name)))
-      .map((row) => {
-        const meta = divisionStatusMeta(row.status);
-        return {
-          division_name: row.division_name,
-          status: meta.label,
-          note: meta.note,
-          open_sections: row.open_sections_count ?? 0,
-          faculty_preferences: row.preferences_count ?? 0,
-          tentative_assignments: row.assignments_count ?? 0,
-          decision_log_entries: row.decision_logs_count ?? 0,
-        };
-      });
-  }, [divisionStatuses]);
-
-  const visibleSections = useMemo(() => {
-    return roleScopedSections.filter((section) => {
-      if (selectedDisciplineCode !== "ALL" && section.discipline_code !== selectedDisciplineCode) return false;
-      return matchesSectionFilters(section, sectionFilters);
-    });
-  }, [roleScopedSections, selectedDisciplineCode, sectionFilters]);
-
-
   const sectionQueue = useMemo(() => {
     const grouped = new Map();
     const activeAssignments = tentativeAssignments.filter((assignment) => assignment.status !== "released");
@@ -1142,6 +1087,61 @@ export default function PTFacultyStaffingMVP() {
         return ac.localeCompare(bc);
       });
   }, [chairWorkflowRows, tentativeAssignments, sectionFilters]);
+
+  const workflowMetrics = useMemo(() => {
+    const assigned = sectionQueue.filter((section) => Boolean(section.currentAssignment)).length;
+    const ready = sectionQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length)).length;
+    const blocked = sectionQueue.filter((section) => !section.currentAssignment && !section.eligibleCandidates?.length).length;
+    const reassignmentPool = sectionQueue.filter((section) => Boolean(section.currentAssignment)).length;
+    return { assigned, ready, blocked, reassignmentPool, total: sectionQueue.length };
+  }, [sectionQueue]);
+
+  const filteredSectionQueue = useMemo(() => {
+    if (workflowView === "assigned") return sectionQueue.filter((section) => Boolean(section.currentAssignment));
+    if (workflowView === "ready") return sectionQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length));
+    if (workflowView === "blocked") return sectionQueue.filter((section) => !section.currentAssignment && !section.eligibleCandidates?.length);
+    return sectionQueue;
+  }, [sectionQueue, workflowView]);
+
+  const auditEventOptions = useMemo(() => {
+    return Array.from(new Set(decisionLogs.map((entry) => normalize(entry.event_type)).filter(Boolean))).sort();
+  }, [decisionLogs]);
+
+  const filteredDecisionLogs = useMemo(() => {
+    return decisionLogs.filter((entry) => {
+      const typeMatch = auditTypeFilter === "ALL" || normalize(entry.event_type) === auditTypeFilter;
+      const textMatch = !auditSearch || [entry.actor_name, entry.event_type, entry.discipline_code, entry.detail]
+        .some((value) => includesNormalized(value, auditSearch));
+      return typeMatch && textMatch;
+    });
+  }, [decisionLogs, auditSearch, auditTypeFilter]);
+
+  const activeSectionFilterCount = sectionFilters.campuses.length + sectionFilters.methods.length + sectionFilters.modalities.length;
+
+  const divisionReportRows = useMemo(() => {
+    return [...divisionStatuses]
+      .sort((a, b) => normalize(a.division_name).localeCompare(normalize(b.division_name)))
+      .map((row) => {
+        const meta = divisionStatusMeta(row.status);
+        return {
+          division_name: row.division_name,
+          status: meta.label,
+          note: meta.note,
+          open_sections: row.open_sections_count ?? 0,
+          faculty_preferences: row.preferences_count ?? 0,
+          tentative_assignments: row.assignments_count ?? 0,
+          decision_log_entries: row.decision_logs_count ?? 0,
+        };
+      });
+  }, [divisionStatuses]);
+
+  const visibleSections = useMemo(() => {
+    return roleScopedSections.filter((section) => {
+      if (selectedDisciplineCode !== "ALL" && section.discipline_code !== selectedDisciplineCode) return false;
+      return matchesSectionFilters(section, sectionFilters);
+    });
+  }, [roleScopedSections, selectedDisciplineCode, sectionFilters]);
+
 
   const currentAssignmentByGroup = useMemo(() => {
     const map = new Map();
