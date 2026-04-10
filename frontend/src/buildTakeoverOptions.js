@@ -61,3 +61,23 @@ export function buildVacancyCards({ decisionLogs = [], sectionQueue = [], takeov
       return bt - at;
     });
 }
+
+
+export function buildRecoveryReasons(option = {}) {
+  const reasons = [];
+  if (!option.has_assignment_conflict) reasons.push('No time conflict');
+  if (option.preference_rank && Number(option.preference_rank) <= 3) reasons.push(`Strong preference match (#${option.preference_rank})`);
+  if (option.seniority_rank) reasons.push(`Seniority #${option.seniority_rank}`);
+  if (option.assigned_elsewhere) reasons.push('Already carries another tentative section');
+  if (option.section_assigned_to_other) reasons.push('Already attached to another section');
+  if (!reasons.length) reasons.push('Visible in live recovery queue');
+  return reasons;
+}
+
+export function buildRecoveryAuditQuickFilters() {
+  return [
+    { key: 'vacancy', label: 'Vacancy events', eventTypes: ['assignment_removed'] },
+    { key: 'reassignment', label: 'Reassignments', eventTypes: ['assignment_created', 'assignment_updated'] },
+    { key: 'overrides', label: 'Overrides', eventTypes: ['assignment_created', 'assignment_updated'], searchHint: 'rationale' },
+  ];
+}

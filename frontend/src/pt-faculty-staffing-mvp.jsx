@@ -2,6 +2,7 @@ const API_BASE = "https://cos-pt-staffing.onrender.com";
 import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 import cosLogo from "./assets/cos-logo.jpg";
+import { buildTakeoverOptions, buildVacancyCards, buildRecoveryReasons, buildRecoveryAuditQuickFilters } from "./buildTakeoverOptions";
 
 const initialTerms = [];
 
@@ -745,6 +746,8 @@ export default function PTFacultyStaffingMVP() {
   const [auditSearch, setAuditSearch] = useState("");
   const [auditTypeFilter, setAuditTypeFilter] = useState("ALL");
   const [workflowView, setWorkflowView] = useState("all");
+  const [dismissedVacancyIds, setDismissedVacancyIds] = useState([]);
+  const [heldVacancyIds, setHeldVacancyIds] = useState([]);
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
 
@@ -1096,6 +1099,32 @@ export default function PTFacultyStaffingMVP() {
     return { assigned, ready, blocked, reassignmentPool, total: sectionQueue.length };
   }, [sectionQueue]);
 
+  const currentAssignmentByGroup = useMemo(() => {
+    const map = new Map();
+    tentativeAssignments.forEach((assignment) => {
+      if (assignment?.assignment_group_id) map.set(assignment.assignment_group_id, assignment);
+    });
+    return map;
+  }, [tentativeAssignments]);
+
+  const takeoverBenchByGroup = useMemo(() => {
+    const map = new Map();
+    sectionQueue.forEach((section) => {
+      map.set(section.assignment_group_id, buildTakeoverOptions(section));
+    });
+    return map;
+  }, [sectionQueue]);
+
+  const vacancyCards = useMemo(() => {
+    return buildVacancyCards({ decisionLogs, sectionQueue, takeoverBenchByGroup, currentAssignmentByGroup });
+  }, [decisionLogs, sectionQueue, takeoverBenchByGroup, currentAssignmentByGroup]);
+
+  const visibleVacancyCards = useMemo(() => {
+    return vacancyCards.filter((card) => !dismissedVacancyIds.includes(card.assignment_group_id));
+  }, [vacancyCards, dismissedVacancyIds]);
+
+  const recoveryAuditQuickFilters = useMemo(() => buildRecoveryAuditQuickFilters(), []);
+
   const filteredSectionQueue = useMemo(() => {
     if (workflowView === "assigned") return sectionQueue.filter((section) => Boolean(section.currentAssignment));
     if (workflowView === "ready") return sectionQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length));
@@ -1142,14 +1171,6 @@ export default function PTFacultyStaffingMVP() {
     });
   }, [roleScopedSections, selectedDisciplineCode, sectionFilters]);
 
-
-  const currentAssignmentByGroup = useMemo(() => {
-    const map = new Map();
-    tentativeAssignments.forEach((assignment) => {
-      if (assignment?.assignment_group_id) map.set(assignment.assignment_group_id, assignment);
-    });
-    return map;
-  }, [tentativeAssignments]);
 
   const conflictIds = useMemo(() => {
     const ids = new Set();
@@ -1325,6 +1346,20 @@ export default function PTFacultyStaffingMVP() {
     } catch (error) {
       setChairMessage(error.message || "Could not save tentative assignment.");
     }
+  }
+
+  function focusAuditOnRecovery(vacancy, quickFilter) {
+    if (!vacancy) return;
+    setAuditTypeFilter(quickFilter?.eventTypes?.[0] || "ALL");
+    setAuditSearch(vacancy.assignment_group_id || vacancy.primary_crn || "");
+  }
+
+  function toggleVacancyHold(vacancyId) {
+    setHeldVacancyIds((current) => current.includes(vacancyId) ? current.filter((id) => id !== vacancyId) : [...current, vacancyId]);
+  }
+
+  function dismissVacancyCard(vacancyId) {
+    setDismissedVacancyIds((current) => current.includes(vacancyId) ? current : [...current, vacancyId]);
   }
 
   async function undoTentativeAssignment(assignment) {
@@ -2672,9 +2707,16 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </div>
                         <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 13 }}>{stateSummary.detail}</div>
                         {section.currentAssignment ? (
-                          <div style={{ marginTop: 8, color: "#166534", fontWeight: 700, fontSize: 13 }}>
-                            Tentatively assigned to {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
-                          </div>
+                          <>
+                            <div style={{ marginTop: 8, color: "#166534", fontWeight: 700, fontSize: 13 }}>
+                              Tentatively assigned to {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
+                            </div>
+                            {takeoverBenchByGroup.get(section.assignment_group_id)?.[0] ? (
+                              <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 12 }}>
+                                If this assignment opens back up, {takeoverBenchByGroup.get(section.assignment_group_id)[0].faculty_name || takeoverBenchByGroup.get(section.assignment_group_id)[0].employee_id} is the next clean takeover option.
+                              </div>
+                            ) : null}
+                          </>
                         ) : null}
                       </div>
 
@@ -2753,6 +2795,84 @@ OH,ORNAMENTAL_HORTICULTURE`}
 
               <div style={{ display: "grid", gap: 16 }}>
                 <div style={ui.sectionCard}>
+                  <div style={{ fontWeight: 800 }}>Vacancy Recovery</div>
+                  <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
+                    When a tentative assignee drops, the section resurfaces here with immediate replacement options that respect current schedule conflicts.
+                  </div>
+                  <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                    {visibleVacancyCards.length ? visibleVacancyCards.map((vacancy) => (
+                      <div key={vacancy.assignment_group_id} style={{ border: "1px solid #fca5a5", borderRadius: 14, padding: 10, background: "rgba(254, 242, 242, 0.85)" }}>
+                        <div style={{ ...ui.between, alignItems: "flex-start", gap: 12 }}>
+                          <div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                              <div style={{ fontWeight: 800 }}>{vacancy.primary_subject_course} • {vacancy.primary_crn}</div>
+                              <span style={workflowStatePillStyle("conflict")}>Vacant</span>
+                            </div>
+                            <div style={{ marginTop: 4 }}>{vacancy.title || "Untitled"}</div>
+                            <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                              Previously held by {vacancy.previousFaculty || "Unknown instructor"}. {vacancy.removedAtLabel ? `Released ${vacancy.removedAtLabel}.` : ""}
+                            </div>
+                            <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                              {formatMeetings(vacancy.meetings)}
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                              <span style={methodPillStyle(sectionMethodLabel(vacancy))}>{sectionMethodLabel(vacancy)}</span>
+                              <span style={modalityPillStyle(sectionModalityLabel(vacancy))}>{sectionModalityLabel(vacancy)}</span>
+                              {vacancy.topOption ? <span style={workflowStatePillStyle("top")}>Best immediate fit: {vacancy.topOption.faculty_name || vacancy.topOption.employee_id}</span> : null}
+                            </div>
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                          <button style={ui.btn} onClick={() => focusAuditOnRecovery(vacancy, recoveryAuditQuickFilters[0])}>View Vacancy Audit</button>
+                          <button style={ui.btn} onClick={() => toggleVacancyHold(vacancy.assignment_group_id)}>
+                            {heldVacancyIds.includes(vacancy.assignment_group_id) ? "Release Hold" : "Hold Vacancy"}
+                          </button>
+                          <button style={ui.btn} onClick={() => dismissVacancyCard(vacancy.assignment_group_id)}>Dismiss Vacancy</button>
+                        </div>
+                        {heldVacancyIds.includes(vacancy.assignment_group_id) ? (
+                          <div style={{ marginTop: 10, color: "#92400e", fontSize: 12, fontWeight: 700 }}>
+                            Vacancy is being held in view. Recovery suggestions remain visible, but no action has been taken.
+                          </div>
+                        ) : null}
+                        <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                          {vacancy.options.length ? vacancy.options.slice(0, 3).map((option, idx) => {
+                            const recoveryReasons = buildRecoveryReasons(option);
+                            return (
+                            <div key={`${vacancy.assignment_group_id}-${option.employee_id}`} style={{ border: "1px solid var(--border-soft)", borderRadius: 12, padding: 10, background: "var(--bg-card)" }}>
+                              <div style={{ ...ui.between, alignItems: "flex-start", gap: 10 }}>
+                                <div>
+                                  <div style={{ fontWeight: 700 }}>{option.faculty_name || option.employee_id}</div>
+                                  <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
+                                    Seniority #{option.seniority_rank || "—"} • Preference #{option.preference_rank || "—"}
+                                  </div>
+                                  <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 12 }}>
+                                    {idx === 0 ? "Ready to step in now." : "Available backup option."}
+                                  </div>
+                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                                    {recoveryReasons.map((reason) => (
+                                      <span key={`${option.employee_id}-${reason}`} style={workflowStatePillStyle(idx === 0 ? "top" : "bypass")}>{reason}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                                <button style={idx === 0 ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(option, vacancy.topOption?.employee_id)}>
+                                  {idx === 0 ? "Reassign" : "Use Backup"}
+                                </button>
+                              </div>
+                            </div>
+                          )}) : (
+                            <div style={{ color: "#991b1b", fontSize: 13, fontWeight: 700 }}>
+                              No conflict-free replacement is currently available in the live queue.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )) : (
+                      <div style={{ color: "var(--text-subtle)" }}>No recently vacated sections are awaiting recovery.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div style={ui.sectionCard}>
                   <div style={{ fontWeight: 800 }}>Tentative Assignments</div>
                   <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
                     Live persistence snapshot with one-click unassign and queue-based reassignment.
@@ -2771,6 +2891,20 @@ OH,ORNAMENTAL_HORTICULTURE`}
                               <span style={methodPillStyle(sectionMethodLabel(assignment))}>{sectionMethodLabel(assignment)}</span>
                               <span style={modalityPillStyle(sectionModalityLabel(assignment))}>{sectionModalityLabel(assignment)}</span>
                             </div>
+                            {takeoverBenchByGroup.get(assignment.assignment_group_id)?.length ? (
+                              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                                <div style={{ color: "var(--text-muted)", fontSize: 12, fontWeight: 700 }}>If vacated now, next viable options</div>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                  {takeoverBenchByGroup.get(assignment.assignment_group_id).slice(0, 3).map((option, idx) => (
+                                    <span key={`${assignment.assignment_group_id}-${option.employee_id}`} style={workflowStatePillStyle(idx === 0 ? "top" : "bypass")}>
+                                      {idx === 0 ? "Next up" : "Backup"}: {option.faculty_name || option.employee_id}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={{ marginTop: 10, color: "#991b1b", fontSize: 12, fontWeight: 700 }}>No conflict-free backup is currently visible for this assignment.</div>
+                            )}
                           </div>
                           <button style={ui.btn} onClick={() => undoTentativeAssignment(assignment)}>Unassign</button>
                         </div>
@@ -2823,6 +2957,20 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     <button style={ui.btn} onClick={() => { setAuditSearch(""); setAuditTypeFilter("ALL"); }}>
                       Clear
                     </button>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                    {recoveryAuditQuickFilters.map((quick) => (
+                      <button
+                        key={quick.key}
+                        style={ui.btn}
+                        onClick={() => {
+                          setAuditTypeFilter(quick.eventTypes?.[0] || "ALL");
+                          setAuditSearch(quick.searchHint || "");
+                        }}
+                      >
+                        {quick.label}
+                      </button>
+                    ))}
                   </div>
                   <div style={{ marginTop: 10, color: "var(--text-subtle)", fontSize: 12 }}>
                     Showing {filteredDecisionLogs.length} of {decisionLogs.length} audit entr{decisionLogs.length === 1 ? "y" : "ies"}.
@@ -3184,5 +3332,3 @@ function TinyStat({ label, value }) {
     </div>
   );
 }
-
-// Vacancy mode hook added
