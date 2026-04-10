@@ -1,0 +1,8 @@
+
+.conflict-details {
+  margin-top: 6px;
+  padding: 6px;
+  background: rgba(255, 0, 0, 0.1);
+  border-left: 3px solid #f87171;
+  font-size: 0.8rem;
+}
