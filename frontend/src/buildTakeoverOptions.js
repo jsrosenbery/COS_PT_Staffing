@@ -1,24 +1,63 @@
+export function buildTakeoverOptions(section) {
+  if (!section?.candidates?.length) return [];
 
-export function buildTakeoverOptions(candidates = [], currentAssignment = null) {
-  const currentEmployeeId = currentAssignment?.employee_id || null;
-
-  return [...candidates]
-    .filter((row) => row && row.employee_id && row.employee_id !== currentEmployeeId)
-    .filter((row) => !row.has_assignment_conflict)
-    .filter((row) => !row.has_tentative_assignment)
+  return section.candidates
+    .filter((row) => !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict)
     .sort((a, b) => {
-      const aAssignedElsewhere = a.assigned_elsewhere ? 1 : 0;
-      const bAssignedElsewhere = b.assigned_elsewhere ? 1 : 0;
-      if (aAssignedElsewhere !== bAssignedElsewhere) return aAssignedElsewhere - bAssignedElsewhere;
-
       const aRank = Number.isFinite(Number(a.seniority_rank)) ? Number(a.seniority_rank) : 999999;
       const bRank = Number.isFinite(Number(b.seniority_rank)) ? Number(b.seniority_rank) : 999999;
       if (aRank !== bRank) return aRank - bRank;
-
       const aPref = Number.isFinite(Number(a.preference_rank)) ? Number(a.preference_rank) : 999999;
       const bPref = Number.isFinite(Number(b.preference_rank)) ? Number(b.preference_rank) : 999999;
       if (aPref !== bPref) return aPref - bPref;
-
       return String(a.faculty_name || a.employee_id || "").localeCompare(String(b.faculty_name || b.employee_id || ""));
+    });
+}
+
+function parseRemovalDetail(detail = "") {
+  const match = String(detail).match(/Removed tentative assignment\s+(.+?)\s+from\s+(.+)$/i);
+  if (!match) return null;
+  return {
+    assignment_group_id: match[1]?.trim(),
+    previousFaculty: match[2]?.trim(),
+  };
+}
+
+export function buildVacancyCards({ decisionLogs = [], sectionQueue = [], takeoverBenchByGroup = new Map(), currentAssignmentByGroup = new Map() }) {
+  const latestByGroup = new Map();
+
+  decisionLogs
+    .filter((entry) => entry?.event_type === "assignment_removed")
+    .forEach((entry) => {
+      const parsed = parseRemovalDetail(entry.detail);
+      if (!parsed?.assignment_group_id) return;
+      const existing = latestByGroup.get(parsed.assignment_group_id);
+      const entryTime = new Date(entry.created_at || 0).getTime();
+      const existingTime = existing ? new Date(existing.created_at || 0).getTime() : -Infinity;
+      if (!existing || entryTime >= existingTime) {
+        latestByGroup.set(parsed.assignment_group_id, { ...entry, ...parsed });
+      }
+    });
+
+  return Array.from(latestByGroup.values())
+    .map((entry) => {
+      if (currentAssignmentByGroup.get(entry.assignment_group_id)) return null;
+      const section = sectionQueue.find((item) => item.assignment_group_id === entry.assignment_group_id);
+      if (!section) return null;
+      const options = takeoverBenchByGroup.get(entry.assignment_group_id) || [];
+      return {
+        assignment_group_id: entry.assignment_group_id,
+        previousFaculty: entry.previousFaculty,
+        removedAtLabel: entry.created_at ? new Date(entry.created_at).toLocaleString() : "",
+        topOption: options[0] || null,
+        options,
+        ...section,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const at = new Date(a.removedAtLabel || 0).getTime();
+      const bt = new Date(b.removedAtLabel || 0).getTime();
+      return bt - at;
     });
 }
