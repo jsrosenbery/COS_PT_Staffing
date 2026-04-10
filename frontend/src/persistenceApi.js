@@ -1,23 +1,42 @@
+const API_BASE = "https://cos-pt-staffing.onrender.com";
 
-const API = "http://localhost:3001";
+async function readJson(response, fallbackMessage) {
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (_error) {
+    data = null;
+  }
+  if (!response.ok) {
+    throw new Error(data?.error || fallbackMessage);
+  }
+  return data;
+}
 
-export const saveRoles = async (roles) => {
-  await fetch(`${API}/roles`, {
+export async function saveRoles(rows) {
+  const response = await fetch(`${API_BASE}/api/roles`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(roles)
+    body: JSON.stringify(Array.isArray(rows) ? rows : []),
   });
-};
+  return readJson(response, "Could not save role directory.");
+}
 
-export const savePTFaculty = async (data) => {
-  await fetch(`${API}/pt-faculty`, {
+export async function loadRoles() {
+  const response = await fetch(`${API_BASE}/api/roles`);
+  return readJson(response, "Could not load role directory.");
+}
+
+export async function savePTFaculty(rows) {
+  const response = await fetch(`${API_BASE}/api/pt-faculty`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data)
+    body: JSON.stringify(Array.isArray(rows) ? rows : []),
   });
-};
+  return readJson(response, "Could not save PT roster.");
+}
 
-export const loadPTFaculty = async () => {
-  const res = await fetch(`${API}/pt-faculty`);
-  return res.json();
-};
+export async function loadPTFaculty() {
+  const response = await fetch(`${API_BASE}/api/pt-faculty`);
+  return readJson(response, "Could not load PT roster.");
+}

@@ -4,6 +4,7 @@ import Papa from "papaparse";
 import cosLogo from "./assets/cos-logo.jpg";
 import AdminOperationsPanel from "./AdminOperationsPanel";
 import { buildInitialPtRoster } from "./adminOpsUtils";
+import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty } from "./persistenceApi";
 
 const initialTerms = [];
 
@@ -696,6 +697,8 @@ export default function PTFacultyStaffingMVP() {
   const [deanAssignments, setDeanAssignments] = useState(initialDeanAssignments);
   const [ptStaffingRows, setPtStaffingRows] = useState(() => buildInitialPtRoster(initialFaculty, initialSeniority, initialDisciplines));
   const [divisionSenderEmail, setDivisionSenderEmail] = useState("jacoba@cos.edu");
+  const [directoryPersistenceReady, setDirectoryPersistenceReady] = useState(false);
+  const [rosterPersistenceReady, setRosterPersistenceReady] = useState(false);
   const [disciplines] = useState(initialDisciplines);
   const [faculty] = useState(initialFaculty);
   const [seniority] = useState(initialSeniority);
@@ -753,6 +756,108 @@ export default function PTFacultyStaffingMVP() {
   const [workflowView, setWorkflowView] = useState("all");
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
+
+
+  function normalizeRoleRows(rows = []) {
+    const grouped = new Map();
+    rows.forEach((row) => {
+      const role = String(row.role || "").toLowerCase();
+      const displayName = `${row.first_name || ""} ${row.last_name || ""}`.trim() || row.name || "";
+      const key = `${role}::${displayName}::${row.email || ""}`;
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          role,
+          name: displayName,
+          email: row.email || "",
+          divisions: [],
+        });
+      }
+      const entry = grouped.get(key);
+      if (row.division && !entry.divisions.includes(row.division)) {
+        entry.divisions.push(row.division);
+      }
+    });
+
+    const chairs = [];
+    const deans = [];
+    grouped.forEach((entry) => {
+      if (entry.role === "chair") {
+        chairs.push({ chairName: entry.name, email: entry.email, divisions: entry.divisions });
+      } else if (entry.role === "dean") {
+        deans.push({ deanName: entry.name, email: entry.email, divisions: entry.divisions });
+      }
+    });
+
+    chairs.sort((a, b) => a.chairName.localeCompare(b.chairName));
+    deans.sort((a, b) => a.deanName.localeCompare(b.deanName));
+    return { chairs, deans };
+  }
+
+  function expandRolesForSave(chairs = [], deans = []) {
+    const rows = [];
+    chairs.forEach((row) => {
+      const fullName = String(row.chairName || "").trim();
+      const parts = fullName.split(/\s+/);
+      const firstName = parts[0] || "";
+      const lastName = parts.slice(1).join(" ");
+      (row.divisions || []).forEach((division) => {
+        rows.push({
+          employee_id: row.employee_id || "",
+          first_name: firstName,
+          last_name: lastName,
+          email: row.email || "",
+          role: "chair",
+          division,
+          active_status: row.active_status || "active",
+        });
+      });
+    });
+    deans.forEach((row) => {
+      const fullName = String(row.deanName || "").trim();
+      const parts = fullName.split(/\s+/);
+      const firstName = parts[0] || "";
+      const lastName = parts.slice(1).join(" ");
+      (row.divisions || []).forEach((division) => {
+        rows.push({
+          employee_id: row.employee_id || "",
+          first_name: firstName,
+          last_name: lastName,
+          email: row.email || "",
+          role: "dean",
+          division,
+          active_status: row.active_status || "active",
+        });
+      });
+    });
+    return rows;
+  }
+
+  async function hydrateAdminDirectories() {
+    try {
+      const [roleRows, ptRows] = await Promise.all([
+        loadRoles(),
+        loadPTFaculty(),
+      ]);
+
+      if (Array.isArray(roleRows) && roleRows.length) {
+        const normalized = normalizeRoleRows(roleRows);
+        if (normalized.chairs.length) setChairAssignments(normalized.chairs);
+        if (normalized.deans.length) setDeanAssignments(normalized.deans);
+      }
+
+      if (Array.isArray(ptRows) && ptRows.length) {
+        setPtStaffingRows(ptRows.map((row) => ({
+          ...row,
+          seniority_rank: row.seniority_rank ?? row.seniority_value ?? "",
+        })));
+      }
+    } catch (error) {
+      console.warn("Could not hydrate admin directories", error);
+    } finally {
+      setDirectoryPersistenceReady(true);
+      setRosterPersistenceReady(true);
+    }
+  }
 
   async function loadTerms() {
     try {
@@ -819,6 +924,7 @@ export default function PTFacultyStaffingMVP() {
 
   useEffect(() => {
     loadTerms();
+    hydrateAdminDirectories();
   }, []);
 
   useEffect(() => {
@@ -956,6 +1062,22 @@ export default function PTFacultyStaffingMVP() {
   useEffect(() => {
     loadDivisionStatuses();
   }, [activeTerm?.code]);
+
+
+  useEffect(() => {
+    if (!directoryPersistenceReady) return;
+    const rows = expandRolesForSave(chairAssignments, deanAssignments);
+    saveRoles(rows).catch((error) => {
+      console.warn("Could not persist role directory", error);
+    });
+  }, [directoryPersistenceReady, chairAssignments, deanAssignments]);
+
+  useEffect(() => {
+    if (!rosterPersistenceReady) return;
+    savePTFaculty(ptStaffingRows).catch((error) => {
+      console.warn("Could not persist PT roster", error);
+    });
+  }, [rosterPersistenceReady, ptStaffingRows]);
 
   const selectedFaculty = useMemo(
     () => faculty.find((item) => item.id === selectedFacultyId) || faculty[0],
