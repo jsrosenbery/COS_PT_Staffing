@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 import cosLogo from "./assets/cos-logo.jpg";
 import AdminOperationsPanel from "./AdminOperationsPanel";
+import { buildInitialPtRoster } from "./adminOpsUtils";
 
 const initialTerms = [];
 
@@ -691,10 +692,12 @@ export default function PTFacultyStaffingMVP() {
   const [selectedChairName, setSelectedChairName] = useState(initialChairAssignments[0]?.chairName || "");
   const [selectedDeanName, setSelectedDeanName] = useState(initialDeanAssignments[0]?.deanName || "");
   const [selectedFacultyId, setSelectedFacultyId] = useState(initialFaculty[0]?.id || "");
-  const [disciplines] = useState(initialDisciplines);
   const [chairAssignments, setChairAssignments] = useState(initialChairAssignments);
   const [deanAssignments, setDeanAssignments] = useState(initialDeanAssignments);
-  const [faculty, setFaculty] = useState(initialFaculty);
+  const [ptStaffingRows, setPtStaffingRows] = useState(() => buildInitialPtRoster(initialFaculty, initialSeniority, initialDisciplines));
+  const [divisionSenderEmail, setDivisionSenderEmail] = useState("jacoba@cos.edu");
+  const [disciplines] = useState(initialDisciplines);
+  const [faculty] = useState(initialFaculty);
   const [seniority] = useState(initialSeniority);
   const [sections, setSections] = useState(initialSections);
   const [uploadReport, setUploadReport] = useState({
@@ -748,104 +751,8 @@ export default function PTFacultyStaffingMVP() {
   const [auditSearch, setAuditSearch] = useState("");
   const [auditTypeFilter, setAuditTypeFilter] = useState("ALL");
   const [workflowView, setWorkflowView] = useState("all");
-  const [divisionWindows, setDivisionWindows] = useState([]);
-  const [senderEmail, setSenderEmail] = useState("jacoba@cos.edu");
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
-
-  const adminDivisionOptions = useMemo(() => {
-    return Array.from(new Set([
-      ...sections.map((section) => normalize(section.division)),
-      ...chairAssignments.flatMap((item) => item.divisions || []),
-      ...deanAssignments.flatMap((item) => item.divisions || []),
-      ...faculty.map((item) => normalize(item.division)),
-    ].filter(Boolean))).sort();
-  }, [sections, chairAssignments, deanAssignments, faculty]);
-
-  function importChairDirectory(rows) {
-    const next = (rows || [])
-      .map((row) => ({
-        chairName: normalize(row.chair_name || row.name || row.chair || ""),
-        divisions: String(row.divisions || row.division || "")
-          .split(/[|;,]/)
-          .map((value) => normalize(value))
-          .filter(Boolean),
-      }))
-      .filter((row) => row.chairName && row.divisions.length);
-    if (!next.length) {
-      setChairMessage("No valid chair directory rows were found in the import.");
-      return;
-    }
-    setChairAssignments(next);
-    if (!next.some((item) => item.chairName === selectedChairName)) setSelectedChairName(next[0].chairName);
-    setChairMessage(`Imported ${next.length} chair assignment row${next.length === 1 ? "" : "s"}.`);
-  }
-
-  function importDeanDirectory(rows) {
-    const next = (rows || [])
-      .map((row) => ({
-        deanName: normalize(row.dean_name || row.name || row.dean || ""),
-        divisions: String(row.divisions || row.division || "")
-          .split(/[|;,]/)
-          .map((value) => normalize(value))
-          .filter(Boolean),
-      }))
-      .filter((row) => row.deanName && row.divisions.length);
-    if (!next.length) {
-      setChairMessage("No valid dean directory rows were found in the import.");
-      return;
-    }
-    setDeanAssignments(next);
-    if (!next.some((item) => item.deanName === selectedDeanName)) setSelectedDeanName(next[0].deanName);
-    setChairMessage(`Imported ${next.length} dean assignment row${next.length === 1 ? "" : "s"}.`);
-  }
-
-  function importPtRoster(rows) {
-    const next = (rows || [])
-      .map((row, index) => {
-        const employeeId = normalize(row.employee_id || row.id || row.employeeId || "");
-        const firstName = normalize(row.first_name || row.firstName || "");
-        const lastName = normalize(row.last_name || row.lastName || "");
-        const email = normalize(row.email || "");
-        if (!employeeId || !firstName || !lastName || !email) return null;
-        return {
-          id: normalize(row.local_id || `imported-${employeeId}-${index}`),
-          employeeId,
-          firstName,
-          lastName,
-          email,
-          division: normalize(row.division),
-          primaryDiscipline: normalize(row.primary_discipline),
-          qualifiedDisciplines: normalize(row.qualified_disciplines),
-          activeStatus: normalize(row.active_status || "active") || "active",
-        };
-      })
-      .filter(Boolean);
-    if (!next.length) {
-      setChairMessage("No valid PT roster rows were found in the import.");
-      return;
-    }
-    setFaculty(next);
-    if (!next.some((item) => item.id === selectedFacultyId)) setSelectedFacultyId(next[0].id);
-    setChairMessage(`Imported ${next.length} PT roster row${next.length === 1 ? "" : "s"}.`);
-  }
-
-  function createDivisionWindow(payload) {
-    setDivisionWindows((current) => [
-      {
-        id: `${payload.division}-${Date.now()}`,
-        division: payload.division,
-        termCode: activeTerm.code,
-        openedAt: payload.openedAt,
-        closesAt: payload.closesAt,
-        senderEmail: payload.senderEmail,
-        note: payload.note,
-        status: "scheduled",
-      },
-      ...current.filter((item) => !(item.division === payload.division && item.termCode === activeTerm.code)),
-    ]);
-    setChairMessage(`Created a ${payload.division} staffing window through ${new Date(payload.closesAt).toLocaleString()}.`);
-  }
 
   async function loadTerms() {
     try {
@@ -1026,6 +933,18 @@ export default function PTFacultyStaffingMVP() {
       setSelectedUploadDivision(uploadDivisionOptions[0]);
     }
   }, [selectedUploadDivision, uploadDivisionOptions]);
+
+  useEffect(() => {
+    if (!chairAssignments.some((item) => item.chairName === selectedChairName) && chairAssignments[0]?.chairName) {
+      setSelectedChairName(chairAssignments[0].chairName);
+    }
+  }, [chairAssignments, selectedChairName]);
+
+  useEffect(() => {
+    if (!deanAssignments.some((item) => item.deanName === selectedDeanName) && deanAssignments[0]?.deanName) {
+      setSelectedDeanName(deanAssignments[0].deanName);
+    }
+  }, [deanAssignments, selectedDeanName]);
 
   useEffect(() => {
     setUploadPreview(null);
@@ -2483,6 +2402,22 @@ export default function PTFacultyStaffingMVP() {
         ) : null}
 
         {role === "admin" ? (
+          <AdminOperationsPanel
+            ui={ui}
+            activeTerm={activeTerm}
+            chairAssignments={chairAssignments}
+            setChairAssignments={setChairAssignments}
+            deanAssignments={deanAssignments}
+            setDeanAssignments={setDeanAssignments}
+            ptStaffingRows={ptStaffingRows}
+            setPtStaffingRows={setPtStaffingRows}
+            divisionOptions={uploadDivisionOptions}
+            senderEmail={divisionSenderEmail}
+            setSenderEmail={setDivisionSenderEmail}
+          />
+        ) : null}
+
+        {role === "admin" ? (
         <div style={ui.card}>
           <h2 style={ui.cardTitle}>Starter Mapping Example</h2>
           <div style={ui.cardDesc}>Use this exact header format in your CSV.</div>
@@ -2724,24 +2659,6 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
               </div>
             </div>
-
-        {role === "admin" ? (
-          <AdminOperationsPanel
-            decisionLogs={decisionLogs}
-            activeTerm={activeTerm}
-            divisions={adminDivisionOptions}
-            chairAssignments={chairAssignments}
-            deanAssignments={deanAssignments}
-            facultyRoster={faculty}
-            divisionWindows={divisionWindows}
-            senderEmail={senderEmail}
-            setSenderEmail={setSenderEmail}
-            onCreateDivisionWindow={createDivisionWindow}
-            onImportChairDirectory={importChairDirectory}
-            onImportDeanDirectory={importDeanDirectory}
-            onImportPtRoster={importPtRoster}
-          />
-        ) : null}
 
             {chairMessage ? (
               <div style={{ marginTop: 12, color: chairMessage.toLowerCase().includes("could not") || chairMessage.toLowerCase().includes("conflict") || chairMessage.toLowerCase().includes("required") || chairMessage.toLowerCase().includes("already") ? "#b91c1c" : "#166534", fontWeight: 700 }}>

@@ -1,102 +1,141 @@
-export function addBusinessDays(startInput, businessDays = 10) {
-  const date = new Date(startInput);
+export function addBusinessDays(startDate, businessDays) {
+  const date = new Date(startDate);
   let remaining = Number(businessDays) || 0;
   while (remaining > 0) {
     date.setDate(date.getDate() + 1);
     const day = date.getDay();
     if (day !== 0 && day !== 6) remaining -= 1;
   }
-  date.setHours(23, 59, 0, 0);
   return date;
 }
 
-export function formatLocalDateTime(value) {
+export function toIsoDate(value) {
   const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
 }
 
-export function csvEscape(value) {
+export function escapeCsv(value) {
   const safe = String(value ?? "");
   const escaped = safe.replace(/"/g, '""');
   return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
 }
 
-export function rowsToCsv(rows, columns) {
-  const lines = [columns.join(",")];
+export function downloadCsv(filename, headers, rows) {
+  const lines = [headers.join(",")];
   for (const row of rows) {
-    lines.push(columns.map((column) => csvEscape(row?.[column] ?? "")).join(","));
+    lines.push(headers.map((header) => escapeCsv(row?.[header] ?? "")).join(","));
   }
-  return lines.join("\n");
-}
-
-export function downloadCsv(rows, fileName, columns) {
-  const csv = rowsToCsv(rows, columns);
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = fileName;
+  link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
 
-export const chairTemplateColumns = ["chair_name", "divisions"];
-export const deanTemplateColumns = ["dean_name", "divisions"];
-export const ptRosterColumns = [
-  "employee_id",
-  "first_name",
-  "last_name",
-  "email",
-  "division",
-  "primary_discipline",
-  "qualified_disciplines",
-  "active_status",
-];
-
-export function chairExampleRows() {
-  return [
-    { chair_name: "Social Sciences Division Chair", divisions: "Social Sciences" },
-    { chair_name: "Math & Engineering Division Chair", divisions: "Math & Engineering|Science" },
-  ];
+export function normalizeText(value) {
+  return String(value ?? "").trim();
 }
 
-export function deanExampleRows() {
-  return [
-    { dean_name: "Social Sciences Dean", divisions: "Social Sciences|Business|Consumer/Family Studies" },
-    { dean_name: "STEM Dean", divisions: "Math & Engineering|Science" },
-  ];
+export function splitPipedValues(value) {
+  return normalizeText(value)
+    .split("|")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
-export function ptRosterExampleRows() {
-  return [
-    {
-      employee_id: "200001",
-      first_name: "Avery",
-      last_name: "Lopez",
-      email: "avery.lopez@cos.edu",
-      division: "Social Sciences",
-      primary_discipline: "HIST",
-      qualified_disciplines: "HIST|POLS",
-      active_status: "active",
-    },
-    {
-      employee_id: "200002",
-      first_name: "Morgan",
-      last_name: "Chen",
-      email: "morgan.chen@cos.edu",
-      division: "Science",
-      primary_discipline: "BIOL",
-      qualified_disciplines: "BIOL|MICR",
-      active_status: "active",
-    },
-  ];
+export function parseChairDeanCsvRows(rows, kind) {
+  const cleaned = [];
+  const errors = [];
+  rows.forEach((row, index) => {
+    const name = normalizeText(row.chairName || row.deanName || row.name);
+    const email = normalizeText(row.email);
+    const divisions = splitPipedValues(row.divisions || row.division || row.division_list);
+    if (!name) errors.push(`Row ${index + 2}: ${kind} name is required.`);
+    if (!email) errors.push(`Row ${index + 2}: email is required.`);
+    if (!divisions.length) errors.push(`Row ${index + 2}: at least one division is required.`);
+    if (name && email && divisions.length) {
+      cleaned.push(kind === "chair"
+        ? { chairName: name, email, divisions }
+        : { deanName: name, email, divisions }
+      );
+    }
+  });
+  return { rows: cleaned, errors };
 }
 
-export function buildDivisionEmailPreview({ division, termName, closesAt, senderEmail }) {
-  const closeText = closesAt ? new Date(closesAt).toLocaleString() : "the posted close date";
-  return `Subject: ${division} part-time staffing window now open\n\nThe ${division} staffing window for ${termName} is now open in S.C.O.P.E.\n\nPlease log in with your email and password to review available sections and submit your preferences.\n\nThis window will close automatically on ${closeText}.\n\nPortal access: [S.C.O.P.E. login URL]\nSupport contact: ${senderEmail}`;
+export function parsePtRosterCsvRows(rows) {
+  const cleaned = [];
+  const errors = [];
+  const dedupeMap = new Map();
+  rows.forEach((row, index) => {
+    const employee_id = normalizeText(row.employee_id || row.employeeId);
+    const first_name = normalizeText(row.first_name || row.firstName);
+    const last_name = normalizeText(row.last_name || row.lastName);
+    const email = normalizeText(row.email);
+    const division = normalizeText(row.division);
+    const discipline = normalizeText(row.discipline || row.primary_discipline);
+    const seniority_rank = normalizeText(row.seniority_rank || row.rank);
+    const qualified_disciplines = normalizeText(row.qualified_disciplines || row.all_qualified_disciplines || discipline);
+    if (!employee_id) errors.push(`Row ${index + 2}: employee_id is required.`);
+    if (!first_name) errors.push(`Row ${index + 2}: first_name is required.`);
+    if (!last_name) errors.push(`Row ${index + 2}: last_name is required.`);
+    if (!email) errors.push(`Row ${index + 2}: email is required.`);
+    if (!division) errors.push(`Row ${index + 2}: division is required.`);
+    if (!discipline) errors.push(`Row ${index + 2}: discipline is required.`);
+    if (!employee_id || !first_name || !last_name || !email || !division || !discipline) return;
+    const key = `${employee_id}__${division}__${discipline}`.toLowerCase();
+    dedupeMap.set(key, {
+      employee_id,
+      first_name,
+      last_name,
+      email,
+      division,
+      discipline,
+      qualified_disciplines,
+      seniority_rank,
+    });
+  });
+  cleaned.push(...dedupeMap.values());
+  return { rows: cleaned, errors };
+}
+
+export function buildInitialPtRoster(faculty = [], seniority = [], disciplines = []) {
+  const disciplineById = new Map(disciplines.map((item) => [item.id, item]));
+  return seniority.map((row) => {
+    const facultyRow = faculty.find((item) => item.id === row.facultyId) || {};
+    const disciplineRow = disciplineById.get(row.disciplineId) || {};
+    return {
+      employee_id: facultyRow.employeeId || "",
+      first_name: facultyRow.firstName || "",
+      last_name: facultyRow.lastName || "",
+      email: facultyRow.email || "",
+      division: disciplineRow.division || "",
+      discipline: disciplineRow.code || row.disciplineId || "",
+      qualified_disciplines: disciplineRow.coveredSubjects?.join("|") || disciplineRow.code || row.disciplineId || "",
+      seniority_rank: row.rank ?? "",
+    };
+  });
+}
+
+export function chairDeanTemplateRows(kind) {
+  return kind === "chair"
+    ? [{ chairName: "Social Sciences Division Chair", email: "chair@cos.edu", divisions: "Social Sciences|Business" }]
+    : [{ deanName: "Social Sciences Dean", email: "dean@cos.edu", divisions: "Social Sciences|Business" }];
+}
+
+export function ptTemplateRows() {
+  return [{
+    employee_id: "100001",
+    first_name: "Jordan",
+    last_name: "Smith",
+    email: "j.smith@cos.edu",
+    division: "Social Sciences",
+    discipline: "HIST",
+    qualified_disciplines: "HIST",
+    seniority_rank: 1,
+  }];
 }
