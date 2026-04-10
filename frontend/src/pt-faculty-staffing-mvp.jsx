@@ -2,6 +2,7 @@ const API_BASE = "https://cos-pt-staffing.onrender.com";
 import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 import cosLogo from "./assets/cos-logo.jpg";
+import { buildTakeoverOptions } from "./buildTakeoverOptions";
 
 const initialTerms = [];
 
@@ -2639,7 +2640,10 @@ OH,ORNAMENTAL_HORTICULTURE`}
             <div className="cos-panel-grid" style={{ ...ui.panelGrid, marginTop: 16 }}>
               <div style={{ display: "grid", gap: 12 }}>
                 {filteredSectionQueue.length ? filteredSectionQueue.map((section) => {
+                  const currentAssignment = currentAssignmentByGroup.get(section.assignment_group_id) || section.currentAssignment || null;
                   const topCandidate = section.eligibleCandidates[0] || null;
+                  const takeoverOptions = buildTakeoverOptions(section.candidates, currentAssignment);
+                  const bestAlternative = takeoverOptions[0] || null;
                   const stateSummary = sectionStateSummary(section, topCandidate);
                   return (
                     <div key={section.assignment_group_id} style={{ ...ui.sectionCard, borderColor: section.currentAssignment ? "#bbf7d0" : "var(--border-color)", background: section.currentAssignment ? "rgba(220, 252, 231, 0.28)" : "var(--bg-card)" }}>
@@ -2676,12 +2680,16 @@ OH,ORNAMENTAL_HORTICULTURE`}
                             Tentatively assigned to {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
                           </div>
                         ) : null}
+                        {section.currentAssignment && bestAlternative ? (
+                          <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 13 }}>
+                            If this section opens up, the next takeover option is <strong>{bestAlternative.faculty_name || bestAlternative.employee_id}</strong>. {bestAlternative.assigned_elsewhere ? "They do not show a time collision, but they already hold another tentative section, so FT/PT sequencing and chair review still apply." : "No current time collision is flagged in the working queue."}
+                          </div>
+                        ) : null}
                       </div>
 
                       <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                         {section.candidates.slice(0, 5).map((row) => {
                           const isTop = topCandidate?.employee_id === row.employee_id;
-                          const currentAssignment = currentAssignmentByGroup.get(section.assignment_group_id) || section.currentAssignment || null;
                           const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
                           const reasonSummary = candidateReasonSummary(section, row, topCandidate, currentAssignment);
                           return (
@@ -2758,7 +2766,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     Live persistence snapshot with one-click unassign and queue-based reassignment.
                   </div>
                   <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                    {tentativeAssignments.length ? tentativeAssignments.map((assignment) => (
+                    {tentativeAssignments.length ? tentativeAssignments.map((assignment) => {
+                      const takeoverSection = sectionQueue.find((section) => section.assignment_group_id === assignment.assignment_group_id) || null;
+                      const takeoverOptions = buildTakeoverOptions(takeoverSection?.candidates || [], assignment);
+                      const bestTakeover = takeoverOptions[0] || null;
+                      return (
                       <div key={assignment.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: "var(--bg-soft)" }}>
                         <div style={{ ...ui.between, alignItems: "flex-start" }}>
                           <div>
@@ -2774,8 +2786,39 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           </div>
                           <button style={ui.btn} onClick={() => undoTentativeAssignment(assignment)}>Unassign</button>
                         </div>
+                        {bestTakeover ? (
+                          <div style={{ marginTop: 12, borderTop: "1px solid var(--border-soft)", paddingTop: 12 }}>
+                            <div style={{ fontWeight: 700 }}>Takeover bench</div>
+                            <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                              If this instructor pulls out, these are the next clean options based on the current queue and conflict check. This is advisory only, not a hard FT/PT enforcement layer.
+                            </div>
+                            <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                              {takeoverOptions.slice(0, 3).map((row) => (
+                                <div key={`${assignment.id}-${row.employee_id}`} style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", border: "1px solid var(--border-soft)", borderRadius: 12, padding: 10, background: "rgba(241, 245, 249, 0.7)" }}>
+                                  <div>
+                                    <div style={{ fontWeight: 700 }}>{row.faculty_name || row.employee_id}</div>
+                                    <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
+                                      Seniority #{row.seniority_rank || "—"} • Preference #{row.preference_rank || "—"}
+                                    </div>
+                                    <div style={{ marginTop: 6, color: row.assigned_elsewhere ? "#92400e" : "#166534", fontSize: 12, fontWeight: 700 }}>
+                                      {row.assigned_elsewhere ? "No time collision, but this instructor already holds another tentative assignment." : "No current time collision flagged."}
+                                    </div>
+                                  </div>
+                                  <button style={ui.btn} onClick={() => reassignTentativeAssignment(assignment, row)}>
+                                    Reassign
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ marginTop: 12, color: "var(--text-muted)", fontSize: 13 }}>
+                            No clean takeover option is available right now. If this opens, the system will likely need a full FT then PT review pass.
+                          </div>
+                        )}
                       </div>
-                    )) : (
+                      );
+                    }) : (
                       <div style={{ color: "var(--text-subtle)" }}>No tentative assignments saved yet.</div>
                     )}
                   </div>
