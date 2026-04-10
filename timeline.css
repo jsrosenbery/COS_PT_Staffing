@@ -1,0 +1,45 @@
+
+.timeline {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.1);
+}
+
+.timeline-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 0.9rem;
+}
+
+.timeline-row.top_candidate {
+  color: #4ade80;
+}
+
+.timeline-row.conflict {
+  color: #f87171;
+}
+
+.timeline-row.assigned_elsewhere {
+  color: #facc15;
+}
+
+.timeline-label {
+  font-weight: 600;
+}
+
+.timeline-name {
+  flex: 1;
+  text-align: center;
+}
+
+.timeline-reason {
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.decision-summary {
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+  opacity: 0.85;
+}
