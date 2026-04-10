@@ -7,6 +7,7 @@ import {
   parseChairDeanCsvRows,
   parsePtRosterCsvRows,
   ptTemplateRows,
+  summarizePtRosterReplace,
   toIsoDate,
 } from "./adminOpsUtils";
 
@@ -46,6 +47,7 @@ export default function AdminOperationsPanel({
   const [chairMessage, setChairMessage] = useState("");
   const [deanMessage, setDeanMessage] = useState("");
   const [ptMessage, setPtMessage] = useState("");
+  const [ptSummary, setPtSummary] = useState(null);
   const [selectedDivision, setSelectedDivision] = useState(divisionOptions[0] || "");
   const chairInputRef = useRef(null);
   const deanInputRef = useRef(null);
@@ -76,11 +78,57 @@ export default function AdminOperationsPanel({
     const parsed = await parseFile(file);
     const result = parsePtRosterCsvRows(parsed);
     if (result.errors.length) {
+      setPtSummary(null);
       setPtMessage(`Import blocked. ${result.errors[0]}${result.errors.length > 1 ? ` (+${result.errors.length - 1} more)` : ""}`);
       return;
     }
+
+    const summary = summarizePtRosterReplace(ptStaffingRows, result.rows);
+    setPtSummary(summary);
+
+    const warningText = result.warnings?.length
+      ? ` Warnings: ${result.warnings[0]}${result.warnings.length > 1 ? ` (+${result.warnings.length - 1} more)` : ""}`
+      : "";
+
+    const proceed = window.confirm(
+      `Replace the active college-wide PT roster?\n\n` +
+      `Incoming rows: ${summary.incomingCount}\n` +
+      `Added: ${summary.added}\n` +
+      `Updated: ${summary.updated}\n` +
+      `Unchanged: ${summary.unchanged}\n` +
+      `Marked inactive because missing from file: ${summary.inactivated}\n\n` +
+      `Historical assignments and audit records will remain.`
+    );
+
+    if (!proceed) {
+      setPtMessage(`Import canceled. Preview stayed at ${summary.incomingCount} incoming row(s).${warningText}`);
+      return;
+    }
+
     setPtStaffingRows(result.rows);
-    setPtMessage(`Imported ${result.rows.length} PT staffing row(s). Duplicates are allowed by employee_id + division + discipline.`);
+    setPtMessage(
+      `Imported ${result.rows.length} active PT staffing row(s). ` +
+      `${summary.inactivated} existing row(s) will be marked inactive because they were not included in the new file.` +
+      warningText
+    );
+  }
+
+  function handleWipePtRoster() {
+    const count = ptStaffingRows.length;
+    const proceed = window.confirm(
+      `Mark all ${count} active PT roster row(s) inactive?\n\nHistorical assignments and audit records will remain.`
+    );
+    if (!proceed) return;
+    setPtStaffingRows([]);
+    setPtSummary({
+      currentCount: count,
+      incomingCount: 0,
+      added: 0,
+      updated: 0,
+      unchanged: 0,
+      inactivated: count,
+    });
+    setPtMessage(`Marked ${count} active PT roster row(s) inactive. Historical records remain intact.`);
   }
 
   return (
@@ -130,18 +178,27 @@ export default function AdminOperationsPanel({
       <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 16, marginTop: 16 }}>
         <div style={ui.sectionCard}>
           <div style={{ fontWeight: 800 }}>Part-Time Staffing Roster</div>
-          <div style={{ color: "var(--text-muted)", marginTop: 6 }}>Duplicate people are allowed as long as the combination of employee ID, division, and discipline is distinct.</div>
+          <div style={{ color: "var(--text-muted)", marginTop: 6 }}>This is a college-wide master roster. Duplicate people are allowed as long as employee ID, division, and discipline stay distinct. Missing rows from a replacement upload will be marked inactive, not erased from history.</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
             <button style={ui.btn} onClick={() => downloadCsv("pt-staffing-blank.csv", ["employee_id", "first_name", "last_name", "email", "division", "discipline", "qualified_disciplines", "seniority_rank"], [])}>Blank Template</button>
             <button style={ui.btn} onClick={() => downloadCsv("pt-staffing-example.csv", ["employee_id", "first_name", "last_name", "email", "division", "discipline", "qualified_disciplines", "seniority_rank"], ptTemplateRows())}>Example</button>
-            <button style={ui.btn} onClick={() => downloadCsv("pt-staffing-current.csv", ["employee_id", "first_name", "last_name", "email", "division", "discipline", "qualified_disciplines", "seniority_rank"], ptStaffingRows)}>Current Export</button>
+            <button style={ui.btn} onClick={() => downloadCsv("pt-staffing-current.csv", ["employee_id", "first_name", "last_name", "email", "division", "discipline", "qualified_disciplines", "seniority_rank"], ptStaffingRows)}>Current Active Export</button>
             <input ref={ptInputRef} type="file" accept=".csv" style={{ display: "none" }} onChange={(e) => handlePtUpload(e.target.files?.[0])} />
-            <button style={ui.btnPrimary} onClick={() => ptInputRef.current?.click()}>Import CSV</button>
+            <button style={ui.btnPrimary} onClick={() => ptInputRef.current?.click()}>Replace College-Wide CSV</button>
+            <button style={ui.btn} onClick={handleWipePtRoster}>Wipe Active Roster</button>
           </div>
           <div style={{ marginTop: 10, fontSize: 13, color: "var(--text-subtle)" }}>
             Required fields: employee_id, first_name, last_name, email, division, discipline. Recommended: qualified_disciplines, seniority_rank.
           </div>
-          {ptMessage ? <div style={{ marginTop: 10, color: ptMessage.startsWith("Imported") ? "#166534" : "#b91c1c", fontWeight: 700 }}>{ptMessage}</div> : null}
+          {ptSummary ? <div style={{ marginTop: 10, border: "1px solid var(--border-soft)", borderRadius: 12, padding: 12, background: "var(--bg-soft)" }}>
+            <div style={{ fontWeight: 800 }}>Most Recent Replace Preview</div>
+            <div style={{ marginTop: 6, fontSize: 14 }}>Incoming rows: {ptSummary.incomingCount}</div>
+            <div style={{ marginTop: 4, fontSize: 14 }}>Added: {ptSummary.added}</div>
+            <div style={{ marginTop: 4, fontSize: 14 }}>Updated: {ptSummary.updated}</div>
+            <div style={{ marginTop: 4, fontSize: 14 }}>Unchanged: {ptSummary.unchanged}</div>
+            <div style={{ marginTop: 4, fontSize: 14 }}>Will be marked inactive: {ptSummary.inactivated}</div>
+          </div> : null}
+          {ptMessage ? <div style={{ marginTop: 10, color: ptMessage.startsWith("Imported") || ptMessage.startsWith("Marked") ? "#166534" : "#b91c1c", fontWeight: 700 }}>{ptMessage}</div> : null}
         </div>
 
         <div style={ui.sectionCard}>

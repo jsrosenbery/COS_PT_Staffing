@@ -70,7 +70,10 @@ export function parseChairDeanCsvRows(rows, kind) {
 export function parsePtRosterCsvRows(rows) {
   const cleaned = [];
   const errors = [];
+  const warnings = [];
   const dedupeMap = new Map();
+  let exactDuplicateCount = 0;
+
   rows.forEach((row, index) => {
     const employee_id = normalizeText(row.employee_id || row.employeeId);
     const first_name = normalizeText(row.first_name || row.firstName);
@@ -78,17 +81,24 @@ export function parsePtRosterCsvRows(rows) {
     const email = normalizeText(row.email);
     const division = normalizeText(row.division);
     const discipline = normalizeText(row.discipline || row.primary_discipline);
-    const seniority_rank = normalizeText(row.seniority_rank || row.rank);
+    const seniority_rank = normalizeText(row.seniority_rank || row.seniority_value || row.rank);
     const qualified_disciplines = normalizeText(row.qualified_disciplines || row.all_qualified_disciplines || discipline);
+
     if (!employee_id) errors.push(`Row ${index + 2}: employee_id is required.`);
     if (!first_name) errors.push(`Row ${index + 2}: first_name is required.`);
     if (!last_name) errors.push(`Row ${index + 2}: last_name is required.`);
     if (!email) errors.push(`Row ${index + 2}: email is required.`);
     if (!division) errors.push(`Row ${index + 2}: division is required.`);
     if (!discipline) errors.push(`Row ${index + 2}: discipline is required.`);
+
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      warnings.push(`Row ${index + 2}: email does not appear to be valid.`);
+    }
+
     if (!employee_id || !first_name || !last_name || !email || !division || !discipline) return;
+
     const key = `${employee_id}__${division}__${discipline}`.toLowerCase();
-    dedupeMap.set(key, {
+    const normalizedRow = {
       employee_id,
       first_name,
       last_name,
@@ -97,10 +107,68 @@ export function parsePtRosterCsvRows(rows) {
       discipline,
       qualified_disciplines,
       seniority_rank,
-    });
+      active_status: "active",
+    };
+
+    if (dedupeMap.has(key)) {
+      exactDuplicateCount += 1;
+      warnings.push(`Row ${index + 2}: duplicate employee_id + division + discipline replaced the earlier row.`);
+    }
+
+    dedupeMap.set(key, normalizedRow);
   });
+
   cleaned.push(...dedupeMap.values());
-  return { rows: cleaned, errors };
+  return {
+    rows: cleaned,
+    errors,
+    warnings,
+    exactDuplicateCount,
+  };
+}
+
+export function summarizePtRosterReplace(currentRows = [], nextRows = []) {
+  const toKey = (row) =>
+    `${normalizeText(row.employee_id)}__${normalizeText(row.division)}__${normalizeText(row.discipline)}`.toLowerCase();
+
+  const currentMap = new Map(currentRows.map((row) => [toKey(row), row]));
+  const nextMap = new Map(nextRows.map((row) => [toKey(row), row]));
+
+  let added = 0;
+  let updated = 0;
+  let unchanged = 0;
+  let inactivated = 0;
+
+  for (const [key, nextRow] of nextMap.entries()) {
+    const currentRow = currentMap.get(key);
+    if (!currentRow) {
+      added += 1;
+      continue;
+    }
+    const same =
+      normalizeText(currentRow.first_name) === normalizeText(nextRow.first_name) &&
+      normalizeText(currentRow.last_name) === normalizeText(nextRow.last_name) &&
+      normalizeText(currentRow.email) === normalizeText(nextRow.email) &&
+      normalizeText(currentRow.qualified_disciplines) === normalizeText(nextRow.qualified_disciplines) &&
+      normalizeText(currentRow.seniority_rank ?? currentRow.seniority_value) === normalizeText(nextRow.seniority_rank) &&
+      normalizeText(currentRow.active_status || "active") === "active";
+
+    if (same) unchanged += 1;
+    else updated += 1;
+  }
+
+  for (const key of currentMap.keys()) {
+    if (!nextMap.has(key)) inactivated += 1;
+  }
+
+  return {
+    currentCount: currentRows.length,
+    incomingCount: nextRows.length,
+    added,
+    updated,
+    unchanged,
+    inactivated,
+  };
 }
 
 export function buildInitialPtRoster(faculty = [], seniority = [], disciplines = []) {

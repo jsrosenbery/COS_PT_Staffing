@@ -36,7 +36,17 @@ export async function savePTFaculty(rows) {
   return readJson(response, "Could not save PT roster.");
 }
 
-export async function loadPTFaculty() {
-  const response = await fetch(`${API_BASE}/api/pt-faculty`);
+export async function loadPTFaculty(options = {}) {
+  const params = new URLSearchParams();
+  if (options.includeInactive) params.set("includeInactive", "1");
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(`${API_BASE}/api/pt-faculty${suffix}`);
   return readJson(response, "Could not load PT roster.");
+}
+
+export async function wipePTFaculty() {
+  const response = await fetch(`${API_BASE}/api/pt-faculty`, {
+    method: "DELETE",
+  });
+  return readJson(response, "Could not wipe PT roster.");
 }

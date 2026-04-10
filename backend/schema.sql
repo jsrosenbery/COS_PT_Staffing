@@ -176,12 +176,15 @@ CREATE TABLE IF NOT EXISTS scope_pt_faculty (
   email TEXT,
   division TEXT NOT NULL,
   discipline TEXT NOT NULL,
-  seniority_value TEXT,
+  seniority_rank TEXT,
   qualified_disciplines TEXT,
   active_status TEXT DEFAULT 'active',
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS scope_pt_faculty_unique_key
+  ON scope_pt_faculty (employee_id, division, discipline);
 
 CREATE TABLE IF NOT EXISTS scope_staffing_windows (
   id SERIAL PRIMARY KEY,
@@ -209,11 +212,3 @@ CREATE TABLE IF NOT EXISTS scope_audit_log (
   source TEXT,
   created_at TIMESTAMP DEFAULT NOW()
 );
-
-CREATE INDEX IF NOT EXISTS idx_scope_roles_division ON scope_roles (division);
-CREATE INDEX IF NOT EXISTS idx_scope_roles_role ON scope_roles (role);
-CREATE INDEX IF NOT EXISTS idx_scope_pt_division ON scope_pt_faculty (division);
-CREATE INDEX IF NOT EXISTS idx_scope_pt_discipline ON scope_pt_faculty (discipline);
-CREATE INDEX IF NOT EXISTS idx_scope_windows_division ON scope_staffing_windows (division);
-CREATE INDEX IF NOT EXISTS idx_scope_audit_event_type ON scope_audit_log (event_type);
-CREATE INDEX IF NOT EXISTS idx_scope_audit_created_at ON scope_audit_log (created_at DESC);
