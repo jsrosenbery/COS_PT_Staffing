@@ -153,3 +153,67 @@ CREATE TABLE IF NOT EXISTS faculty_preferences (
   UNIQUE(faculty_id, term_code, assignment_group_id),
   UNIQUE(faculty_id, term_code, preference_rank)
 );
+
+
+CREATE TABLE IF NOT EXISTS scope_roles (
+  id SERIAL PRIMARY KEY,
+  employee_id TEXT NOT NULL,
+  first_name TEXT,
+  last_name TEXT,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL,
+  division TEXT NOT NULL,
+  active_status TEXT DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS scope_pt_faculty (
+  id SERIAL PRIMARY KEY,
+  employee_id TEXT NOT NULL,
+  first_name TEXT,
+  last_name TEXT,
+  email TEXT,
+  division TEXT NOT NULL,
+  discipline TEXT NOT NULL,
+  seniority_value TEXT,
+  qualified_disciplines TEXT,
+  active_status TEXT DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS scope_staffing_windows (
+  id SERIAL PRIMARY KEY,
+  term TEXT NOT NULL,
+  division TEXT NOT NULL,
+  sender_email TEXT,
+  opened_at TIMESTAMP DEFAULT NOW(),
+  closes_at TIMESTAMP,
+  status TEXT DEFAULT 'open',
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS scope_audit_log (
+  id SERIAL PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  actor_name TEXT,
+  actor_role TEXT,
+  division TEXT,
+  term TEXT,
+  section_key TEXT,
+  instructor_name TEXT,
+  old_value JSONB,
+  new_value JSONB,
+  note TEXT,
+  source TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_scope_roles_division ON scope_roles (division);
+CREATE INDEX IF NOT EXISTS idx_scope_roles_role ON scope_roles (role);
+CREATE INDEX IF NOT EXISTS idx_scope_pt_division ON scope_pt_faculty (division);
+CREATE INDEX IF NOT EXISTS idx_scope_pt_discipline ON scope_pt_faculty (discipline);
+CREATE INDEX IF NOT EXISTS idx_scope_windows_division ON scope_staffing_windows (division);
+CREATE INDEX IF NOT EXISTS idx_scope_audit_event_type ON scope_audit_log (event_type);
+CREATE INDEX IF NOT EXISTS idx_scope_audit_created_at ON scope_audit_log (created_at DESC);

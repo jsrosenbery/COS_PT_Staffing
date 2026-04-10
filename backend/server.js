@@ -5,6 +5,7 @@ import multer from "multer";
 import Papa from "papaparse";
 import fs from "fs";
 import { pool, query } from "./db.js";
+import persistenceRoutes from "./routes/persistence.js";
 
 dotenv.config();
 
@@ -19,6 +20,7 @@ app.use(
 );
 
 app.use(express.json());
+app.use("/api", persistenceRoutes);
 
 async function ensureDefaultTerms() {
   const existing = await pool.query("SELECT COUNT(*)::int AS count FROM terms");
