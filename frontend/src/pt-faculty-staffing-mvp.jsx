@@ -418,6 +418,85 @@ function logEventKind(entry = {}) {
   return "filled";
 }
 
+const codeLegend = [
+  { label: "IP", meaning: "In Person instruction." },
+  { label: "HYB", meaning: "Hybrid, part in person and part online." },
+  { label: "FLX", meaning: "HyFlex or flexible attendance pattern." },
+  { label: "ONL", meaning: "Fully online delivery." },
+  { label: "DE", meaning: "Dual Enrollment section." },
+  { label: "Clean", meaning: "No division schedule data or staffing activity is in play yet." },
+  { label: "Loaded", meaning: "Schedule data is loaded for the division, but staffing work has not started." },
+  { label: "In Progress", meaning: "Preferences or tentative assignments exist and the queue is active." },
+  { label: "Advanced", meaning: "Chair finalization or dean approval activity has already begun." },
+];
+
+function sectionStateSummary(section, topCandidate) {
+  if (section?.currentAssignment) {
+    return {
+      title: "Tentative assignment in place",
+      detail: "This section already has a tentative assignee. Other candidates stay visible for review and reassignment.",
+      kind: "assigned",
+    };
+  }
+  if (topCandidate) {
+    return {
+      title: "Ready for next action",
+      detail: `The next clean recommendation is ${topCandidate.faculty_name || topCandidate.employee_id}, based on seniority and available preference data.`,
+      kind: "top",
+    };
+  }
+  return {
+    title: "Chair intervention likely needed",
+    detail: "No conflict-free candidate is available right now, so this one likely needs bypass or reassignment judgment.",
+    kind: "conflict",
+  };
+}
+
+function candidateReasonSummary(section, row, topCandidate, currentAssignment) {
+  const isTop = topCandidate?.employee_id === row.employee_id;
+  const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
+  if (isCurrentAssignee) {
+    return {
+      title: "Current tentative holder",
+      detail: "This faculty member currently occupies the section in the working queue.",
+      kind: "assigned",
+    };
+  }
+  if (row.has_assignment_conflict) {
+    return {
+      title: "Blocked by time conflict",
+      detail: `Conflicts with ${row.conflicting_assignment?.primary_subject_course || row.conflicting_assignment?.assignment_group_id || "another tentative assignment"}.`,
+      kind: "conflict",
+    };
+  }
+  if (row.section_assigned_to_other || row.has_tentative_assignment) {
+    return {
+      title: "Already placed elsewhere",
+      detail: "This person already has a tentative placement attached to another section.",
+      kind: "filled",
+    };
+  }
+  if (section?.currentAssignment) {
+    return {
+      title: "Eligible for reassignment",
+      detail: "This candidate is available, but moving the section here requires a rationale because an assignment already exists.",
+      kind: "bypass",
+    };
+  }
+  if (isTop) {
+    return {
+      title: "Next in line",
+      detail: "Highest available candidate after seniority and conflict checks.",
+      kind: "top",
+    };
+  }
+  return {
+    title: "Assignable with rationale",
+    detail: "This candidate can be chosen, but bypassing the top available person requires a documented reason.",
+    kind: "bypass",
+  };
+}
+
 function includesNormalized(haystack, needle) {
   return normalize(haystack).toLowerCase().includes(normalize(needle).toLowerCase());
 }
@@ -531,6 +610,16 @@ const ui = {
     border: "1px solid var(--border-color)",
     background: "var(--bg-card)",
     color: "var(--text-main)",
+  },
+  alphaSelect: {
+    padding: "11px 12px",
+    borderRadius: 14,
+    border: "1px solid rgba(36, 51, 122, 0.22)",
+    background: "rgba(255,255,255,0.62)",
+    color: "var(--text-main)",
+    backdropFilter: "blur(10px)",
+    WebkitBackdropFilter: "blur(10px)",
+    boxShadow: "0 10px 24px rgba(15,23,42,0.08)",
   },
   badge: (status) => ({
     display: "inline-block",
@@ -2042,7 +2131,7 @@ export default function PTFacultyStaffingMVP() {
             <div>
               <div style={{ marginBottom: 6, fontWeight: 700 }}>Division</div>
               <select
-                style={ui.select}
+                style={ui.alphaSelect}
                 value={selectedUploadDivision}
                 onChange={(e) => setSelectedUploadDivision(e.target.value)}
                 disabled={uploadingSchedule}
@@ -2322,7 +2411,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
               </div>
               <select
-                style={ui.select}
+                style={ui.alphaSelect}
                 value={selectedChairName}
                 onChange={(e) => {
                   setSelectedChairName(e.target.value);
@@ -2354,7 +2443,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
               </div>
               <select
-                style={ui.select}
+                style={ui.alphaSelect}
                 value={selectedDeanName}
                 onChange={(e) => {
                   setSelectedDeanName(e.target.value);
@@ -2387,7 +2476,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <select
-                  style={ui.select}
+                  style={ui.alphaSelect}
                   value={selectedFacultyId}
                   onChange={(e) => {
                     setSelectedFacultyId(e.target.value);
@@ -2520,6 +2609,20 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     <div style={{ fontWeight: 800, marginTop: 6 }}>{activeSectionFilterCount}</div>
                   </div>
                 </div>
+                <div style={{ ...ui.sectionCard, marginTop: 14, background: "var(--bg-soft)" }}>
+                  <div style={{ fontWeight: 800 }}>Legend</div>
+                  <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                    Quick decoding for instructional codes and division activity states.
+                  </div>
+                  <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+                    {codeLegend.map((item) => (
+                      <div key={item.label} style={{ display: "grid", gridTemplateColumns: "110px minmax(0, 1fr)", gap: 10, alignItems: "start" }}>
+                        <span style={ui.chip}>{item.label}</span>
+                        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{item.meaning}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -2537,6 +2640,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
               <div style={{ display: "grid", gap: 12 }}>
                 {filteredSectionQueue.length ? filteredSectionQueue.map((section) => {
                   const topCandidate = section.eligibleCandidates[0] || null;
+                  const stateSummary = sectionStateSummary(section, topCandidate);
                   return (
                     <div key={section.assignment_group_id} style={{ ...ui.sectionCard, borderColor: section.currentAssignment ? "#bbf7d0" : "var(--border-color)", background: section.currentAssignment ? "rgba(220, 252, 231, 0.28)" : "var(--bg-card)" }}>
                       <div style={{ ...ui.between, alignItems: "flex-start" }}>
@@ -2562,17 +2666,24 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </div>
                       </div>
 
-                      {section.currentAssignment ? (
-                        <div style={{ marginTop: 10, color: "#166534", fontWeight: 700 }}>
-                          Tentatively assigned to {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
+                      <div style={{ marginTop: 12, border: "1px solid var(--border-soft)", borderRadius: 14, padding: 12, background: "var(--bg-soft)" }}>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          <span style={workflowStatePillStyle(stateSummary.kind)}>{stateSummary.title}</span>
                         </div>
-                      ) : null}
+                        <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 13 }}>{stateSummary.detail}</div>
+                        {section.currentAssignment ? (
+                          <div style={{ marginTop: 8, color: "#166534", fontWeight: 700, fontSize: 13 }}>
+                            Tentatively assigned to {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
+                          </div>
+                        ) : null}
+                      </div>
 
                       <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                         {section.candidates.slice(0, 5).map((row) => {
                           const isTop = topCandidate?.employee_id === row.employee_id;
                           const currentAssignment = currentAssignmentByGroup.get(section.assignment_group_id) || section.currentAssignment || null;
                           const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
+                          const reasonSummary = candidateReasonSummary(section, row, topCandidate, currentAssignment);
                           return (
                             <div key={`${section.assignment_group_id}-${row.employee_id}`} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: row.has_tentative_assignment || isCurrentAssignee ? "rgba(220, 252, 231, 0.22)" : row.has_assignment_conflict ? "rgba(254, 226, 226, 0.22)" : "var(--bg-soft)" }}>
                               <div style={{ ...ui.between, alignItems: "flex-start" }}>
@@ -2596,6 +2707,10 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                       Has other tentative assignment(s), but no time collision.
                                     </div>
                                   ) : null}
+                                  <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 12 }}>
+                                    <span style={workflowStatePillStyle(reasonSummary.kind)}>{reasonSummary.title}</span>
+                                    <div style={{ marginTop: 6 }}>{reasonSummary.detail}</div>
+                                  </div>
                                 </div>
                                 <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -2750,7 +2865,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
             <div style={ui.row}>
               <select
-                style={ui.select}
+                style={ui.alphaSelect}
                 value={selectedDisciplineCode}
                 onChange={(e) => {
                   const nextCode = e.target.value;
