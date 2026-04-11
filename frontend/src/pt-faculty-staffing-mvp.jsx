@@ -1,5 +1,5 @@
 const API_BASE = "https://cos-pt-staffing.onrender.com";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import cosLogo from "./assets/cos-logo.jpg";
 import AdminOperationsPanel from "./AdminOperationsPanel";
@@ -699,6 +699,8 @@ export default function PTFacultyStaffingMVP() {
   const [divisionSenderEmail, setDivisionSenderEmail] = useState("jacoba@cos.edu");
   const [directoryPersistenceReady, setDirectoryPersistenceReady] = useState(false);
   const [rosterPersistenceReady, setRosterPersistenceReady] = useState(false);
+  const skipNextDirectoryPersistRef = useRef(true);
+  const skipNextRosterPersistRef = useRef(true);
   const [disciplines] = useState(initialDisciplines);
   const [faculty] = useState(initialFaculty);
   const [seniority] = useState(initialSeniority);
@@ -839,13 +841,13 @@ export default function PTFacultyStaffingMVP() {
         loadPTFaculty(),
       ]);
 
-      if (Array.isArray(roleRows) && roleRows.length) {
+      if (Array.isArray(roleRows)) {
         const normalized = normalizeRoleRows(roleRows);
-        if (normalized.chairs.length) setChairAssignments(normalized.chairs);
-        if (normalized.deans.length) setDeanAssignments(normalized.deans);
+        setChairAssignments(normalized.chairs);
+        setDeanAssignments(normalized.deans);
       }
 
-      if (Array.isArray(ptRows) && ptRows.length) {
+      if (Array.isArray(ptRows)) {
         setPtStaffingRows(ptRows.map((row) => ({
           ...row,
           seniority_rank: row.seniority_rank ?? row.seniority_value ?? "",
@@ -854,6 +856,8 @@ export default function PTFacultyStaffingMVP() {
     } catch (error) {
       console.warn("Could not hydrate admin directories", error);
     } finally {
+      skipNextDirectoryPersistRef.current = true;
+      skipNextRosterPersistRef.current = true;
       setDirectoryPersistenceReady(true);
       setRosterPersistenceReady(true);
     }
@@ -1066,6 +1070,10 @@ export default function PTFacultyStaffingMVP() {
 
   useEffect(() => {
     if (!directoryPersistenceReady) return;
+    if (skipNextDirectoryPersistRef.current) {
+      skipNextDirectoryPersistRef.current = false;
+      return;
+    }
     const rows = expandRolesForSave(chairAssignments, deanAssignments);
     saveRoles(rows).catch((error) => {
       console.warn("Could not persist role directory", error);
@@ -1074,6 +1082,10 @@ export default function PTFacultyStaffingMVP() {
 
   useEffect(() => {
     if (!rosterPersistenceReady) return;
+    if (skipNextRosterPersistRef.current) {
+      skipNextRosterPersistRef.current = false;
+      return;
+    }
     savePTFaculty(ptStaffingRows).catch((error) => {
       console.warn("Could not persist PT roster", error);
     });
