@@ -1,214 +1,67 @@
-CREATE TABLE IF NOT EXISTS terms (
-  id SERIAL PRIMARY KEY,
-  term_code TEXT UNIQUE NOT NULL,
-  term_name TEXT NOT NULL,
-  is_active BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+import { query } from "./db.js";
+import persistenceRoutes from "./routes/persistence.js";
 
-CREATE TABLE IF NOT EXISTS disciplines (
-  id SERIAL PRIMARY KEY,
-  discipline_code TEXT UNIQUE NOT NULL,
-  discipline_name TEXT NOT NULL,
-  division_name TEXT,
-  chair_name TEXT,
-  dean_name TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+dotenv.config();
 
-CREATE TABLE IF NOT EXISTS discipline_subject_coverage (
-  id SERIAL PRIMARY KEY,
-  term_code TEXT NOT NULL,
-  discipline_code TEXT NOT NULL,
-  subject_code TEXT NOT NULL
-);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-CREATE TABLE IF NOT EXISTS faculty (
-  id SERIAL PRIMARY KEY,
-  employee_id TEXT UNIQUE NOT NULL,
-  first_name TEXT NOT NULL,
-  last_name TEXT NOT NULL,
-  email TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+const app = express();
+const PORT = process.env.PORT || 3001;
 
-CREATE TABLE IF NOT EXISTS discipline_seniority (
-  id SERIAL PRIMARY KEY,
-  term_code TEXT NOT NULL,
-  discipline_code TEXT NOT NULL,
-  employee_id TEXT NOT NULL,
-  seniority_date DATE,
-  seniority_rank INTEGER NOT NULL,
-  active_flag BOOLEAN DEFAULT TRUE,
-  covered_subject_codes TEXT,
-  notes TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+app.use(cors());
+app.use(express.json({ limit: "10mb" }));
 
-CREATE TABLE IF NOT EXISTS assignment_groups (
-  id SERIAL PRIMARY KEY,
-  term_code TEXT NOT NULL,
-  discipline_code TEXT NOT NULL,
-  assignment_group_id TEXT NOT NULL,
-  primary_subject_course TEXT,
-  primary_crn TEXT,
-  all_crns TEXT,
-  title TEXT,
-  division TEXT,
-  modality TEXT,
-  instructional_method TEXT,
-  display_modality TEXT,
-  campus TEXT,
-  units TEXT,
-  pt_eligible BOOLEAN DEFAULT TRUE,
-  is_grouped BOOLEAN DEFAULT FALSE,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+async function ensureSchema() {
+  const schemaPath = path.join(__dirname, "schema.sql");
+  if (!fs.existsSync(schemaPath)) {
+    console.warn("schema.sql not found, skipping schema bootstrap.");
+    return;
+  }
 
-CREATE TABLE IF NOT EXISTS assignment_group_meetings (
-  id SERIAL PRIMARY KEY,
-  assignment_group_id TEXT NOT NULL,
-  days TEXT,
-  start_time TEXT,
-  end_time TEXT,
-  building TEXT,
-  room TEXT
-);
+  const sql = fs.readFileSync(schemaPath, "utf8").trim();
+  if (!sql) {
+    console.warn("schema.sql is empty, skipping schema bootstrap.");
+    return;
+  }
 
-CREATE TABLE IF NOT EXISTS discipline_windows (
-  id SERIAL PRIMARY KEY,
-  term_code TEXT NOT NULL,
-  discipline_code TEXT NOT NULL,
-  opens_at TIMESTAMP,
-  closes_at TIMESTAMP,
-  status TEXT NOT NULL DEFAULT 'ready',
-  created_at TIMESTAMP DEFAULT NOW()
-);
+  try {
+    await query(sql);
+    console.log("Schema ready.");
+  } catch (error) {
+    console.error("Could not initialize schema:", error.message);
+    throw error;
+  }
+}
 
-CREATE TABLE IF NOT EXISTS faculty_submissions (
-  id SERIAL PRIMARY KEY,
-  term_code TEXT NOT NULL,
-  discipline_code TEXT NOT NULL,
-  employee_id TEXT NOT NULL,
-  submitted BOOLEAN DEFAULT FALSE,
-  submitted_at TIMESTAMP,
-  general_interests TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+app.get("/api/health", async (_req, res) => {
+  try {
+    await query("SELECT 1");
+    res.json({ ok: true, database: "connected" });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
 
-CREATE TABLE IF NOT EXISTS faculty_ranked_preferences (
-  id SERIAL PRIMARY KEY,
-  submission_id INTEGER REFERENCES faculty_submissions(id) ON DELETE CASCADE,
-  assignment_group_id TEXT NOT NULL,
-  preference_rank INTEGER NOT NULL
-);
+app.use("/api", persistenceRoutes);
 
-CREATE TABLE IF NOT EXISTS assignments (
-  id SERIAL PRIMARY KEY,
-  term_code TEXT NOT NULL,
-  discipline_code TEXT NOT NULL,
-  assignment_group_id TEXT NOT NULL,
-  employee_id TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'draft',
-  assigned_at TIMESTAMP DEFAULT NOW()
-);
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ error: err.message || "Unexpected server error." });
+});
 
-CREATE TABLE IF NOT EXISTS decision_logs (
-  id SERIAL PRIMARY KEY,
-  term_code TEXT NOT NULL,
-  discipline_code TEXT NOT NULL,
-  actor_name TEXT NOT NULL,
-  event_type TEXT NOT NULL,
-  detail TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-
-CREATE TABLE IF NOT EXISTS subject_mappings (
-  id SERIAL PRIMARY KEY,
-  term_code TEXT,
-  subject_code TEXT NOT NULL,
-  discipline_code TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS subject_mappings_unique_global
-  ON subject_mappings (subject_code, COALESCE(term_code, ''));
-
-CREATE INDEX IF NOT EXISTS subject_mappings_term_subject_idx
-  ON subject_mappings (term_code, subject_code);
-
-
-
-CREATE TABLE IF NOT EXISTS faculty_preferences (
-  id SERIAL PRIMARY KEY,
-  faculty_id TEXT NOT NULL,
-  employee_id TEXT,
-  faculty_name TEXT,
-  term_code TEXT NOT NULL,
-  assignment_group_id TEXT NOT NULL,
-  discipline_code TEXT,
-  preference_rank INTEGER NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW(),
-  UNIQUE(faculty_id, term_code, assignment_group_id),
-  UNIQUE(faculty_id, term_code, preference_rank)
-);
-
-
-CREATE TABLE IF NOT EXISTS scope_roles (
-  id SERIAL PRIMARY KEY,
-  employee_id TEXT NOT NULL,
-  first_name TEXT,
-  last_name TEXT,
-  email TEXT NOT NULL,
-  role TEXT NOT NULL,
-  division TEXT NOT NULL,
-  active_status TEXT DEFAULT 'active',
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS scope_pt_faculty (
-  id SERIAL PRIMARY KEY,
-  employee_id TEXT NOT NULL,
-  first_name TEXT,
-  last_name TEXT,
-  email TEXT,
-  division TEXT NOT NULL,
-  discipline TEXT NOT NULL,
-  seniority_rank TEXT,
-  qualified_disciplines TEXT,
-  active_status TEXT DEFAULT 'active',
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS scope_pt_faculty_unique_key
-  ON scope_pt_faculty (employee_id, division, discipline);
-
-CREATE TABLE IF NOT EXISTS scope_staffing_windows (
-  id SERIAL PRIMARY KEY,
-  term TEXT NOT NULL,
-  division TEXT NOT NULL,
-  sender_email TEXT,
-  opened_at TIMESTAMP DEFAULT NOW(),
-  closes_at TIMESTAMP,
-  status TEXT DEFAULT 'open',
-  created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS scope_audit_log (
-  id SERIAL PRIMARY KEY,
-  event_type TEXT NOT NULL,
-  actor_name TEXT,
-  actor_role TEXT,
-  division TEXT,
-  term TEXT,
-  section_key TEXT,
-  instructor_name TEXT,
-  old_value JSONB,
-  new_value JSONB,
-  note TEXT,
-  source TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+ensureSchema()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`S.C.O.P.E. backend listening on port ${PORT}`);
+    });
+  })
+  .catch(() => {
+    process.exit(1);
+  });
