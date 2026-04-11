@@ -1,10 +1,10 @@
-const API_BASE = "https://cos-pt-staffing.onrender.com";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import cosLogo from "./assets/cos-logo.jpg";
 import AdminOperationsPanel from "./AdminOperationsPanel";
 import { buildInitialPtRoster } from "./adminOpsUtils";
 import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty } from "./persistenceApi";
+import { API_BASE, fetchJson } from "./apiClient";
 
 const initialTerms = [];
 
@@ -865,12 +865,7 @@ export default function PTFacultyStaffingMVP() {
 
   async function loadTerms() {
     try {
-      const response = await fetch(`${API_BASE}/api/terms`);
-      const data = await response.json();
-      if (!response.ok) {
-        setTermMessage(data.error || "Could not load terms.");
-        return;
-      }
+      const data = await fetchJson("/api/terms", {}, "Could not load terms.");
       setTerms((data.terms || []).map((term) => ({
         id: term.id || term.term_code,
         code: term.term_code,
@@ -884,16 +879,11 @@ export default function PTFacultyStaffingMVP() {
 
   async function activateTerm(termCode) {
     try {
-      const response = await fetch(`${API_BASE}/api/terms/activate`, {
+      const data = await fetchJson("/api/terms/activate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ termCode }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setTermMessage(data.error || "Could not activate term.");
-        return;
-      }
+      }, "Could not activate term.");
       setTermMessage(`Active term set to ${data.term.term_name}.`);
       await loadTerms();
     } catch (error) {
@@ -903,7 +893,7 @@ export default function PTFacultyStaffingMVP() {
 
   async function createOrUpdateTerm() {
     try {
-      const response = await fetch(`${API_BASE}/api/terms`, {
+      const data = await fetchJson("/api/terms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -911,12 +901,7 @@ export default function PTFacultyStaffingMVP() {
           termName: newTermName,
           isActive: false,
         }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setTermMessage(data.error || "Could not save term.");
-        return;
-      }
+      }, "Could not save term.");
       setTermMessage(`Saved ${data.term.term_name}.`);
       setNewTermCode("");
       setNewTermName("");
@@ -1829,16 +1814,15 @@ export default function PTFacultyStaffingMVP() {
       formData.append("termCode", activeTerm.code);
       formData.append("divisionName", selectedUploadDivision);
 
-      const response = await fetch(`${API_BASE}/api/upload/schedule/preview`, {
+      const data = await fetchJson("/api/upload/schedule/preview", {
         method: "POST",
         body: formData,
-      });
-      const data = await response.json();
+      }, "Preview failed.");
 
       setUploadPreview({
-        ok: response.ok && Boolean(data.ok),
+        ok: Boolean(data.ok),
         fileName: file.name,
-        errors: data.errors || (response.ok ? [] : [data.error || "Preview failed."]),
+        errors: data.errors || [],
         warnings: data.warnings || [],
         unmappedSubjects: data.unmappedSubjects || [],
         summary: data.summary || null,
@@ -1846,7 +1830,7 @@ export default function PTFacultyStaffingMVP() {
         divisionName: data.divisionName || selectedUploadDivision,
       });
 
-      if (!response.ok) {
+      if (!data.ok) {
         setBackendMessage("Preview found issues. Review before uploading.");
       }
     } catch (error) {
@@ -1901,14 +1885,12 @@ export default function PTFacultyStaffingMVP() {
         formData.append("forceReplace", "true");
       }
 
-      const response = await fetch(`${API_BASE}/api/upload/schedule`, {
+      const data = await fetchJson("/api/upload/schedule", {
         method: "POST",
         body: formData,
-      });
+      }, "Could not upload schedule.");
 
-      const data = await response.json();
-
-      if (!response.ok) {
+      if (!data.ok) {
         if (data.code === "existing_work_detected") {
           setPendingUploadFile(targetFile);
           setUploadConflict(data);
