@@ -1,18 +1,9 @@
-import pg from "pg";
-import dotenv from "dotenv";
+import pkg from "pg";
+const { Pool } = pkg;
 
-dotenv.config();
-
-const { Pool } = pg;
-
-export const pool = new Pool({
+const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL?.includes("localhost")
-    ? false
-    : { rejectUnauthorized: false },
+  ssl: { rejectUnauthorized: false }
 });
 
-export async function query(text, params = []) {
-  const result = await pool.query(text, params);
-  return result;
-}
+export const query = (text, params) => pool.query(text, params);

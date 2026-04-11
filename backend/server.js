@@ -21,52 +21,27 @@ app.use(express.json({ limit: "10mb" }));
 
 async function ensureSchema() {
   const schemaPath = path.join(__dirname, "schema.sql");
-
-  if (!fs.existsSync(schemaPath)) {
-    console.warn("schema.sql not found, skipping schema bootstrap.");
-    return;
-  }
+  if (!fs.existsSync(schemaPath)) return;
 
   const sql = fs.readFileSync(schemaPath, "utf8").trim();
+  if (!sql) return;
 
-  if (!sql) {
-    console.warn("schema.sql is empty, skipping schema bootstrap.");
-    return;
-  }
-
-  try {
-    await query(sql);
-    console.log("Schema ready.");
-  } catch (error) {
-    console.error("Could not initialize schema:", error.message);
-    throw error;
-  }
+  await query(sql);
+  console.log("Schema ready.");
 }
 
 app.get("/api/health", async (_req, res) => {
   try {
     await query("SELECT 1");
-    res.json({ ok: true, database: "connected" });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
 app.use("/api", persistenceRoutes);
 app.use("/api", workflowRoutes);
 
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  res.status(500).json({ error: err.message || "Unexpected server error." });
+ensureSchema().then(() => {
+  app.listen(PORT, () => console.log("Server running on " + PORT));
 });
-
-ensureSchema()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`S.C.O.P.E. backend listening on port ${PORT}`);
-    });
-  })
-  .catch((error) => {
-    console.error("Startup failed:", error.message);
-    process.exit(1);
-  });
