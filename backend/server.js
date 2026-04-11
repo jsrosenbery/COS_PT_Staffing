@@ -14,19 +14,21 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 10000;
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
 async function ensureSchema() {
   const schemaPath = path.join(__dirname, "schema.sql");
+
   if (!fs.existsSync(schemaPath)) {
     console.warn("schema.sql not found, skipping schema bootstrap.");
     return;
   }
 
   const sql = fs.readFileSync(schemaPath, "utf8").trim();
+
   if (!sql) {
     console.warn("schema.sql is empty, skipping schema bootstrap.");
     return;
@@ -64,6 +66,7 @@ ensureSchema()
       console.log(`S.C.O.P.E. backend listening on port ${PORT}`);
     });
   })
-  .catch(() => {
+  .catch((error) => {
+    console.error("Startup failed:", error.message);
     process.exit(1);
   });
