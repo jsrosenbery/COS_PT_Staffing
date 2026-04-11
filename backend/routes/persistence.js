@@ -1,5 +1,5 @@
 import express from "express";
-import { query } from "../db.js";
+import { pool, query } from "../db.js";
 
 const router = express.Router();
 
@@ -19,14 +19,17 @@ router.get("/roles", async (_req, res) => {
 
 router.post("/roles", async (req, res) => {
   const rows = Array.isArray(req.body) ? req.body : [];
+  const client = await pool.connect();
+
   try {
-    await query("BEGIN");
-    await query("DELETE FROM scope_roles");
+    await client.query("BEGIN");
+    await client.query("DELETE FROM scope_roles");
+
     for (const row of rows) {
-      await query(
+      await client.query(
         `INSERT INTO scope_roles
-          (employee_id, first_name, last_name, email, role, division, active_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          (employee_id, first_name, last_name, email, role, division, active_status, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
         [
           row.employee_id || "",
           row.first_name || "",
@@ -38,11 +41,14 @@ router.post("/roles", async (req, res) => {
         ]
       );
     }
-    await query("COMMIT");
+
+    await client.query("COMMIT");
     res.json({ success: true, count: rows.length });
   } catch (error) {
-    await query("ROLLBACK");
+    await client.query("ROLLBACK");
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -63,16 +69,18 @@ router.get("/pt-faculty", async (req, res) => {
 
 router.post("/pt-faculty", async (req, res) => {
   const rows = Array.isArray(req.body) ? req.body : [];
+  const client = await pool.connect();
+
   try {
-    await query("BEGIN");
-    await query(
+    await client.query("BEGIN");
+    await client.query(
       `UPDATE scope_pt_faculty
        SET active_status = 'inactive',
            updated_at = NOW()`
     );
 
     for (const row of rows) {
-      await query(
+      await client.query(
         `INSERT INTO scope_pt_faculty
           (employee_id, first_name, last_name, email, division, discipline, seniority_rank, qualified_disciplines, active_status, created_at, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NOW(),NOW())
@@ -98,16 +106,19 @@ router.post("/pt-faculty", async (req, res) => {
       );
     }
 
-    const activeCountResult = await query(
+    const activeCountResult = await client.query(
       `SELECT COUNT(*)::int AS count
        FROM scope_pt_faculty
        WHERE COALESCE(active_status, 'active') = 'active'`
     );
-    await query("COMMIT");
+
+    await client.query("COMMIT");
     res.json({ success: true, activeCount: activeCountResult.rows?.[0]?.count || 0 });
   } catch (error) {
-    await query("ROLLBACK");
+    await client.query("ROLLBACK");
     res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
   }
 });
 

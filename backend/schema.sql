@@ -1,241 +1,81 @@
-import express from "express";
-import { query } from "../db.js";
+CREATE TABLE IF NOT EXISTS scope_roles (
+  id SERIAL PRIMARY KEY,
+  employee_id TEXT DEFAULT '',
+  first_name TEXT DEFAULT '',
+  last_name TEXT DEFAULT '',
+  email TEXT NOT NULL,
+  role TEXT NOT NULL,
+  division TEXT NOT NULL,
+  active_status TEXT DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
 
-const router = express.Router();
+CREATE INDEX IF NOT EXISTS idx_scope_roles_division ON scope_roles (division);
+CREATE INDEX IF NOT EXISTS idx_scope_roles_role ON scope_roles (role);
 
-router.get("/roles", async (_req, res) => {
-  try {
-    const result = await query(
-      `SELECT employee_id, first_name, last_name, email, role, division, active_status
-       FROM scope_roles
-       WHERE COALESCE(active_status, 'active') = 'active'
-       ORDER BY division, role, last_name, first_name`
-    );
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+CREATE TABLE IF NOT EXISTS scope_pt_faculty (
+  id SERIAL PRIMARY KEY,
+  employee_id TEXT DEFAULT '',
+  first_name TEXT DEFAULT '',
+  last_name TEXT DEFAULT '',
+  email TEXT DEFAULT '',
+  division TEXT NOT NULL,
+  discipline TEXT NOT NULL,
+  seniority_rank TEXT DEFAULT '',
+  qualified_disciplines TEXT DEFAULT '',
+  active_status TEXT DEFAULT 'active',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
 
-router.post("/roles", async (req, res) => {
-  const rows = Array.isArray(req.body) ? req.body : [];
-  try {
-    await query("BEGIN");
-    await query("DELETE FROM scope_roles");
-    for (const row of rows) {
-      await query(
-        `INSERT INTO scope_roles
-          (employee_id, first_name, last_name, email, role, division, active_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [
-          row.employee_id || "",
-          row.first_name || "",
-          row.last_name || "",
-          row.email || "",
-          row.role || "",
-          row.division || "",
-          row.active_status || "active",
-        ]
-      );
-    }
-    await query("COMMIT");
-    res.json({ success: true, count: rows.length });
-  } catch (error) {
-    await query("ROLLBACK");
-    res.status(500).json({ error: error.message });
-  }
-});
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'scope_pt_faculty_employee_division_discipline_key'
+  ) THEN
+    ALTER TABLE scope_pt_faculty
+    ADD CONSTRAINT scope_pt_faculty_employee_division_discipline_key
+    UNIQUE (employee_id, division, discipline);
+  END IF;
+END $$;
 
-router.get("/pt-faculty", async (req, res) => {
-  const includeInactive = String(req.query.includeInactive || "") === "1";
-  try {
-    const result = await query(
-      `SELECT employee_id, first_name, last_name, email, division, discipline, seniority_rank, qualified_disciplines, active_status
-       FROM scope_pt_faculty
-       ${includeInactive ? "" : "WHERE COALESCE(active_status, 'active') = 'active'"}
-       ORDER BY division, discipline, last_name, first_name`
-    );
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
+CREATE INDEX IF NOT EXISTS idx_scope_pt_division ON scope_pt_faculty (division);
+CREATE INDEX IF NOT EXISTS idx_scope_pt_discipline ON scope_pt_faculty (discipline);
+CREATE INDEX IF NOT EXISTS idx_scope_pt_active_status ON scope_pt_faculty (active_status);
 
-router.post("/pt-faculty", async (req, res) => {
-  const rows = Array.isArray(req.body) ? req.body : [];
-  try {
-    await query("BEGIN");
-    await query(
-      `UPDATE scope_pt_faculty
-       SET active_status = 'inactive',
-           updated_at = NOW()`
-    );
+CREATE TABLE IF NOT EXISTS scope_staffing_windows (
+  id SERIAL PRIMARY KEY,
+  term TEXT NOT NULL,
+  division TEXT NOT NULL,
+  sender_email TEXT DEFAULT '',
+  opened_at TIMESTAMP DEFAULT NOW(),
+  closes_at TIMESTAMP,
+  status TEXT DEFAULT 'open',
+  created_at TIMESTAMP DEFAULT NOW()
+);
 
-    for (const row of rows) {
-      await query(
-        `INSERT INTO scope_pt_faculty
-          (employee_id, first_name, last_name, email, division, discipline, seniority_rank, qualified_disciplines, active_status, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NOW(),NOW())
-         ON CONFLICT (employee_id, division, discipline)
-         DO UPDATE SET
-           first_name = EXCLUDED.first_name,
-           last_name = EXCLUDED.last_name,
-           email = EXCLUDED.email,
-           seniority_rank = EXCLUDED.seniority_rank,
-           qualified_disciplines = EXCLUDED.qualified_disciplines,
-           active_status = 'active',
-           updated_at = NOW()`,
-        [
-          row.employee_id || "",
-          row.first_name || "",
-          row.last_name || "",
-          row.email || "",
-          row.division || "",
-          row.discipline || "",
-          row.seniority_rank ?? row.seniority_value ?? "",
-          row.qualified_disciplines || "",
-        ]
-      );
-    }
+CREATE INDEX IF NOT EXISTS idx_scope_windows_division ON scope_staffing_windows (division);
+CREATE INDEX IF NOT EXISTS idx_scope_windows_status ON scope_staffing_windows (status);
 
-    const activeCountResult = await query(
-      `SELECT COUNT(*)::int AS count
-       FROM scope_pt_faculty
-       WHERE COALESCE(active_status, 'active') = 'active'`
-    );
-    await query("COMMIT");
-    res.json({ success: true, activeCount: activeCountResult.rows?.[0]?.count || 0 });
-  } catch (error) {
-    await query("ROLLBACK");
-    res.status(500).json({ error: error.message });
-  }
-});
+CREATE TABLE IF NOT EXISTS scope_audit_log (
+  id SERIAL PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  actor_name TEXT DEFAULT '',
+  actor_role TEXT DEFAULT '',
+  division TEXT DEFAULT '',
+  term TEXT DEFAULT '',
+  section_key TEXT DEFAULT '',
+  instructor_name TEXT DEFAULT '',
+  old_value JSONB,
+  new_value JSONB,
+  note TEXT DEFAULT '',
+  source TEXT DEFAULT '',
+  created_at TIMESTAMP DEFAULT NOW()
+);
 
-router.delete("/pt-faculty", async (_req, res) => {
-  try {
-    const result = await query(
-      `UPDATE scope_pt_faculty
-       SET active_status = 'inactive',
-           updated_at = NOW()
-       WHERE COALESCE(active_status, 'active') = 'active'`
-    );
-    res.json({ success: true, inactivated: result.rowCount || 0 });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.get("/windows", async (_req, res) => {
-  try {
-    const result = await query(
-      `SELECT id, term, division, sender_email, opened_at, closes_at, status
-       FROM scope_staffing_windows
-       ORDER BY opened_at DESC`
-    );
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.post("/windows", async (req, res) => {
-  const row = req.body || {};
-  try {
-    const result = await query(
-      `INSERT INTO scope_staffing_windows (term, division, sender_email, closes_at, status)
-       VALUES ($1,$2,$3,$4,$5)
-       RETURNING id, term, division, sender_email, opened_at, closes_at, status`,
-      [
-        row.term || "",
-        row.division || "",
-        row.sender_email || "",
-        row.closes_at || null,
-        row.status || "open",
-      ]
-    );
-    res.json({ success: true, window: result.rows[0] });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.get("/audit", async (req, res) => {
-  const { q = "", eventType = "", division = "", sortBy = "created_at", sortDir = "desc" } = req.query;
-  const allowedSortFields = new Set(["created_at", "event_type", "division", "term", "actor_name", "instructor_name"]);
-  const safeSortBy = allowedSortFields.has(sortBy) ? sortBy : "created_at";
-  const safeSortDir = String(sortDir).toLowerCase() === "asc" ? "ASC" : "DESC";
-
-  const params = [];
-  const where = [];
-
-  if (q) {
-    params.push(`%${q}%`);
-    const idx = params.length;
-    where.push(`(
-      COALESCE(event_type, '') ILIKE $${idx}
-      OR COALESCE(actor_name, '') ILIKE $${idx}
-      OR COALESCE(actor_role, '') ILIKE $${idx}
-      OR COALESCE(division, '') ILIKE $${idx}
-      OR COALESCE(term, '') ILIKE $${idx}
-      OR COALESCE(section_key, '') ILIKE $${idx}
-      OR COALESCE(instructor_name, '') ILIKE $${idx}
-      OR COALESCE(note, '') ILIKE $${idx}
-      OR COALESCE(source, '') ILIKE $${idx}
-    )`);
-  }
-
-  if (eventType) {
-    params.push(eventType);
-    where.push(`event_type = $${params.length}`);
-  }
-
-  if (division) {
-    params.push(division);
-    where.push(`division = $${params.length}`);
-  }
-
-  const sql = `
-    SELECT id, event_type, actor_name, actor_role, division, term, section_key, instructor_name, old_value, new_value, note, source, created_at
-    FROM scope_audit_log
-    ${where.length ? "WHERE " + where.join(" AND ") : ""}
-    ORDER BY ${safeSortBy} ${safeSortDir}
-    LIMIT 2000
-  `;
-
-  try {
-    const result = await query(sql, params);
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.post("/audit", async (req, res) => {
-  const row = req.body || {};
-  try {
-    const result = await query(
-      `INSERT INTO scope_audit_log
-        (event_type, actor_name, actor_role, division, term, section_key, instructor_name, old_value, new_value, note, source)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       RETURNING id, created_at`,
-      [
-        row.event_type || "",
-        row.actor_name || "",
-        row.actor_role || "",
-        row.division || "",
-        row.term || "",
-        row.section_key || "",
-        row.instructor_name || "",
-        row.old_value || null,
-        row.new_value || null,
-        row.note || "",
-        row.source || "",
-      ]
-    );
-    res.json({ success: true, audit: result.rows[0] });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-export default router;
+CREATE INDEX IF NOT EXISTS idx_scope_audit_event_type ON scope_audit_log (event_type);
+CREATE INDEX IF NOT EXISTS idx_scope_audit_created_at ON scope_audit_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scope_audit_division ON scope_audit_log (division);
