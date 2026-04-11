@@ -6,6 +6,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { query } from "./db.js";
 import persistenceRoutes from "./routes/persistence.js";
+import workflowRoutes from "./routes/workflow.js";
 
 dotenv.config();
 
@@ -50,6 +51,7 @@ app.get("/api/health", async (_req, res) => {
 });
 
 app.use("/api", persistenceRoutes);
+app.use("/api", workflowRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);
