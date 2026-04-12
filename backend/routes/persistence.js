@@ -26,7 +26,7 @@ router.post("/roles", async (req, res) => {
     for (const row of rows) {
       await client.query(
         `INSERT INTO scope_roles
-         (employee_id, first_name, last_name, email, role, division, active_status, updated_at)
+          (employee_id, first_name, last_name, email, role, division, active_status, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
         [
           row.employee_id || "",
@@ -40,7 +40,7 @@ router.post("/roles", async (req, res) => {
       );
     }
     await client.query("COMMIT");
-    res.json({ ok: true, count: rows.length });
+    res.json({ success: true, count: rows.length });
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: error.message });
@@ -53,7 +53,10 @@ router.get("/pt-faculty", async (req, res) => {
   const includeInactive = String(req.query.includeInactive || "") === "1";
   try {
     const result = await query(
-      `SELECT employee_id, first_name, last_name, email, division, discipline, seniority_rank, qualified_disciplines, active_status
+      `SELECT employee_id, first_name, last_name, email, division, discipline,
+              COALESCE(NULLIF(seniority_rank, ''), seniority_value, '') AS seniority_rank,
+              COALESCE(NULLIF(seniority_value, ''), seniority_rank, '') AS seniority_value,
+              qualified_disciplines, active_status
        FROM scope_pt_faculty
        ${includeInactive ? "" : "WHERE COALESCE(active_status, 'active') = 'active'"}
        ORDER BY division, discipline, last_name, first_name`
@@ -69,18 +72,25 @@ router.post("/pt-faculty", async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query(`UPDATE scope_pt_faculty SET active_status = 'inactive', updated_at = NOW()`);
+    await client.query(
+      `UPDATE scope_pt_faculty
+       SET active_status = 'inactive',
+           updated_at = NOW()`
+    );
+
     for (const row of rows) {
+      const rank = row.seniority_rank ?? row.seniority_value ?? "";
       await client.query(
         `INSERT INTO scope_pt_faculty
-         (employee_id, first_name, last_name, email, division, discipline, seniority_rank, qualified_disciplines, active_status, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NOW(),NOW())
+          (employee_id, first_name, last_name, email, division, discipline, seniority_rank, seniority_value, qualified_disciplines, active_status, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'active',NOW(),NOW())
          ON CONFLICT (employee_id, division, discipline)
          DO UPDATE SET
            first_name = EXCLUDED.first_name,
            last_name = EXCLUDED.last_name,
            email = EXCLUDED.email,
            seniority_rank = EXCLUDED.seniority_rank,
+           seniority_value = EXCLUDED.seniority_value,
            qualified_disciplines = EXCLUDED.qualified_disciplines,
            active_status = 'active',
            updated_at = NOW()`,
@@ -91,13 +101,21 @@ router.post("/pt-faculty", async (req, res) => {
           row.email || "",
           row.division || "",
           row.discipline || "",
-          row.seniority_rank ?? row.seniority_value ?? "",
+          rank,
+          rank,
           row.qualified_disciplines || "",
         ]
       );
     }
+
+    const activeCountResult = await client.query(
+      `SELECT COUNT(*)::int AS count
+       FROM scope_pt_faculty
+       WHERE COALESCE(active_status, 'active') = 'active'`
+    );
+
     await client.query("COMMIT");
-    res.json({ ok: true, count: rows.length });
+    res.json({ success: true, activeCount: activeCountResult.rows?.[0]?.count || 0 });
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: error.message });
@@ -110,10 +128,11 @@ router.delete("/pt-faculty", async (_req, res) => {
   try {
     const result = await query(
       `UPDATE scope_pt_faculty
-       SET active_status = 'inactive', updated_at = NOW()
+       SET active_status = 'inactive',
+           updated_at = NOW()
        WHERE COALESCE(active_status, 'active') = 'active'`
     );
-    res.json({ ok: true, inactivated: result.rowCount || 0 });
+    res.json({ success: true, inactivated: result.rowCount || 0 });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -139,9 +158,15 @@ router.post("/windows", async (req, res) => {
       `INSERT INTO scope_staffing_windows (term, division, sender_email, closes_at, status)
        VALUES ($1,$2,$3,$4,$5)
        RETURNING id, term, division, sender_email, opened_at, closes_at, status`,
-      [row.term || "", row.division || "", row.sender_email || "", row.closes_at || null, row.status || "open"]
+      [
+        row.term || "",
+        row.division || "",
+        row.sender_email || "",
+        row.closes_at || null,
+        row.status || "open",
+      ]
     );
-    res.json({ ok: true, window: result.rows[0] });
+    res.json({ success: true, window: result.rows[0] });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -152,8 +177,10 @@ router.get("/audit", async (req, res) => {
   const allowedSortFields = new Set(["created_at", "event_type", "division", "term", "actor_name", "instructor_name"]);
   const safeSortBy = allowedSortFields.has(sortBy) ? sortBy : "created_at";
   const safeSortDir = String(sortDir).toLowerCase() === "asc" ? "ASC" : "DESC";
+
   const params = [];
   const where = [];
+
   if (q) {
     params.push(`%${q}%`);
     const idx = params.length;
@@ -169,23 +196,27 @@ router.get("/audit", async (req, res) => {
       OR COALESCE(source, '') ILIKE $${idx}
     )`);
   }
+
   if (eventType) {
     params.push(eventType);
     where.push(`event_type = $${params.length}`);
   }
+
   if (division) {
     params.push(division);
     where.push(`division = $${params.length}`);
   }
+
+  const sql = `
+    SELECT id, event_type, actor_name, actor_role, division, term, section_key, instructor_name, old_value, new_value, note, source, created_at
+    FROM scope_audit_log
+    ${where.length ? "WHERE " + where.join(" AND ") : ""}
+    ORDER BY ${safeSortBy} ${safeSortDir}
+    LIMIT 2000
+  `;
+
   try {
-    const result = await query(
-      `SELECT id, event_type, actor_name, actor_role, division, term, section_key, instructor_name, old_value, new_value, note, source, created_at
-       FROM scope_audit_log
-       ${where.length ? "WHERE " + where.join(" AND ") : ""}
-       ORDER BY ${safeSortBy} ${safeSortDir}
-       LIMIT 2000`,
-      params
-    );
+    const result = await query(sql, params);
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -197,7 +228,7 @@ router.post("/audit", async (req, res) => {
   try {
     const result = await query(
       `INSERT INTO scope_audit_log
-       (event_type, actor_name, actor_role, division, term, section_key, instructor_name, old_value, new_value, note, source)
+        (event_type, actor_name, actor_role, division, term, section_key, instructor_name, old_value, new_value, note, source)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        RETURNING id, created_at`,
       [
@@ -214,7 +245,7 @@ router.post("/audit", async (req, res) => {
         row.source || "",
       ]
     );
-    res.json({ ok: true, audit: result.rows[0] });
+    res.json({ success: true, audit: result.rows[0] });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
