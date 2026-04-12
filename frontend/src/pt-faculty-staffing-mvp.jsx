@@ -865,7 +865,7 @@ export default function PTFacultyStaffingMVP() {
 
   async function loadTerms() {
     try {
-      const data = await fetchJson("/api/terms", {}, "Could not load terms.");
+      const data = await fetchJson("/terms", {}, "Could not load terms.");
       setTerms((data.terms || []).map((term) => ({
         id: term.id || term.term_code,
         code: term.term_code,
@@ -879,7 +879,7 @@ export default function PTFacultyStaffingMVP() {
 
   async function activateTerm(termCode) {
     try {
-      const data = await fetchJson("/api/terms/activate", {
+      const data = await fetchJson("/terms/activate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ termCode }),
@@ -893,7 +893,7 @@ export default function PTFacultyStaffingMVP() {
 
   async function createOrUpdateTerm() {
     try {
-      const data = await fetchJson("/api/terms", {
+      const data = await fetchJson("/terms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1325,7 +1325,7 @@ export default function PTFacultyStaffingMVP() {
         params.set("disciplineCode", disciplineCode);
       }
 
-      const response = await fetch(`${API_BASE}/api/available-sections?${params.toString()}`);
+      const response = await fetch(`${API_BASE}/available-sections?${params.toString()}`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -1356,7 +1356,7 @@ export default function PTFacultyStaffingMVP() {
     if (!activeTerm?.code) return;
     setLoadingDivisionStatuses(true);
     try {
-      const response = await fetch(`${API_BASE}/api/division-statuses?termCode=${encodeURIComponent(activeTerm.code)}`);
+      const response = await fetch(`${API_BASE}/division-statuses?termCode=${encodeURIComponent(activeTerm.code)}`);
       const data = await response.json();
       if (!response.ok) {
         setDivisionStatuses([]);
@@ -1380,9 +1380,9 @@ export default function PTFacultyStaffingMVP() {
       if (scopedDiscipline) workflowParams.set("disciplineCode", scopedDiscipline);
 
       const [workflowResponse, assignmentsResponse, logsResponse] = await Promise.all([
-        fetch(`${API_BASE}/api/chair-workflow?${workflowParams.toString()}`),
-        fetch(`${API_BASE}/api/assignments?${workflowParams.toString()}`),
-        fetch(`${API_BASE}/api/decision-logs?${workflowParams.toString()}`),
+        fetch(`${API_BASE}/chair-workflow?${workflowParams.toString()}`),
+        fetch(`${API_BASE}/assignments?${workflowParams.toString()}`),
+        fetch(`${API_BASE}/decision-logs?${workflowParams.toString()}`),
       ]);
 
       const workflowData = await workflowResponse.json();
@@ -1440,7 +1440,7 @@ export default function PTFacultyStaffingMVP() {
     setChairMessage("");
     try {
       const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
-      const response = await fetch(`${API_BASE}/api/assignments`, {
+      const response = await fetch(`${API_BASE}/assignments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1472,7 +1472,7 @@ export default function PTFacultyStaffingMVP() {
     setChairMessage("");
     try {
       const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
-      const response = await fetch(`${API_BASE}/api/assignments/${assignment.id}`, {
+      const response = await fetch(`${API_BASE}/assignments/${assignment.id}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actorName }),
@@ -1504,7 +1504,7 @@ export default function PTFacultyStaffingMVP() {
     setChairMessage("");
     try {
       const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
-      const response = await fetch(`${API_BASE}/api/assignments/${assignment.id}/reassign`, {
+      const response = await fetch(`${API_BASE}/assignments/${assignment.id}/reassign`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1528,7 +1528,7 @@ export default function PTFacultyStaffingMVP() {
     if (role !== "faculty" || !activeTerm?.code) return;
     try {
       const params = new URLSearchParams({ termCode: activeTerm.code, facultyId });
-      const response = await fetch(`${API_BASE}/api/preferences?${params.toString()}`);
+      const response = await fetch(`${API_BASE}/preferences?${params.toString()}`);
       const data = await response.json();
       if (!response.ok) {
         setPreferencesMessage(data.error || "Could not load saved preferences.");
@@ -1580,7 +1580,7 @@ export default function PTFacultyStaffingMVP() {
     setSavingPreferences(true);
     setPreferencesMessage("");
     try {
-      const response = await fetch(`${API_BASE}/api/preferences`, {
+      const response = await fetch(`${API_BASE}/preferences`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1626,7 +1626,7 @@ export default function PTFacultyStaffingMVP() {
 
   async function exportPreferences() {
     try {
-      const response = await fetch(`${API_BASE}/api/preferences/export?termCode=${activeTerm.code}`);
+      const response = await fetch(`${API_BASE}/preferences/export?termCode=${activeTerm.code}`);
       const text = await response.text();
       const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
@@ -1647,7 +1647,7 @@ export default function PTFacultyStaffingMVP() {
     setLoadingMappingList(true);
     setMappingAdminError("");
     try {
-      const response = await fetch(`${API_BASE}/api/subject-mapping?scope=global&termCode=${activeTerm.code}`);
+      const response = await fetch(`${API_BASE}/subject-mapping?scope=global&termCode=${activeTerm.code}`);
       const data = await response.json();
       if (!response.ok) {
         setMappingAdminError(data.error || "Could not load mappings.");
@@ -1665,7 +1665,7 @@ export default function PTFacultyStaffingMVP() {
   async function handleExportMappings() {
     setMappingAdminError("");
     try {
-      const response = await fetch(`${API_BASE}/api/subject-mapping/export?scope=global&termCode=${activeTerm.code}`);
+      const response = await fetch(`${API_BASE}/subject-mapping/export?scope=global&termCode=${activeTerm.code}`);
       if (!response.ok) {
         let data = {};
         try {
@@ -1694,7 +1694,7 @@ export default function PTFacultyStaffingMVP() {
   useEffect(() => {
     async function loadMappingStatus() {
       try {
-        const response = await fetch(`${API_BASE}/api/subject-mapping/${activeTerm.code}/status`);
+        const response = await fetch(`${API_BASE}/subject-mapping/${activeTerm.code}/status`);
         const data = await response.json();
         if (!response.ok) return;
 
@@ -1729,7 +1729,7 @@ export default function PTFacultyStaffingMVP() {
       formData.append("file", file);
       formData.append("termCode", activeTerm.code);
 
-      const response = await fetch(`${API_BASE}/api/upload/subject-mapping`, {
+      const response = await fetch(`${API_BASE}/upload/subject-mapping`, {
         method: "POST",
         body: formData,
       });
@@ -1814,7 +1814,7 @@ export default function PTFacultyStaffingMVP() {
       formData.append("termCode", activeTerm.code);
       formData.append("divisionName", selectedUploadDivision);
 
-      const data = await fetchJson("/api/upload/schedule/preview", {
+      const data = await fetchJson("/upload/schedule/preview", {
         method: "POST",
         body: formData,
       }, "Preview failed.");
@@ -1885,7 +1885,7 @@ export default function PTFacultyStaffingMVP() {
         formData.append("forceReplace", "true");
       }
 
-      const data = await fetchJson("/api/upload/schedule", {
+      const data = await fetchJson("/upload/schedule", {
         method: "POST",
         body: formData,
       }, "Could not upload schedule.");

@@ -43,5 +43,5 @@ app.use("/api", persistenceRoutes);
 app.use("/api", workflowRoutes);
 
 ensureSchema().then(() => {
-  app.listen(PORT, () => console.log("Server running on " + PORT));
+  app.listen(PORT, () => console.log(`S.C.O.P.E. backend listening on port ${PORT}`));
 });
