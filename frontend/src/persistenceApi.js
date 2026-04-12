@@ -1,34 +1,58 @@
 import { fetchJson } from "./apiClient";
 
-export async function saveRoles(rows) {
-  return fetchJson("/api/roles", {
+export const saveRoles = async (roles) =>
+  fetchJson("/roles", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(Array.isArray(rows) ? rows : []),
-  }, "Could not save role directory.");
-}
+    body: JSON.stringify(roles),
+  });
 
-export async function loadRoles() {
-  return fetchJson("/api/roles", {}, "Could not load role directory.");
-}
+export const loadRoles = async () => fetchJson("/roles");
 
-export async function savePTFaculty(rows) {
-  return fetchJson("/api/pt-faculty", {
+export const savePTFaculty = async (rows) =>
+  fetchJson("/pt-faculty", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(Array.isArray(rows) ? rows : []),
-  }, "Could not save PT roster.");
-}
+    body: JSON.stringify(rows),
+  });
 
-export async function loadPTFaculty(options = {}) {
+export const loadPTFaculty = async (includeInactive = false) =>
+  fetchJson(`/pt-faculty${includeInactive ? "?includeInactive=1" : ""}`);
+
+export const createStaffingWindow = async (windowPayload) =>
+  fetchJson("/windows", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(windowPayload),
+  });
+
+export const loadStaffingWindows = async () => fetchJson("/windows");
+
+export const loadAuditLog = async ({
+  q = "",
+  eventType = "",
+  division = "",
+  sortBy = "created_at",
+  sortDir = "desc",
+} = {}) => {
   const params = new URLSearchParams();
-  if (options.includeInactive) params.set("includeInactive", "1");
+  if (q) params.set("q", q);
+  if (eventType) params.set("eventType", eventType);
+  if (division) params.set("division", division);
+  if (sortBy) params.set("sortBy", sortBy);
+  if (sortDir) params.set("sortDir", sortDir);
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  return fetchJson(`/api/pt-faculty${suffix}`, {}, "Could not load PT roster.");
-}
+  return fetchJson(`/audit${suffix}`);
+};
 
-export async function wipePTFaculty() {
-  return fetchJson("/api/pt-faculty", {
+export const appendAuditLog = async (payload) =>
+  fetchJson("/audit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const wipeActivePTRoster = async () =>
+  fetchJson("/pt-faculty", {
     method: "DELETE",
-  }, "Could not wipe PT roster.");
-}
+  });
