@@ -72,17 +72,17 @@ const initialChairAssignments = [
   { chairName: "Consumer/Family Studies Division Chair", divisions: ["Consumer/Family Studies"] },
   { chairName: "English Division Chair", divisions: ["English"] },
   { chairName: "Fine Arts Division Chair", divisions: ["Fine Arts"] },
-  { chairName: "Math & Engineering Division Chair", divisions: ["Math & Engineering"] },
+  { chairName: "Math & Engineering Division Chair", divisions: ["Math and Engineering"] },
   { chairName: "Science Division Chair", divisions: ["Science"] },
   { chairName: "Language & Communication Stud. Division Chair", divisions: ["Language & Communication Stud."] },
   { chairName: "Library Division Chair", divisions: ["Library"] },
   { chairName: "Physical Education Division Chair", divisions: ["Physical Education"] },
   { chairName: "Nursing Division Chair", divisions: ["Nursing"] },
-  { chairName: "Industry & Technology Division Chair", divisions: ["Industry and Technology", "Industry & Technology"] },
+  { chairName: "Industry & Technology Division Chair", divisions: ["Industry and Technology"] },
   { chairName: "Cosmetology Division Chair", divisions: ["Cosmetology"] },
   { chairName: "Student Services Division Chair", divisions: ["Student Services"] },
   { chairName: "Fire Technology Division Chair", divisions: ["Fire Technology"] },
-  { chairName: "Police Sciences Division Chair", divisions: ["Police Sciences"] },
+  { chairName: "Police Sciences Division Chair", divisions: ["Police Science"] },
   { chairName: "Emergency Medical Technician Division Chair", divisions: ["Emergency Medical Technician"] },
 ];
 
@@ -90,12 +90,12 @@ const initialDeanAssignments = [
   { deanName: "Agriculture Dean", divisions: ["Agriculture"] },
   { deanName: "Social Sciences, Business, Consumer/Family Studies Dean", divisions: ["Social Sciences", "Business", "Consumer/Family Studies"] },
   { deanName: "English, Fine Arts Dean", divisions: ["English", "Fine Arts"] },
-  { deanName: "Math & Engineering, Science Dean", divisions: ["Math & Engineering", "Science"] },
+  { deanName: "Math & Engineering, Science Dean", divisions: ["Math and Engineering", "Science"] },
   { deanName: "Language & Communication Stud., Library Dean", divisions: ["Language & Communication Stud.", "Library"] },
   { deanName: "Physical Education Dean", divisions: ["Physical Education"] },
-  { deanName: "Nursing, Industry & Technology, Cosmetology Dean", divisions: ["Nursing", "Industry and Technology", "Industry & Technology", "Cosmetology"] },
+  { deanName: "Nursing, Industry & Technology, Cosmetology Dean", divisions: ["Nursing", "Industry and Technology", "Cosmetology"] },
   { deanName: "Student Services Dean", divisions: ["Student Services"] },
-  { deanName: "Fire Technology, Police Sciences, Emergency Medical Technician Dean", divisions: ["Fire Technology", "Police Sciences", "Emergency Medical Technician"] },
+  { deanName: "Fire Technology, Police Sciences, Emergency Medical Technician Dean", divisions: ["Fire Technology", "Police Science", "Emergency Medical Technician"] },
 ];
 
 const initialSections = [];
@@ -143,6 +143,21 @@ function facultyName(faculty) {
 
 function normalize(s) {
   return String(s ?? "").trim();
+}
+
+
+function canonicalDivisionName(value) {
+  const raw = normalize(value);
+  const key = raw.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const aliases = {
+    "industrytechnology": "Industry and Technology",
+    "industryandtechnology": "Industry and Technology",
+    "mathengineering": "Math and Engineering",
+    "mathandengineering": "Math and Engineering",
+    "policesciences": "Police Science",
+    "policescience": "Police Science",
+  };
+  return aliases[key] || raw;
 }
 
 function buildUnmappedSubjectsCsv(rows) {
@@ -775,8 +790,9 @@ export default function PTFacultyStaffingMVP() {
         });
       }
       const entry = grouped.get(key);
-      if (row.division && !entry.divisions.includes(row.division)) {
-        entry.divisions.push(row.division);
+      const canonicalDivision = canonicalDivisionName(row.division);
+      if (canonicalDivision && !entry.divisions.includes(canonicalDivision)) {
+        entry.divisions.push(canonicalDivision);
       }
     });
 
@@ -977,19 +993,19 @@ export default function PTFacultyStaffingMVP() {
   }, [availableSections]);
 
   const chairDivisions = useMemo(() => {
-    return chairAssignments.find((item) => item.chairName === selectedChairName)?.divisions || [];
-  }, [selectedChairName]);
+    return (chairAssignments.find((item) => item.chairName === selectedChairName)?.divisions || []).map(canonicalDivisionName);
+  }, [selectedChairName, chairAssignments]);
 
   const deanDivisions = useMemo(() => {
-    return deanAssignments.find((item) => item.deanName === selectedDeanName)?.divisions || [];
-  }, [selectedDeanName]);
+    return (deanAssignments.find((item) => item.deanName === selectedDeanName)?.divisions || []).map(canonicalDivisionName);
+  }, [selectedDeanName, deanAssignments]);
 
   const uploadDivisionOptions = useMemo(() => (
     Array.from(
       new Set(
         [...chairAssignments, ...deanAssignments]
           .flatMap((item) => item.divisions || [])
-          .map((division) => normalize(division))
+          .map((division) => canonicalDivisionName(division))
           .filter(Boolean)
       )
     ).sort((a, b) => a.localeCompare(b))
@@ -998,7 +1014,7 @@ export default function PTFacultyStaffingMVP() {
   const divisionStatusMap = useMemo(() => {
     const map = new Map();
     (divisionStatuses || []).forEach((row) => {
-      if (row?.division) map.set(row.division, row);
+      if (row?.division) map.set(canonicalDivisionName(row.division), row);
     });
     return map;
   }, [divisionStatuses]);
@@ -1117,10 +1133,10 @@ export default function PTFacultyStaffingMVP() {
 
   const roleScopedSections = useMemo(() => {
     if (role === "chair") {
-      return availableSections.filter((section) => chairDivisions.includes(section.division));
+      return availableSections.filter((section) => chairDivisions.includes(canonicalDivisionName(section.division)));
     }
     if (role === "dean") {
-      return availableSections.filter((section) => deanDivisions.includes(section.division));
+      return availableSections.filter((section) => deanDivisions.includes(canonicalDivisionName(section.division)));
     }
     if (role === "faculty") {
       const facultyCodes = facultySeniorityRows.map((row) => row.disciplineCode).filter(Boolean);

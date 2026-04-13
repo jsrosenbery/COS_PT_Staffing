@@ -14,6 +14,22 @@ function normUpper(value) {
   return normalize(value).toUpperCase();
 }
 
+
+function canonicalDivisionName(value) {
+  const raw = normalize(value);
+  const key = raw.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const aliases = {
+    industrytechnology: "Industry and Technology",
+    industryandtechnology: "Industry and Technology",
+    mathengineering: "Math and Engineering",
+    mathandengineering: "Math and Engineering",
+    policesciences: "Police Science",
+    policescience: "Police Science",
+  };
+  return aliases[key] || raw;
+}
+
+
 function findValue(row, candidates) {
   const entries = Object.entries(row || {});
   for (const candidate of candidates) {
@@ -60,7 +76,7 @@ function inferSection(row, subjectMap, divisionName) {
   const courseNumber = findValue(row, ["COURSE_NUMBER", "Course Number", "CATALOG_NUMBER", "Course", "course_number"]);
   const crn = findValue(row, ["CRN", "crn"]);
   const title = findValue(row, ["TITLE", "Title", "COURSE_TITLE"]);
-  const division = findValue(row, ["DIVISION", "Division", "division"]) || divisionName;
+  const division = canonicalDivisionName(findValue(row, ["DIVISION", "Division", "division"]) || divisionName);
   const campus = findValue(row, ["CAMPUS", "Campus", "campus"]);
   const instructionalMethod = findValue(row, ["METHOD", "Instructional Method", "instructional_method"]);
   const displayModality = findValue(row, ["MODALITY", "Display Modality", "display_modality"]);
@@ -281,7 +297,7 @@ router.post("/upload/subject-mapping", upload.single("file"), async (req, res) =
 router.post("/upload/schedule/preview", upload.single("file"), async (req, res) => {
   const file = req.file;
   const termCode = normalize(req.body?.termCode);
-  const divisionName = normalize(req.body?.divisionName);
+  const divisionName = canonicalDivisionName(req.body?.divisionName);
   if (!file || !termCode || !divisionName) {
     return res.status(400).json({ ok: false, error: "file, termCode, and divisionName are required." });
   }
@@ -322,7 +338,7 @@ router.post("/upload/schedule/preview", upload.single("file"), async (req, res) 
 router.post("/upload/schedule", upload.single("file"), async (req, res) => {
   const file = req.file;
   const termCode = normalize(req.body?.termCode);
-  const divisionName = normalize(req.body?.divisionName);
+  const divisionName = canonicalDivisionName(req.body?.divisionName);
   const forceReplace = String(req.body?.forceReplace || "").toLowerCase() === "true";
 
   if (!file || !termCode || !divisionName) {
@@ -494,7 +510,26 @@ router.get("/division-statuses", async (req, res) => {
       [termCode]
     );
 
-    const divisions = result.rows.map((row) => {
+    const grouped = new Map();
+    result.rows.forEach((row) => {
+      const division = canonicalDivisionName(row.division);
+      const existing = grouped.get(division) || {
+        ...row,
+        division,
+        division_name: division,
+        open_sections_count: 0,
+        preferences_count: 0,
+        assignments_count: 0,
+        decision_logs_count: 0,
+      };
+      existing.open_sections_count += row.open_sections_count || 0;
+      existing.preferences_count += row.preferences_count || 0;
+      existing.assignments_count += row.assignments_count || 0;
+      existing.decision_logs_count += row.decision_logs_count || 0;
+      grouped.set(division, existing);
+    });
+
+    const divisions = Array.from(grouped.values()).map((row) => {
       const sectionCount = row.open_sections_count || 0;
       const prefCount = row.preferences_count || 0;
       const assignmentCount = row.assignments_count || 0;
