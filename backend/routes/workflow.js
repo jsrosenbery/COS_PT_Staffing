@@ -422,6 +422,7 @@ router.post("/upload/schedule", upload.single("file"), async (req, res) => {
     await client.query("COMMIT");
 
     res.json({
+      ok: true,
       importedCount: inDivision.length,
       replacedCount: deleted.rowCount || 0,
       divisionName,
