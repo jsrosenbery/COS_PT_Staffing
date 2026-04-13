@@ -14,22 +14,6 @@ function normUpper(value) {
   return normalize(value).toUpperCase();
 }
 
-
-function canonicalDivisionName(value) {
-  const raw = normalize(value);
-  const key = raw.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const aliases = {
-    industrytechnology: "Industry and Technology",
-    industryandtechnology: "Industry and Technology",
-    mathengineering: "Math and Engineering",
-    mathandengineering: "Math and Engineering",
-    policesciences: "Police Science",
-    policescience: "Police Science",
-  };
-  return aliases[key] || raw;
-}
-
-
 function findValue(row, candidates) {
   const entries = Object.entries(row || {});
   for (const candidate of candidates) {
@@ -50,9 +34,9 @@ function parseCsvBuffer(file) {
 }
 
 function parseMeetings(row) {
-  const days = findValue(row, ["Days", "MEETING_DAYS", "DAY", "days"]);
-  const start = findValue(row, ["Start Time", "START_TIME", "Begin Time", "Begin", "START"]);
-  const end = findValue(row, ["End Time", "END_TIME", "END"]);
+  const days = findValue(row, ["Days", "MEETING_DAYS", "DAY", "days", "MEET_DAYS", "Meeting Days"]);
+  const start = findValue(row, ["Start Time", "START_TIME", "Begin Time", "Begin", "START", "MEET_BEGIN_TIME", "Meeting Begin Time"]);
+  const end = findValue(row, ["End Time", "END_TIME", "END", "MEET_END_TIME", "Meeting End Time"]);
   if (!days && !start && !end) return [];
   return [{ days, start_time: start, end_time: end }];
 }
@@ -72,21 +56,60 @@ async function getSubjectMap(termCode) {
 }
 
 function inferSection(row, subjectMap, divisionName) {
-  const subject = findValue(row, ["SUBJECT", "Subject", "subject"]);
-  const courseNumber = findValue(row, ["COURSE_NUMBER", "Course Number", "CATALOG_NUMBER", "Course", "course_number"]);
-  const crn = findValue(row, ["CRN", "crn"]);
-  const title = findValue(row, ["TITLE", "Title", "COURSE_TITLE"]);
-  const division = canonicalDivisionName(findValue(row, ["DIVISION", "Division", "division"]) || divisionName);
-  const campus = findValue(row, ["CAMPUS", "Campus", "campus"]);
-  const instructionalMethod = findValue(row, ["METHOD", "Instructional Method", "instructional_method"]);
-  const displayModality = findValue(row, ["MODALITY", "Display Modality", "display_modality"]);
-  const modality = findValue(row, ["MODALITY", "display_modality", "modality"]);
+  const subject = findValue(row, [
+    "SUBJECT", "Subject", "subject",
+    "SUBJ", "subj", "SUBJECT_CODE", "Subject Code"
+  ]);
+
+  const courseNumber = findValue(row, [
+    "COURSE_NUMBER", "Course Number",
+    "CATALOG_NUMBER", "Catalog Number",
+    "CATALOG", "CATALOG NO", "CATALOG_NO",
+    "COURSE NO", "Course No", "course_no",
+    "COURSE", "Course", "CRSE_NUM", "Course Number Code"
+  ]);
+
+  const crn = findValue(row, [
+    "CRN", "crn", "REFERENCE_NUMBER", "Reference Number"
+  ]);
+
+  const title = findValue(row, [
+    "TITLE", "Title", "COURSE_TITLE", "Course Title"
+  ]);
+
+  const division = findValue(row, [
+    "DIVISION", "Division", "division"
+  ]) || divisionName;
+
+  const campus = findValue(row, [
+    "CAMPUS", "Campus", "campus", "LOCATION", "Location"
+  ]);
+
+  const instructionalMethod = findValue(row, [
+    "METHOD", "Instructional Method", "instructional_method",
+    "INSTRUCTIONAL_METHOD", "Method"
+  ]);
+
+  const displayModality = findValue(row, [
+    "MODALITY", "Display Modality", "display_modality", "Display Modality"
+  ]);
+
+  const modality = findValue(row, [
+    "MODALITY", "display_modality", "modality", "Display Modality"
+  ]);
+
   const meetings = parseMeetings(row);
+
   const assignmentGroupId =
-    findValue(row, ["ASSIGNMENT_GROUP_ID", "Assignment Group ID", "GROUP_ID"]) ||
+    findValue(row, [
+      "ASSIGNMENT_GROUP_ID", "Assignment Group ID", "GROUP_ID",
+      "CRN_GROUP", "BUNDLE_ID"
+    ]) ||
     `${subject}-${courseNumber}-${crn || title || Math.random().toString(36).slice(2, 8)}`;
+
   const disciplineCode = subjectMap.get(normUpper(subject)) || "";
   const primarySubjectCourse = [subject, courseNumber].filter(Boolean).join(" ").trim();
+
   return {
     division,
     assignment_group_id: assignmentGroupId,
@@ -259,7 +282,7 @@ router.post("/upload/subject-mapping", upload.single("file"), async (req, res) =
   const rows = Array.isArray(parsed.data) ? parsed.data : [];
   const valid = [];
   for (const row of rows) {
-    const subject = findValue(row, ["subject_code", "subject", "SUBJECT"]);
+    const subject = findValue(row, ["subject_code", "subject", "SUBJECT", "subj", "SUBJ"]);
     const discipline = findValue(row, ["discipline_code", "discipline", "DISCIPLINE"]);
     if (subject && discipline) valid.push({ subject_code: subject, discipline_code: discipline });
   }
@@ -297,7 +320,7 @@ router.post("/upload/subject-mapping", upload.single("file"), async (req, res) =
 router.post("/upload/schedule/preview", upload.single("file"), async (req, res) => {
   const file = req.file;
   const termCode = normalize(req.body?.termCode);
-  const divisionName = canonicalDivisionName(req.body?.divisionName);
+  const divisionName = normalize(req.body?.divisionName);
   if (!file || !termCode || !divisionName) {
     return res.status(400).json({ ok: false, error: "file, termCode, and divisionName are required." });
   }
@@ -338,7 +361,7 @@ router.post("/upload/schedule/preview", upload.single("file"), async (req, res) 
 router.post("/upload/schedule", upload.single("file"), async (req, res) => {
   const file = req.file;
   const termCode = normalize(req.body?.termCode);
-  const divisionName = canonicalDivisionName(req.body?.divisionName);
+  const divisionName = normalize(req.body?.divisionName);
   const forceReplace = String(req.body?.forceReplace || "").toLowerCase() === "true";
 
   if (!file || !termCode || !divisionName) {
@@ -510,26 +533,7 @@ router.get("/division-statuses", async (req, res) => {
       [termCode]
     );
 
-    const grouped = new Map();
-    result.rows.forEach((row) => {
-      const division = canonicalDivisionName(row.division);
-      const existing = grouped.get(division) || {
-        ...row,
-        division,
-        division_name: division,
-        open_sections_count: 0,
-        preferences_count: 0,
-        assignments_count: 0,
-        decision_logs_count: 0,
-      };
-      existing.open_sections_count += row.open_sections_count || 0;
-      existing.preferences_count += row.preferences_count || 0;
-      existing.assignments_count += row.assignments_count || 0;
-      existing.decision_logs_count += row.decision_logs_count || 0;
-      grouped.set(division, existing);
-    });
-
-    const divisions = Array.from(grouped.values()).map((row) => {
+    const divisions = result.rows.map((row) => {
       const sectionCount = row.open_sections_count || 0;
       const prefCount = row.preferences_count || 0;
       const assignmentCount = row.assignments_count || 0;
@@ -670,7 +674,6 @@ router.post("/assignments", async (req, res) => {
 });
 
 router.delete("/assignments/:id", async (req, res) => {
-  const { actorName = "" } = req.body || {};
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -682,7 +685,6 @@ router.delete("/assignments/:id", async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Assignment not found." });
     }
-    const row = existing.rows[0];
     await client.query(`DELETE FROM scope_assignments WHERE id = $1`, [req.params.id]);
     await client.query("COMMIT");
     res.json({ success: true, message: "Tentative assignment removed." });
@@ -705,7 +707,6 @@ router.put("/assignments/:id/reassign", async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Assignment not found." });
     }
-    const row = existing.rows[0];
     const faculty = await client.query(
       `SELECT CONCAT_WS(' ', first_name, last_name) AS faculty_name
        FROM scope_pt_faculty WHERE employee_id = $1 LIMIT 1`,
