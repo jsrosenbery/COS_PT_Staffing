@@ -215,6 +215,19 @@ function formatMeetings(meetings) {
     .join("; ");
 }
 
+
+
+function linkedSectionCount(section) {
+  const rawLinked = Array.isArray(section?.raw_row?.linked_sections) ? section.raw_row.linked_sections : [];
+  if (rawLinked.length) return rawLinked.length;
+  const crns = String(section?.primary_crn || "").split("/").map((v) => normalize(v)).filter(Boolean);
+  return crns.length > 1 ? crns.length : 0;
+}
+
+function hasLinkedSections(section) {
+  return linkedSectionCount(section) > 1;
+}
+
 function formatUnits(units) {
   if (!units) return "";
   if (Array.isArray(units)) return units.join(", ");
@@ -2148,6 +2161,22 @@ export default function PTFacultyStaffingMVP() {
             ) : null}
           </div>
 
+
+          <div style={{ ...ui.sectionCard, marginTop: 16 }}>
+            <div style={{ fontWeight: 700 }}>Starter Mapping Example</div>
+            <div style={{ marginTop: 8, color: "var(--text-muted)" }}>Use this exact header format in your CSV.</div>
+            <pre style={{ marginTop: 12, whiteSpace: "pre-wrap", fontSize: 13 }}>
+{`subject_code,discipline_code
+BUS,BUSINESS
+PLSI,POLITICAL_SCIENCE
+ASCI,ANIMAL_SCIENCE
+AGTC,AGRICULTURE_TECHNOLOGY
+AG,AGRICULTURE
+VT,VETERINARIAN_ASSISTING
+OH,ORNAMENTAL_HORTICULTURE`}
+            </pre>
+          </div>
+
           {uploadingMapping ? (
             <div style={{ marginTop: 12, color: "var(--text-muted)", fontWeight: 700 }}>
               Uploading subject mapping...
@@ -2549,23 +2578,6 @@ export default function PTFacultyStaffingMVP() {
           />
         ) : null}
 
-        {role === "admin" ? (
-        <div style={ui.card}>
-          <h2 style={ui.cardTitle}>Starter Mapping Example</h2>
-          <div style={ui.cardDesc}>Use this exact header format in your CSV.</div>
-          <pre style={{ marginTop: 12, whiteSpace: "pre-wrap", fontSize: 13 }}>
-{`subject_code,discipline_code
-BUS,BUSINESS
-PLSI,POLITICAL_SCIENCE
-ASCI,ANIMAL_SCIENCE
-AGTC,AGRICULTURE_TECHNOLOGY
-AG,AGRICULTURE
-VT,VETERINARIAN_ASSISTING
-OH,ORNAMENTAL_HORTICULTURE`}
-          </pre>
-        </div>
-        ) : null}
-
 
         {role === "chair" ? (
           <div style={ui.card}>
@@ -2814,7 +2826,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           <div style={{ fontWeight: 800 }}>{section.primary_subject_course} • {section.primary_crn}</div>
                           <div style={{ marginTop: 4 }}>{section.title || "Untitled"}</div>
                           <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
-                            {formatMeetings(section.meetings)}
+                            {formatMeetings(section.meetings)}{hasLinkedSections(section) ? ` • ${linkedSectionCount(section)} linked parts move together` : ""}
                             {section.campus ? ` • ${section.campus}` : ""}
                             {section.discipline_code ? ` • ${section.discipline_code}` : ""}
                           </div>
@@ -2918,6 +2930,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
               </div>
 
               <div style={{ display: "grid", gap: 16 }}>
+                {(role === "chair" || role === "dean" || tentativeAssignments.length > 0) ? (
                 <div style={ui.sectionCard}>
                   <div style={{ fontWeight: 800 }}>Tentative Assignments</div>
                   <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
@@ -2929,6 +2942,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         <div style={{ ...ui.between, alignItems: "flex-start" }}>
                           <div>
                             <div style={{ fontWeight: 700 }}>{assignment.primary_subject_course} • {assignment.primary_crn}</div>
+                            {hasLinkedSections(assignment) ? <div style={{ marginTop: 6 }}><span style={workflowStatePillStyle("advanced")}>Linked Sections</span></div> : null}
                             <div style={{ marginTop: 4 }}>{assignment.faculty_name || assignment.employee_id}</div>
                             <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
                               {formatMeetings(assignment.meetings)}
@@ -2946,6 +2960,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     )}
                   </div>
                 </div>
+                ) : null}
 
                 <div style={ui.sectionCard}>
                   <div style={{ ...ui.between, gap: 12, flexWrap: "wrap" }}>
@@ -3284,7 +3299,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <td style={ui.td}>{section.discipline_code || ""}</td>
                       <td style={ui.td}>{section.primary_subject_course || ""}</td>
                       <td style={ui.td}>{section.primary_crn || ""}</td>
-                      <td style={ui.td}>{section.title || ""}</td>
+                      <td style={ui.td}><div>{section.title || ""}</div>{hasLinkedSections(section) ? <div style={{ marginTop: 6 }}><span style={workflowStatePillStyle("advanced")}>Linked Sections</span></div> : null}</td>
                       <td style={ui.td}>{formatMeetings(section.meetings)}</td>
                       <td style={ui.td}>{formatUnits(section.units)}</td>
                       <td style={ui.td}>{section.campus || ""}</td>

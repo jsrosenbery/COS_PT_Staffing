@@ -39,118 +39,66 @@ function parseCsvBuffer(file) {
 
 function parseSubjectCourse(subjectCourseRaw, fallbackSubject = "", fallbackCourse = "") {
   const subjectCourse = normalize(subjectCourseRaw);
-  if (!subjectCourse) {
-    return {
-      subject: normalize(fallbackSubject),
-      courseNumber: normalize(fallbackCourse),
-    };
-  }
-
+  if (!subjectCourse) return { subject: normalize(fallbackSubject), courseNumber: normalize(fallbackCourse) };
   const parts = subjectCourse.split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) {
-    return {
-      subject: parts[0],
-      courseNumber: parts.slice(1).join(" "),
-    };
-  }
-
+  if (parts.length >= 2) return { subject: parts[0], courseNumber: parts.slice(1).join(" ") };
   const match = subjectCourse.match(/^([A-Za-z&]+)[\s_-]*([0-9A-Za-z.]+)$/);
-  if (match) {
-    return {
-      subject: match[1],
-      courseNumber: match[2],
-    };
-  }
-
-  return {
-    subject: subjectCourse,
-    courseNumber: normalize(fallbackCourse),
-  };
+  if (match) return { subject: match[1], courseNumber: match[2] };
+  return { subject: subjectCourse, courseNumber: normalize(fallbackCourse) };
 }
 
 function parseTimeRange(raw) {
   const text = normalize(raw);
   if (!text) return { start: "", end: "" };
-
-  const cleaned = text
-    .replace(/\u2013|\u2014/g, "-")
-    .replace(/\s+to\s+/gi, "-")
-    .replace(/\s*-\s*/g, "-");
-
+  const cleaned = text.replace(/\u2013|\u2014/g, "-").replace(/\s+to\s+/gi, "-").replace(/\s*-\s*/g, "-");
   const parts = cleaned.split("-").map((p) => p.trim()).filter(Boolean);
-  if (parts.length >= 2) {
-    return { start: parts[0], end: parts[1] };
-  }
-
+  if (parts.length >= 2) return { start: parts[0], end: parts[1] };
   return { start: text, end: "" };
 }
 
 function parseMeetings(row) {
-  const days = findValue(row, [
-    "Days", "DAYS", "MEETING_DAYS", "DAY", "MEET_DAYS", "Meeting Days"
-  ]);
-
-  const start = findValue(row, [
-    "Start Time", "START_TIME", "Begin Time", "Begin", "START", "MEET_BEGIN_TIME", "Meeting Begin Time"
-  ]);
-
-  const end = findValue(row, [
-    "End Time", "END_TIME", "END", "MEET_END_TIME", "Meeting End Time"
-  ]);
-
-  const combinedTime = findValue(row, [
-    "Time", "TIME", "Meeting Time"
-  ]);
-
+  const days = findValue(row, ["Days", "DAYS", "MEETING_DAYS", "DAY", "MEET_DAYS", "Meeting Days"]);
+  const start = findValue(row, ["Start Time", "START_TIME", "Begin Time", "Begin", "START", "MEET_BEGIN_TIME", "Meeting Begin Time"]);
+  const end = findValue(row, ["End Time", "END_TIME", "END", "MEET_END_TIME", "Meeting End Time"]);
+  const combinedTime = findValue(row, ["Time", "TIME", "Meeting Time"]);
   const building = findValue(row, ["BUILDING", "Building"]);
   const room = findValue(row, ["ROOM", "Room"]);
-
   const resolved = start || end ? { start, end } : parseTimeRange(combinedTime);
-
   if (!days && !resolved.start && !resolved.end && !building && !room) return [];
-  return [{
-    days,
-    start_time: resolved.start,
-    end_time: resolved.end,
-    building,
-    room,
-  }];
+  return [{ days, start_time: resolved.start, end_time: resolved.end, building, room }];
 }
 
 function canonicalDivisionName(value) {
   const raw = normalize(value);
   const key = compactKey(raw);
   const aliases = {
-    "INDUSTRYTECHNOLOGY": "Industry and Technology",
-    "INDUSTRYANDTECHNOLOGY": "Industry and Technology",
-    "MATHENGINEERING": "Math and Engineering",
-    "MATHEMATICSENGINEERING": "Math and Engineering",
-    "POLICESCIENCE": "Police Science",
-    "POLICESCIENCES": "Police Science",
-    "FINEART": "Fine Arts",
-    "FINEARTS": "Fine Arts",
-    "PHYSICALDUCATION": "Physical Education",
-    "PHYSICALEDUCATION": "Physical Education",
-    "LANGUAGECOMMUNICATIONSTUD": "Language & Communication Stud.",
-    "LANGUAGECOMMUNICATIONSTUDIES": "Language & Communication Stud.",
-    "EMERGENCYMEDICALTECHNICIAN": "Emergency Medical Technician",
-    "CONSUMERFAMILYSTUDIES": "Consumer/Family Studies",
+    INDUSTRYTECHNOLOGY: "Industry and Technology",
+    INDUSTRYANDTECHNOLOGY: "Industry and Technology",
+    MATHENGINEERING: "Math and Engineering",
+    MATHEMATICSENGINEERING: "Math and Engineering",
+    POLICESCIENCE: "Police Science",
+    POLICESCIENCES: "Police Science",
+    FINEART: "Fine Arts",
+    FINEARTS: "Fine Arts",
+    PHYSICALDUCATION: "Physical Education",
+    PHYSICALEDUCATION: "Physical Education",
+    LANGUAGECOMMUNICATIONSTUD: "Language & Communication Stud.",
+    LANGUAGECOMMUNICATIONSTUDIES: "Language & Communication Stud.",
+    EMERGENCYMEDICALTECHNICIAN: "Emergency Medical Technician",
+    CONSUMERFAMILYSTUDIES: "Consumer/Family Studies",
   };
   return aliases[key] || raw;
 }
 
-function buildBundleKey(row, subject, courseNumber, crn) {
+function buildBundleKey(row, subject, courseNumber, crn, meetings) {
   const crossList = findValue(row, ["Cross_List", "CROSS_LIST", "Cross List"]);
   const coreq = findValue(row, ["COREQUISITE_CRN", "Corequisite_CRN", "Corequisite CRN"]);
   const subjectCourse = findValue(row, ["Subject_Course", "SUBJECT_COURSE", "Subject Course"]);
-
+  const meetingSignature = (meetings || []).map((m) => `${m.days}|${m.start_time}|${m.end_time}`).join(";");
   if (crossList) return `cross:${crossList}`;
-  if (coreq && crn) {
-    const pair = [coreq, crn].map(normalize).filter(Boolean).sort().join("|");
-    return `coreq:${pair}`;
-  }
+  if (coreq && crn) return `coreq:${[coreq, crn].map(normalize).filter(Boolean).sort().join("|")}`;
   if (coreq) return `coreq:${coreq}`;
-  return `self:${subjectCourse || `${subject} ${courseNumber}`}:${crn || ""}`;
+  return `self:${subjectCourse || `${subject} ${courseNumber}`}:${meetingSignature}:${crn || ""}`;
 }
 
 async function getSubjectMap(termCode) {
@@ -168,52 +116,25 @@ async function getSubjectMap(termCode) {
 }
 
 function inferSection(row, subjectMap, divisionName) {
-  const subjectCourse = findValue(row, [
-    "Subject_Course", "SUBJECT_COURSE", "Subject Course"
-  ]);
-
+  const subjectCourse = findValue(row, ["Subject_Course", "SUBJECT_COURSE", "Subject Course"]);
   const parsedSubjectCourse = parseSubjectCourse(
     subjectCourse,
     findValue(row, ["SUBJECT", "Subject", "subject", "SUBJ", "subj", "SUBJECT_CODE", "Subject Code"]),
-    findValue(row, ["COURSE_NUMBER", "Course Number", "CATALOG_NUMBER", "Catalog Number", "CATALOG", "COURSE NO", "Course"])
+    findValue(row, ["COURSE_NUMBER", "Course Number", "CATALOG_NUMBER", "Catalog Number", "CATALOG", "CATALOG NO", "CATALOG_NO", "COURSE NO", "Course No", "course_no", "COURSE", "Course", "CRSE_NUM", "Course Number Code"])
   );
-
   const subject = parsedSubjectCourse.subject;
   const courseNumber = parsedSubjectCourse.courseNumber;
-
-  const crn = findValue(row, [
-    "CRN", "crn", "REFERENCE_NUMBER", "Reference Number"
-  ]);
-
-  const title = findValue(row, [
-    "TITLE", "Title", "COURSE_TITLE", "Course Title"
-  ]);
-
-  const division = canonicalDivisionName(
-    findValue(row, ["DIVISION", "Division", "division"]) || divisionName
-  );
-
-  const campus = findValue(row, [
-    "CAMPUS", "Campus", "campus", "LOCATION", "Location"
-  ]);
-
-  const instructionalMethod = findValue(row, [
-    "METHOD", "Instructional_Method", "Instructional Method", "instructional_method",
-    "INSTRUCTIONAL_METHOD", "Method"
-  ]);
-
-  const displayModality = findValue(row, [
-    "MODALITY", "Display Modality", "display_modality", "Display Modality"
-  ]);
-
-  const modality = findValue(row, [
-    "MODALITY", "display_modality", "modality", "Display Modality"
-  ]);
-
+  const crn = findValue(row, ["CRN", "crn", "REFERENCE_NUMBER", "Reference Number"]);
+  const title = findValue(row, ["TITLE", "Title", "COURSE_TITLE", "Course Title"]);
+  const division = canonicalDivisionName(findValue(row, ["DIVISION", "Division", "division"]) || divisionName);
+  const campus = findValue(row, ["CAMPUS", "Campus", "campus", "LOCATION", "Location"]);
+  const instructionalMethod = findValue(row, ["METHOD", "Instructional_Method", "Instructional Method", "instructional_method", "INSTRUCTIONAL_METHOD", "Method"]);
+  const displayModality = findValue(row, ["MODALITY", "Display Modality", "display_modality", "Display Modality"]);
+  const modality = findValue(row, ["MODALITY", "display_modality", "modality", "Display Modality"]);
   const meetings = parseMeetings(row);
+  const assignmentGroupId = buildBundleKey(row, subject, courseNumber, crn, meetings);
   const disciplineCode = subjectMap.get(normUpper(subject)) || "";
   const primarySubjectCourse = [subject, courseNumber].filter(Boolean).join(" ").trim();
-  const assignmentGroupId = buildBundleKey(row, subject, courseNumber, crn);
 
   return {
     division,
@@ -235,9 +156,12 @@ function inferSection(row, subjectMap, divisionName) {
   };
 }
 
+function meetingSignature(section) {
+  return (section.meetings || []).map((m) => `${m.days}|${m.start_time}|${m.end_time}`).sort().join(";");
+}
+
 function mergeBundleRows(rows) {
   const grouped = new Map();
-
   for (const row of rows) {
     const key = row.assignment_group_id;
     if (!grouped.has(key)) {
@@ -250,7 +174,6 @@ function mergeBundleRows(rows) {
         meetings: [],
       });
     }
-
     const bundle = grouped.get(key);
     bundle.linked_sections.push({
       primary_crn: row.primary_crn,
@@ -260,51 +183,78 @@ function mergeBundleRows(rows) {
       cross_list: row.cross_list,
       corequisite_crn: row.corequisite_crn,
     });
-
-    if (row.primary_crn && !bundle.all_crns.includes(row.primary_crn)) {
-      bundle.all_crns.push(row.primary_crn);
-    }
-    if (row.title && !bundle.all_titles.includes(row.title)) {
-      bundle.all_titles.push(row.title);
-    }
-    if (row.primary_subject_course && !bundle.all_subject_courses.includes(row.primary_subject_course)) {
-      bundle.all_subject_courses.push(row.primary_subject_course);
-    }
-
+    if (row.primary_crn && !bundle.all_crns.includes(row.primary_crn)) bundle.all_crns.push(row.primary_crn);
+    if (row.title && !bundle.all_titles.includes(row.title)) bundle.all_titles.push(row.title);
+    if (row.primary_subject_course && !bundle.all_subject_courses.includes(row.primary_subject_course)) bundle.all_subject_courses.push(row.primary_subject_course);
     for (const meeting of row.meetings || []) {
-      const signature = JSON.stringify(meeting);
-      if (!(bundle.meetings || []).some((m) => JSON.stringify(m) === signature)) {
-        bundle.meetings.push(meeting);
-      }
+      const sig = JSON.stringify(meeting);
+      if (!(bundle.meetings || []).some((m) => JSON.stringify(m) === sig)) bundle.meetings.push(meeting);
     }
-
-    if (!bundle.primary_subject_course && row.primary_subject_course) {
-      bundle.primary_subject_course = row.primary_subject_course;
-    }
-    if (!bundle.title && row.title) {
-      bundle.title = row.title;
-    }
-    if (!bundle.discipline_code && row.discipline_code) {
-      bundle.discipline_code = row.discipline_code;
-    }
-    if (!bundle.subject_code && row.subject_code) {
-      bundle.subject_code = row.subject_code;
-    }
-    if (!bundle.course_number && row.course_number) {
-      bundle.course_number = row.course_number;
-    }
-    if (!bundle.primary_crn && row.primary_crn) {
-      bundle.primary_crn = row.primary_crn;
-    }
+    if (!bundle.discipline_code && row.discipline_code) bundle.discipline_code = row.discipline_code;
+    if (!bundle.subject_code && row.subject_code) bundle.subject_code = row.subject_code;
+    if (!bundle.course_number && row.course_number) bundle.course_number = row.course_number;
+    if (!bundle.primary_crn && row.primary_crn) bundle.primary_crn = row.primary_crn;
   }
 
-  return Array.from(grouped.values()).map((bundle) => ({
+  const bundles = Array.from(grouped.values()).map((bundle) => ({
     ...bundle,
     primary_subject_course: bundle.all_subject_courses.join(" + ") || bundle.primary_subject_course,
     title: bundle.all_titles.join(" + ") || bundle.title,
     primary_crn: bundle.all_crns.join(" / ") || bundle.primary_crn,
   }));
+
+  const secondary = new Map();
+  const consumed = new Set();
+
+  for (let i = 0; i < bundles.length; i++) {
+    if (consumed.has(i)) continue;
+    const base = bundles[i];
+    const cluster = [base];
+    for (let j = i + 1; j < bundles.length; j++) {
+      if (consumed.has(j)) continue;
+      const candidate = bundles[j];
+      const sameDivision = canonicalDivisionName(base.division) === canonicalDivisionName(candidate.division);
+      const sameSubjectCourse = normalize(base.primary_subject_course) === normalize(candidate.primary_subject_course);
+      const sameMeetings = meetingSignature(base) && meetingSignature(base) === meetingSignature(candidate);
+      const linkedHint = base.linked_sections?.some((s) => s.corequisite_crn || s.cross_list) || candidate.linked_sections?.some((s) => s.corequisite_crn || s.cross_list);
+      if (sameDivision && sameSubjectCourse && sameMeetings && linkedHint) {
+        cluster.push(candidate);
+        consumed.add(j);
+      }
+    }
+    if (cluster.length === 1) {
+      secondary.set(`single:${i}`, base);
+      continue;
+    }
+    const merged = {
+      ...base,
+      assignment_group_id: `combo:${cluster.map((c) => c.assignment_group_id).sort().join("|")}`,
+      linked_sections: [],
+      all_crns: [],
+      all_titles: [],
+      all_subject_courses: [],
+      meetings: [],
+    };
+    for (const section of cluster) {
+      for (const linked of section.linked_sections || []) merged.linked_sections.push(linked);
+      for (const crn of section.all_crns || []) if (!merged.all_crns.includes(crn)) merged.all_crns.push(crn);
+      for (const t of section.all_titles || []) if (!merged.all_titles.includes(t)) merged.all_titles.push(t);
+      for (const sc of section.all_subject_courses || []) if (!merged.all_subject_courses.includes(sc)) merged.all_subject_courses.push(sc);
+      for (const m of section.meetings || []) {
+        const sig = JSON.stringify(m);
+        if (!merged.meetings.some((x) => JSON.stringify(x) === sig)) merged.meetings.push(m);
+      }
+      if (!merged.discipline_code && section.discipline_code) merged.discipline_code = section.discipline_code;
+    }
+    merged.primary_subject_course = merged.all_subject_courses.join(" + ") || merged.primary_subject_course;
+    merged.title = merged.all_titles.join(" + ") || merged.title;
+    merged.primary_crn = merged.all_crns.join(" / ") || merged.primary_crn;
+    secondary.set(`merged:${i}`, merged);
+  }
+
+  return Array.from(secondary.values());
 }
+
 
 async function getProtectedWork(termCode, division) {
   const sections = await query(
@@ -435,8 +385,13 @@ router.get("/subject-mapping/export", async (req, res) => {
 
 router.get("/subject-mapping/:termCode/status", async (req, res) => {
   try {
-    const globalCount = await query(`SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE scope = 'global'`);
-    const termCount = await query(`SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE term_code = $1`, [req.params.termCode]);
+    const globalCount = await query(
+      `SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE scope = 'global'`
+    );
+    const termCount = await query(
+      `SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE term_code = $1`,
+      [req.params.termCode]
+    );
     res.json({
       globalCount: globalCount.rows[0]?.count || 0,
       termCount: termCount.rows[0]?.count || 0,
@@ -571,12 +526,24 @@ router.post("/upload/schedule", upload.single("file"), async (req, res) => {
     const existingIds = existing.rows.map((r) => r.assignment_group_id);
 
     if (forceReplace && existingIds.length) {
-      await client.query(`DELETE FROM scope_preferences WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`, [termCode, existingIds]);
-      await client.query(`DELETE FROM scope_assignments WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`, [termCode, existingIds]);
-      await client.query(`DELETE FROM scope_audit_log WHERE term = $1 AND section_key = ANY($2::text[])`, [termCode, existingIds]);
+      await client.query(
+        `DELETE FROM scope_preferences WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`,
+        [termCode, existingIds]
+      );
+      await client.query(
+        `DELETE FROM scope_assignments WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`,
+        [termCode, existingIds]
+      );
+      await client.query(
+        `DELETE FROM scope_audit_log WHERE term = $1 AND section_key = ANY($2::text[])`,
+        [termCode, existingIds]
+      );
     }
 
-    const deleted = await client.query(`DELETE FROM scope_sections WHERE term_code = $1 AND division = $2`, [termCode, divisionName]);
+    const deleted = await client.query(
+      `DELETE FROM scope_sections WHERE term_code = $1 AND division = $2`,
+      [termCode, divisionName]
+    );
 
     for (const section of inDivision) {
       await client.query(
@@ -614,10 +581,7 @@ router.post("/upload/schedule", upload.single("file"), async (req, res) => {
           section.display_modality,
           section.modality,
           JSON.stringify(section.meetings || []),
-          JSON.stringify({
-            ...(section.raw_row || {}),
-            linked_sections: section.linked_sections || [],
-          }),
+          JSON.stringify({ ...(section.raw_row || {}), linked_sections: section.linked_sections || [] }),
         ]
       );
     }
@@ -656,8 +620,8 @@ router.get("/available-sections", async (req, res) => {
       where += ` AND s.discipline_code = $2`;
     }
     const result = await query(
-      `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus,
-              s.subject_code, s.course_number, s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings, s.raw_row
+      `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.subject_code, s.course_number, s.discipline_code,
+              s.instructional_method, s.display_modality, s.modality, s.meetings
        FROM scope_sections s
        ${where}
        ORDER BY s.primary_subject_course, s.primary_crn`,
@@ -814,7 +778,11 @@ router.post("/assignments", async (req, res) => {
     const facultyName = faculty.rows[0]?.faculty_name || employeeId;
 
     await client.query("BEGIN");
-    await client.query(`DELETE FROM scope_assignments WHERE term_code = $1 AND assignment_group_id = $2`, [termCode, assignmentGroupId]);
+    await client.query(
+      `DELETE FROM scope_assignments
+       WHERE term_code = $1 AND assignment_group_id = $2`,
+      [termCode, assignmentGroupId]
+    );
     const result = await client.query(
       `INSERT INTO scope_assignments
         (term_code, discipline_code, assignment_group_id, employee_id, faculty_name, status, actor_name, reason, updated_at)
@@ -837,7 +805,10 @@ router.delete("/assignments/:id", async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const existing = await client.query(`SELECT * FROM scope_assignments WHERE id = $1 LIMIT 1`, [req.params.id]);
+    const existing = await client.query(
+      `SELECT * FROM scope_assignments WHERE id = $1 LIMIT 1`,
+      [req.params.id]
+    );
     if (!existing.rows.length) {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Assignment not found." });
