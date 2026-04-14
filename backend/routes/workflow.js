@@ -184,106 +184,110 @@ function mergeBundleRows(rows, bundleId) {
 }
 
 /*
- Graph-aware bundle strategy:
- - Cross-listed rows merge only with rows sharing the SAME cross_list AND SAME corequisite target.
- - Corequisite-linked rows attach directly to the support CRN they reference.
- - Support rows referenced by multiple unrelated parents do not force one mega-bundle.
+ Wave 10: transitive mixed-rule bundling
+ Build an undirected graph where edges come from:
+ - stacked/cross-list relationship
+ - corequisite relationship
+ Then take connected components as the staffing unit.
+
+ Guardrail:
+ Cross-list edges are only added among rows that share the same cross_list AND same corequisite target,
+ unless neither row has any corequisite target. This helps avoid broad accidental over-merges.
 */
 function buildInstructionalBundles(rows) {
   const byCrn = new Map();
-  const rowsByCrossList = new Map();
-  const rowsReferencingCoreq = new Map();
-  const assignedCrns = new Set();
-  const bundles = [];
+  const adjacency = new Map();
+
+  function ensureNode(crn) {
+    if (!crn) return;
+    if (!adjacency.has(crn)) adjacency.set(crn, new Set());
+  }
+
+  function connect(a, b) {
+    if (!a || !b || a === b) return;
+    ensureNode(a);
+    ensureNode(b);
+    adjacency.get(a).add(b);
+    adjacency.get(b).add(a);
+  }
 
   for (const row of rows) {
     const crn = normalize(row.primary_crn);
-    if (crn) byCrn.set(crn, row);
-    if (row.cross_list) {
-      const list = rowsByCrossList.get(row.cross_list) || [];
-      list.push(row);
-      rowsByCrossList.set(row.cross_list, list);
-    }
-    if (row.corequisite_crn) {
-      const list = rowsReferencingCoreq.get(row.corequisite_crn) || [];
-      list.push(row);
-      rowsReferencingCoreq.set(row.corequisite_crn, list);
-    }
+    if (!crn) continue;
+    byCrn.set(crn, row);
+    ensureNode(crn);
   }
 
-  function addBundle(bundleRows, prefix) {
-    const unique = [];
-    const seen = new Set();
-    for (const row of bundleRows) {
-      const key = normalize(row.primary_crn) || JSON.stringify(row.raw_row || row);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      unique.push(row);
-    }
-    if (!unique.length) return;
-    unique.forEach((r) => assignedCrns.add(normalize(r.primary_crn)));
-    const ids = unique.map((r) => normalize(r.primary_crn)).filter(Boolean).sort().join("|") || Math.random().toString(36).slice(2, 8);
-    bundles.push(mergeBundleRows(unique, `${prefix}:${ids}`));
-  }
-
-  // Pass 1: coreq-aware bundles
+  // Corequisite edges
   for (const row of rows) {
     const crn = normalize(row.primary_crn);
-    if (!crn || assignedCrns.has(crn)) continue;
-
     const coreq = normalize(row.corequisite_crn);
+    if (crn && coreq && byCrn.has(coreq)) {
+      connect(crn, coreq);
+    }
+  }
+
+  // Cross-list edges with guardrails
+  const rowsByCrossList = new Map();
+  for (const row of rows) {
     const cross = normalize(row.cross_list);
+    if (!cross) continue;
+    const list = rowsByCrossList.get(cross) || [];
+    list.push(row);
+    rowsByCrossList.set(cross, list);
+  }
 
-    if (coreq) {
-      const peerParents = cross
-        ? (rowsByCrossList.get(cross) || []).filter((peer) => normalize(peer.corequisite_crn) === coreq)
-        : [row];
+  for (const [cross, groupRows] of rowsByCrossList.entries()) {
+    for (let i = 0; i < groupRows.length; i++) {
+      for (let j = i + 1; j < groupRows.length; j++) {
+        const a = groupRows[i];
+        const b = groupRows[j];
+        const aCoreq = normalize(a.corequisite_crn);
+        const bCoreq = normalize(b.corequisite_crn);
 
-      const supportRow = byCrn.get(coreq);
-      const bundleRows = [...peerParents];
-      if (supportRow) bundleRows.push(supportRow);
+        const sameCoreq = aCoreq && bCoreq && aCoreq === bCoreq;
+        const bothStandalone = !aCoreq && !bCoreq;
 
-      // pull only support peers that explicitly point to same relationship, not all cross-listed cousins
-      if (supportRow?.cross_list) {
-        for (const peer of rowsByCrossList.get(supportRow.cross_list) || []) {
-          const peerCoreq = normalize(peer.corequisite_crn);
-          if (!peerCoreq || peerCoreq === crn || peerCoreq === coreq) bundleRows.push(peer);
+        if (sameCoreq || bothStandalone) {
+          connect(normalize(a.primary_crn), normalize(b.primary_crn));
         }
       }
-
-      addBundle(bundleRows, "coreq");
-      continue;
-    }
-
-    // support row with exactly one parent cluster
-    const parents = rowsReferencingCoreq.get(crn) || [];
-    if (parents.length) {
-      const parentClusters = new Map();
-      for (const parent of parents) {
-        const key = `${normalize(parent.cross_list)}|${crn}`;
-        const list = parentClusters.get(key) || [];
-        list.push(parent);
-        parentClusters.set(key, list);
-      }
-      if (parentClusters.size === 1) {
-        const parentRows = Array.from(parentClusters.values())[0];
-        addBundle([...parentRows, row], "support");
-        continue;
-      }
     }
   }
 
-  // Pass 2: pure cross-list groups with no coreq structure
-  for (const [crossList, groupRows] of rowsByCrossList.entries()) {
-    const unassigned = groupRows.filter((row) => !assignedCrns.has(normalize(row.primary_crn)));
-    if (unassigned.length > 1) addBundle(unassigned, `cross:${crossList}`);
+  // Connected components
+  const visited = new Set();
+  const bundles = [];
+
+  for (const crn of adjacency.keys()) {
+    if (visited.has(crn)) continue;
+    const stack = [crn];
+    const component = [];
+
+    while (stack.length) {
+      const current = stack.pop();
+      if (!current || visited.has(current)) continue;
+      visited.add(current);
+      component.push(current);
+      for (const neighbor of adjacency.get(current) || []) {
+        if (!visited.has(neighbor)) stack.push(neighbor);
+      }
+    }
+
+    const bundleRows = component
+      .map((id) => byCrn.get(id))
+      .filter(Boolean);
+
+    const ids = bundleRows.map((r) => normalize(r.primary_crn)).filter(Boolean).sort().join("|") || Math.random().toString(36).slice(2, 8);
+    bundles.push(mergeBundleRows(bundleRows, `graph:${ids}`));
   }
 
-  // Pass 3: remaining standalone rows
+  // Rows with no CRN still need standalone handling
+  const crnRows = new Set(rows.map((r) => normalize(r.primary_crn)).filter(Boolean));
   for (const row of rows) {
     const crn = normalize(row.primary_crn);
-    if (crn && assignedCrns.has(crn)) continue;
-    addBundle([row], "self");
+    if (crn && crnRows.has(crn)) continue;
+    bundles.push(mergeBundleRows([row], `self:${Math.random().toString(36).slice(2, 8)}`));
   }
 
   return bundles;
@@ -424,12 +428,7 @@ router.post("/upload/schedule/preview", upload.single("file"), async (req, res) 
       warnings: unmappedSubjects.length ? [`${unmappedSubjects.length} subject code(s) are unmapped.`] : [],
       unmappedSubjects,
       summary: { totalRows: rows.length, divisionRows: inDivision.length, ignoredRowsFromOtherDivisions },
-      impact: {
-        openSections: inDivision.length,
-        facultyPreferences: protectedWork.preferences,
-        tentativeAssignments: protectedWork.tentativeAssignments,
-        decisionLogs: protectedWork.decisionLogs,
-      },
+      impact: { openSections: inDivision.length, facultyPreferences: protectedWork.preferences, tentativeAssignments: protectedWork.tentativeAssignments, decisionLogs: protectedWork.decisionLogs },
     });
   } catch (error) { res.status(500).json({ ok: false, error: error.message, errors: [error.message] }); }
 });
@@ -520,8 +519,8 @@ router.get("/available-sections", async (req, res) => {
     let where = `WHERE s.term_code = $1`;
     if (disciplineCode) { params.push(disciplineCode); where += ` AND s.discipline_code = $2`; }
     const result = await query(
-      `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus,
-              s.subject_code, s.course_number, s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings, s.raw_row
+      `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.subject_code, s.course_number,
+              s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings, s.raw_row
        FROM scope_sections s
        ${where}
        ORDER BY s.primary_subject_course, s.primary_crn`,
