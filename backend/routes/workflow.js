@@ -72,33 +72,22 @@ function canonicalDivisionName(value) {
   const raw = normalize(value);
   const key = compactKey(raw);
   const aliases = {
-    INDUSTRYTECHNOLOGY: "Industry and Technology",
-    INDUSTRYANDTECHNOLOGY: "Industry and Technology",
-    MATHENGINEERING: "Math and Engineering",
-    MATHEMATICSENGINEERING: "Math and Engineering",
-    POLICESCIENCE: "Police Science",
-    POLICESCIENCES: "Police Science",
-    FINEART: "Fine Arts",
-    FINEARTS: "Fine Arts",
-    PHYSICALDUCATION: "Physical Education",
-    PHYSICALEDUCATION: "Physical Education",
-    LANGUAGECOMMUNICATIONSTUD: "Language & Communication Stud.",
-    LANGUAGECOMMUNICATIONSTUDIES: "Language & Communication Stud.",
-    EMERGENCYMEDICALTECHNICIAN: "Emergency Medical Technician",
-    CONSUMERFAMILYSTUDIES: "Consumer/Family Studies",
+    "INDUSTRYTECHNOLOGY": "Industry and Technology",
+    "INDUSTRYANDTECHNOLOGY": "Industry and Technology",
+    "MATHENGINEERING": "Math and Engineering",
+    "MATHEMATICSENGINEERING": "Math and Engineering",
+    "POLICESCIENCE": "Police Science",
+    "POLICESCIENCES": "Police Science",
+    "FINEART": "Fine Arts",
+    "FINEARTS": "Fine Arts",
+    "PHYSICALDUCATION": "Physical Education",
+    "PHYSICALEDUCATION": "Physical Education",
+    "LANGUAGECOMMUNICATIONSTUD": "Language & Communication Stud.",
+    "LANGUAGECOMMUNICATIONSTUDIES": "Language & Communication Stud.",
+    "EMERGENCYMEDICALTECHNICIAN": "Emergency Medical Technician",
+    "CONSUMERFAMILYSTUDIES": "Consumer/Family Studies",
   };
   return aliases[key] || raw;
-}
-
-function buildBundleKey(row, subject, courseNumber, crn, meetings) {
-  const crossList = findValue(row, ["Cross_List", "CROSS_LIST", "Cross List"]);
-  const coreq = findValue(row, ["COREQUISITE_CRN", "Corequisite_CRN", "Corequisite CRN"]);
-  const subjectCourse = findValue(row, ["Subject_Course", "SUBJECT_COURSE", "Subject Course"]);
-  const meetingSignature = (meetings || []).map((m) => `${m.days}|${m.start_time}|${m.end_time}`).join(";");
-  if (crossList) return `cross:${crossList}`;
-  if (coreq && crn) return `coreq:${[coreq, crn].map(normalize).filter(Boolean).sort().join("|")}`;
-  if (coreq) return `coreq:${coreq}`;
-  return `self:${subjectCourse || `${subject} ${courseNumber}`}:${meetingSignature}:${crn || ""}`;
 }
 
 async function getSubjectMap(termCode) {
@@ -109,22 +98,20 @@ async function getSubjectMap(termCode) {
     [termCode]
   );
   const map = new Map();
-  for (const row of result.rows) {
-    map.set(normUpper(row.subject_code), row.discipline_code);
-  }
+  for (const row of result.rows) map.set(normUpper(row.subject_code), row.discipline_code);
   return map;
 }
 
 function inferSection(row, subjectMap, divisionName) {
   const subjectCourse = findValue(row, ["Subject_Course", "SUBJECT_COURSE", "Subject Course"]);
-  const parsedSubjectCourse = parseSubjectCourse(
+  const parsed = parseSubjectCourse(
     subjectCourse,
     findValue(row, ["SUBJECT", "Subject", "subject", "SUBJ", "subj", "SUBJECT_CODE", "Subject Code"]),
-    findValue(row, ["COURSE_NUMBER", "Course Number", "CATALOG_NUMBER", "Catalog Number", "CATALOG", "CATALOG NO", "CATALOG_NO", "COURSE NO", "Course No", "course_no", "COURSE", "Course", "CRSE_NUM", "Course Number Code"])
+    findValue(row, ["COURSE_NUMBER", "Course Number", "CATALOG_NUMBER", "Catalog Number", "CATALOG", "COURSE NO", "Course"])
   );
-  const subject = parsedSubjectCourse.subject;
-  const courseNumber = parsedSubjectCourse.courseNumber;
-  const crn = findValue(row, ["CRN", "crn", "REFERENCE_NUMBER", "Reference Number"]);
+  const subject = parsed.subject;
+  const courseNumber = parsed.courseNumber;
+  const crn = normalize(findValue(row, ["CRN", "crn", "REFERENCE_NUMBER", "Reference Number"]));
   const title = findValue(row, ["TITLE", "Title", "COURSE_TITLE", "Course Title"]);
   const division = canonicalDivisionName(findValue(row, ["DIVISION", "Division", "division"]) || divisionName);
   const campus = findValue(row, ["CAMPUS", "Campus", "campus", "LOCATION", "Location"]);
@@ -132,14 +119,13 @@ function inferSection(row, subjectMap, divisionName) {
   const displayModality = findValue(row, ["MODALITY", "Display Modality", "display_modality", "Display Modality"]);
   const modality = findValue(row, ["MODALITY", "display_modality", "modality", "Display Modality"]);
   const meetings = parseMeetings(row);
-  const assignmentGroupId = buildBundleKey(row, subject, courseNumber, crn, meetings);
+  const crossList = normalize(findValue(row, ["Cross_List", "CROSS_LIST", "Cross List"]));
+  const corequisiteCrn = normalize(findValue(row, ["COREQUISITE_CRN", "Corequisite_CRN", "Corequisite CRN"]));
   const disciplineCode = subjectMap.get(normUpper(subject)) || "";
-  const primarySubjectCourse = [subject, courseNumber].filter(Boolean).join(" ").trim();
-
   return {
     division,
-    assignment_group_id: assignmentGroupId,
-    primary_subject_course: primarySubjectCourse,
+    assignment_group_id: "",
+    primary_subject_course: [subject, courseNumber].filter(Boolean).join(" ").trim(),
     primary_crn: crn,
     title,
     campus,
@@ -151,30 +137,24 @@ function inferSection(row, subjectMap, divisionName) {
     modality,
     meetings,
     raw_row: row,
-    cross_list: findValue(row, ["Cross_List", "CROSS_LIST", "Cross List"]),
-    corequisite_crn: findValue(row, ["COREQUISITE_CRN", "Corequisite_CRN", "Corequisite CRN"]),
+    cross_list: crossList,
+    corequisite_crn: corequisiteCrn,
   };
 }
 
-function meetingSignature(section) {
-  return (section.meetings || []).map((m) => `${m.days}|${m.start_time}|${m.end_time}`).sort().join(";");
-}
+function mergeBundleRows(rows, bundleId) {
+  const seed = rows[0] || {};
+  const bundle = {
+    ...seed,
+    assignment_group_id: bundleId,
+    linked_sections: [],
+    all_crns: [],
+    all_titles: [],
+    all_subject_courses: [],
+    meetings: [],
+  };
 
-function mergeBundleRows(rows) {
-  const grouped = new Map();
   for (const row of rows) {
-    const key = row.assignment_group_id;
-    if (!grouped.has(key)) {
-      grouped.set(key, {
-        ...row,
-        linked_sections: [],
-        all_crns: [],
-        all_titles: [],
-        all_subject_courses: [],
-        meetings: [],
-      });
-    }
-    const bundle = grouped.get(key);
     bundle.linked_sections.push({
       primary_crn: row.primary_crn,
       primary_subject_course: row.primary_subject_course,
@@ -194,95 +174,129 @@ function mergeBundleRows(rows) {
     if (!bundle.subject_code && row.subject_code) bundle.subject_code = row.subject_code;
     if (!bundle.course_number && row.course_number) bundle.course_number = row.course_number;
     if (!bundle.primary_crn && row.primary_crn) bundle.primary_crn = row.primary_crn;
+    if (!bundle.title && row.title) bundle.title = row.title;
   }
 
-  const bundles = Array.from(grouped.values()).map((bundle) => ({
-    ...bundle,
-    primary_subject_course: bundle.all_subject_courses.join(" + ") || bundle.primary_subject_course,
-    title: bundle.all_titles.join(" + ") || bundle.title,
-    primary_crn: bundle.all_crns.join(" / ") || bundle.primary_crn,
-  }));
-
-  const secondary = new Map();
-  const consumed = new Set();
-
-  for (let i = 0; i < bundles.length; i++) {
-    if (consumed.has(i)) continue;
-    const base = bundles[i];
-    const cluster = [base];
-    for (let j = i + 1; j < bundles.length; j++) {
-      if (consumed.has(j)) continue;
-      const candidate = bundles[j];
-      const sameDivision = canonicalDivisionName(base.division) === canonicalDivisionName(candidate.division);
-      const sameSubjectCourse = normalize(base.primary_subject_course) === normalize(candidate.primary_subject_course);
-      const sameMeetings = meetingSignature(base) && meetingSignature(base) === meetingSignature(candidate);
-      const linkedHint = base.linked_sections?.some((s) => s.corequisite_crn || s.cross_list) || candidate.linked_sections?.some((s) => s.corequisite_crn || s.cross_list);
-      if (sameDivision && sameSubjectCourse && sameMeetings && linkedHint) {
-        cluster.push(candidate);
-        consumed.add(j);
-      }
-    }
-    if (cluster.length === 1) {
-      secondary.set(`single:${i}`, base);
-      continue;
-    }
-    const merged = {
-      ...base,
-      assignment_group_id: `combo:${cluster.map((c) => c.assignment_group_id).sort().join("|")}`,
-      linked_sections: [],
-      all_crns: [],
-      all_titles: [],
-      all_subject_courses: [],
-      meetings: [],
-    };
-    for (const section of cluster) {
-      for (const linked of section.linked_sections || []) merged.linked_sections.push(linked);
-      for (const crn of section.all_crns || []) if (!merged.all_crns.includes(crn)) merged.all_crns.push(crn);
-      for (const t of section.all_titles || []) if (!merged.all_titles.includes(t)) merged.all_titles.push(t);
-      for (const sc of section.all_subject_courses || []) if (!merged.all_subject_courses.includes(sc)) merged.all_subject_courses.push(sc);
-      for (const m of section.meetings || []) {
-        const sig = JSON.stringify(m);
-        if (!merged.meetings.some((x) => JSON.stringify(x) === sig)) merged.meetings.push(m);
-      }
-      if (!merged.discipline_code && section.discipline_code) merged.discipline_code = section.discipline_code;
-    }
-    merged.primary_subject_course = merged.all_subject_courses.join(" + ") || merged.primary_subject_course;
-    merged.title = merged.all_titles.join(" + ") || merged.title;
-    merged.primary_crn = merged.all_crns.join(" / ") || merged.primary_crn;
-    secondary.set(`merged:${i}`, merged);
-  }
-
-  return Array.from(secondary.values());
+  bundle.primary_subject_course = bundle.all_subject_courses.join(" + ") || bundle.primary_subject_course;
+  bundle.title = bundle.all_titles.join(" + ") || bundle.title;
+  bundle.primary_crn = bundle.all_crns.join(" / ") || bundle.primary_crn;
+  return bundle;
 }
 
+/*
+ Graph-aware bundle strategy:
+ - Cross-listed rows merge only with rows sharing the SAME cross_list AND SAME corequisite target.
+ - Corequisite-linked rows attach directly to the support CRN they reference.
+ - Support rows referenced by multiple unrelated parents do not force one mega-bundle.
+*/
+function buildInstructionalBundles(rows) {
+  const byCrn = new Map();
+  const rowsByCrossList = new Map();
+  const rowsReferencingCoreq = new Map();
+  const assignedCrns = new Set();
+  const bundles = [];
 
-async function getProtectedWork(termCode, division) {
-  const sections = await query(
-    `SELECT assignment_group_id
-     FROM scope_sections
-     WHERE term_code = $1 AND division = $2`,
-    [termCode, division]
-  );
-  const sectionIds = sections.rows.map((r) => r.assignment_group_id);
-  if (!sectionIds.length) {
-    return { preferences: 0, tentativeAssignments: 0, decisionLogs: 0 };
+  for (const row of rows) {
+    const crn = normalize(row.primary_crn);
+    if (crn) byCrn.set(crn, row);
+    if (row.cross_list) {
+      const list = rowsByCrossList.get(row.cross_list) || [];
+      list.push(row);
+      rowsByCrossList.set(row.cross_list, list);
+    }
+    if (row.corequisite_crn) {
+      const list = rowsReferencingCoreq.get(row.corequisite_crn) || [];
+      list.push(row);
+      rowsReferencingCoreq.set(row.corequisite_crn, list);
+    }
   }
 
-  const prefs = await query(
-    `SELECT COUNT(*)::int AS count FROM scope_preferences
-     WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`,
-    [termCode, sectionIds]
-  );
-  const assigns = await query(
-    `SELECT COUNT(*)::int AS count FROM scope_assignments
-     WHERE term_code = $1 AND assignment_group_id = ANY($2::text[]) AND COALESCE(status, 'tentative') <> 'released'`,
-    [termCode, sectionIds]
-  );
-  const logs = await query(
-    `SELECT COUNT(*)::int AS count FROM scope_audit_log
-     WHERE term = $1 AND section_key = ANY($2::text[])`,
-    [termCode, sectionIds]
-  );
+  function addBundle(bundleRows, prefix) {
+    const unique = [];
+    const seen = new Set();
+    for (const row of bundleRows) {
+      const key = normalize(row.primary_crn) || JSON.stringify(row.raw_row || row);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(row);
+    }
+    if (!unique.length) return;
+    unique.forEach((r) => assignedCrns.add(normalize(r.primary_crn)));
+    const ids = unique.map((r) => normalize(r.primary_crn)).filter(Boolean).sort().join("|") || Math.random().toString(36).slice(2, 8);
+    bundles.push(mergeBundleRows(unique, `${prefix}:${ids}`));
+  }
+
+  // Pass 1: coreq-aware bundles
+  for (const row of rows) {
+    const crn = normalize(row.primary_crn);
+    if (!crn || assignedCrns.has(crn)) continue;
+
+    const coreq = normalize(row.corequisite_crn);
+    const cross = normalize(row.cross_list);
+
+    if (coreq) {
+      const peerParents = cross
+        ? (rowsByCrossList.get(cross) || []).filter((peer) => normalize(peer.corequisite_crn) === coreq)
+        : [row];
+
+      const supportRow = byCrn.get(coreq);
+      const bundleRows = [...peerParents];
+      if (supportRow) bundleRows.push(supportRow);
+
+      // pull only support peers that explicitly point to same relationship, not all cross-listed cousins
+      if (supportRow?.cross_list) {
+        for (const peer of rowsByCrossList.get(supportRow.cross_list) || []) {
+          const peerCoreq = normalize(peer.corequisite_crn);
+          if (!peerCoreq || peerCoreq === crn || peerCoreq === coreq) bundleRows.push(peer);
+        }
+      }
+
+      addBundle(bundleRows, "coreq");
+      continue;
+    }
+
+    // support row with exactly one parent cluster
+    const parents = rowsReferencingCoreq.get(crn) || [];
+    if (parents.length) {
+      const parentClusters = new Map();
+      for (const parent of parents) {
+        const key = `${normalize(parent.cross_list)}|${crn}`;
+        const list = parentClusters.get(key) || [];
+        list.push(parent);
+        parentClusters.set(key, list);
+      }
+      if (parentClusters.size === 1) {
+        const parentRows = Array.from(parentClusters.values())[0];
+        addBundle([...parentRows, row], "support");
+        continue;
+      }
+    }
+  }
+
+  // Pass 2: pure cross-list groups with no coreq structure
+  for (const [crossList, groupRows] of rowsByCrossList.entries()) {
+    const unassigned = groupRows.filter((row) => !assignedCrns.has(normalize(row.primary_crn)));
+    if (unassigned.length > 1) addBundle(unassigned, `cross:${crossList}`);
+  }
+
+  // Pass 3: remaining standalone rows
+  for (const row of rows) {
+    const crn = normalize(row.primary_crn);
+    if (crn && assignedCrns.has(crn)) continue;
+    addBundle([row], "self");
+  }
+
+  return bundles;
+}
+
+async function getProtectedWork(termCode, division) {
+  const sections = await query(`SELECT assignment_group_id FROM scope_sections WHERE term_code = $1 AND division = $2`, [termCode, division]);
+  const sectionIds = sections.rows.map((r) => r.assignment_group_id);
+  if (!sectionIds.length) return { preferences: 0, tentativeAssignments: 0, decisionLogs: 0 };
+
+  const prefs = await query(`SELECT COUNT(*)::int AS count FROM scope_preferences WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`, [termCode, sectionIds]);
+  const assigns = await query(`SELECT COUNT(*)::int AS count FROM scope_assignments WHERE term_code = $1 AND assignment_group_id = ANY($2::text[]) AND COALESCE(status, 'tentative') <> 'released'`, [termCode, sectionIds]);
+  const logs = await query(`SELECT COUNT(*)::int AS count FROM scope_audit_log WHERE term = $1 AND section_key = ANY($2::text[])`, [termCode, sectionIds]);
 
   return {
     preferences: prefs.rows[0]?.count || 0,
@@ -293,35 +307,24 @@ async function getProtectedWork(termCode, division) {
 
 router.get("/terms", async (_req, res) => {
   try {
-    const result = await query(
-      `SELECT id, term_code, term_name, is_active
-       FROM scope_terms
-       ORDER BY is_active DESC, term_name ASC`
-    );
+    const result = await query(`SELECT id, term_code, term_name, is_active FROM scope_terms ORDER BY is_active DESC, term_name ASC`);
     res.json({ terms: result.rows });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.post("/terms", async (req, res) => {
   const { termCode = "", termName = "", isActive = false } = req.body || {};
-  if (!termCode.trim() || !termName.trim()) {
-    return res.status(400).json({ error: "termCode and termName are required." });
-  }
+  if (!termCode.trim() || !termName.trim()) return res.status(400).json({ error: "termCode and termName are required." });
   try {
     const result = await query(
       `INSERT INTO scope_terms (term_code, term_name, is_active, updated_at)
        VALUES ($1,$2,$3,NOW())
-       ON CONFLICT (term_code)
-       DO UPDATE SET term_name = EXCLUDED.term_name, updated_at = NOW()
+       ON CONFLICT (term_code) DO UPDATE SET term_name = EXCLUDED.term_name, updated_at = NOW()
        RETURNING id, term_code, term_name, is_active`,
       [termCode.trim(), termName.trim(), Boolean(isActive)]
     );
     res.json({ term: result.rows[0] });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.post("/terms/activate", async (req, res) => {
@@ -331,81 +334,45 @@ router.post("/terms/activate", async (req, res) => {
   try {
     await client.query("BEGIN");
     await client.query(`UPDATE scope_terms SET is_active = FALSE, updated_at = NOW()`);
-    const result = await client.query(
-      `UPDATE scope_terms
-       SET is_active = TRUE, updated_at = NOW()
-       WHERE term_code = $1
-       RETURNING id, term_code, term_name, is_active`,
-      [termCode.trim()]
-    );
+    const result = await client.query(`UPDATE scope_terms SET is_active = TRUE, updated_at = NOW() WHERE term_code = $1 RETURNING id, term_code, term_name, is_active`, [termCode.trim()]);
     await client.query("COMMIT");
     if (!result.rows.length) return res.status(404).json({ error: "Term not found." });
     res.json({ term: result.rows[0] });
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: error.message });
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 });
 
 router.get("/subject-mapping", async (req, res) => {
   const { termCode = "" } = req.query;
   try {
-    const result = await query(
-      `SELECT scope, term_code, subject_code, discipline_code
-       FROM scope_subject_mappings
-       WHERE scope = 'global' OR term_code = $1
-       ORDER BY subject_code`,
-      [termCode]
-    );
+    const result = await query(`SELECT scope, term_code, subject_code, discipline_code FROM scope_subject_mappings WHERE scope = 'global' OR term_code = $1 ORDER BY subject_code`, [termCode]);
     res.json({ mappings: result.rows });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.get("/subject-mapping/export", async (req, res) => {
   const { termCode = "" } = req.query;
   try {
-    const result = await query(
-      `SELECT scope, term_code, subject_code, discipline_code
-       FROM scope_subject_mappings
-       WHERE scope = 'global' OR term_code = $1
-       ORDER BY subject_code`,
-      [termCode]
-    );
-    const csv = Papa.unparse(result.rows);
+    const result = await query(`SELECT scope, term_code, subject_code, discipline_code FROM scope_subject_mappings WHERE scope = 'global' OR term_code = $1 ORDER BY subject_code`, [termCode]);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.send(csv);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    res.send(Papa.unparse(result.rows));
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.get("/subject-mapping/:termCode/status", async (req, res) => {
   try {
-    const globalCount = await query(
-      `SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE scope = 'global'`
-    );
-    const termCount = await query(
-      `SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE term_code = $1`,
-      [req.params.termCode]
-    );
-    res.json({
-      globalCount: globalCount.rows[0]?.count || 0,
-      termCount: termCount.rows[0]?.count || 0,
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    const globalCount = await query(`SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE scope = 'global'`);
+    const termCount = await query(`SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE term_code = $1`, [req.params.termCode]);
+    res.json({ globalCount: globalCount.rows[0]?.count || 0, termCount: termCount.rows[0]?.count || 0 });
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.post("/upload/subject-mapping", upload.single("file"), async (req, res) => {
   const file = req.file;
   const { termCode = "" } = req.body || {};
   if (!file) return res.status(400).json({ error: "A CSV file is required." });
-
   const parsed = parseCsvBuffer(file);
   const rows = Array.isArray(parsed.data) ? parsed.data : [];
   const valid = [];
@@ -414,7 +381,6 @@ router.post("/upload/subject-mapping", upload.single("file"), async (req, res) =
     const discipline = findValue(row, ["discipline_code", "discipline", "DISCIPLINE"]);
     if (subject && discipline) valid.push({ subject_code: subject, discipline_code: discipline });
   }
-
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -430,50 +396,34 @@ router.post("/upload/subject-mapping", upload.single("file"), async (req, res) =
     await client.query("COMMIT");
     const globalCount = await query(`SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE scope = 'global'`);
     const termCount = termCode ? await query(`SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE term_code = $1`, [termCode]) : { rows: [{ count: 0 }] };
-    res.json({
-      importedRows: valid.length,
-      globalCount: globalCount.rows[0]?.count || valid.length,
-      termCount: termCount.rows[0]?.count || 0,
-      scope: "global",
-      message: `Imported ${valid.length} global subject mapping row(s).`,
-    });
+    res.json({ importedRows: valid.length, globalCount: globalCount.rows[0]?.count || valid.length, termCount: termCount.rows[0]?.count || 0, scope: "global", message: `Imported ${valid.length} global subject mapping row(s).` });
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: error.message, importedRows: 0, globalCount: 0, termCount: 0, scope: "global" });
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 });
 
 router.post("/upload/schedule/preview", upload.single("file"), async (req, res) => {
   const file = req.file;
   const termCode = normalize(req.body?.termCode);
   const divisionName = canonicalDivisionName(req.body?.divisionName);
-  if (!file || !termCode || !divisionName) {
-    return res.status(400).json({ ok: false, error: "file, termCode, and divisionName are required." });
-  }
-
+  if (!file || !termCode || !divisionName) return res.status(400).json({ ok: false, error: "file, termCode, and divisionName are required." });
   try {
     const subjectMap = await getSubjectMap(termCode);
     const parsed = parseCsvBuffer(file);
     const rows = Array.isArray(parsed.data) ? parsed.data : [];
-    const sections = mergeBundleRows(rows.map((row) => inferSection(row, subjectMap, divisionName)));
+    const sections = buildInstructionalBundles(rows.map((row) => inferSection(row, subjectMap, divisionName)));
     const inDivision = sections.filter((row) => canonicalDivisionName(row.division) === canonicalDivisionName(divisionName));
-    const ignoredRowsFromOtherDivisions = sections.length - inDivision.length;
+    const ignoredRowsFromOtherDivisions = rows.filter((row) => canonicalDivisionName(findValue(row, ["DIVISION", "Division", "division"]) || divisionName) !== canonicalDivisionName(divisionName)).length;
     const unmappedSubjects = Array.from(new Set(inDivision.filter((s) => !s.discipline_code && s.subject_code).map((s) => s.subject_code))).sort();
     const protectedWork = await getProtectedWork(termCode, divisionName);
-
     res.json({
       ok: true,
       divisionName,
       errors: [],
       warnings: unmappedSubjects.length ? [`${unmappedSubjects.length} subject code(s) are unmapped.`] : [],
       unmappedSubjects,
-      summary: {
-        totalRows: rows.length,
-        divisionRows: inDivision.length,
-        ignoredRowsFromOtherDivisions,
-      },
+      summary: { totalRows: rows.length, divisionRows: inDivision.length, ignoredRowsFromOtherDivisions },
       impact: {
         openSections: inDivision.length,
         facultyPreferences: protectedWork.preferences,
@@ -481,9 +431,7 @@ router.post("/upload/schedule/preview", upload.single("file"), async (req, res) 
         decisionLogs: protectedWork.decisionLogs,
       },
     });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message, errors: [error.message] });
-  }
+  } catch (error) { res.status(500).json({ ok: false, error: error.message, errors: [error.message] }); }
 });
 
 router.post("/upload/schedule", upload.single("file"), async (req, res) => {
@@ -491,59 +439,32 @@ router.post("/upload/schedule", upload.single("file"), async (req, res) => {
   const termCode = normalize(req.body?.termCode);
   const divisionName = canonicalDivisionName(req.body?.divisionName);
   const forceReplace = String(req.body?.forceReplace || "").toLowerCase() === "true";
-
-  if (!file || !termCode || !divisionName) {
-    return res.status(400).json({ error: "file, termCode, and divisionName are required." });
-  }
+  if (!file || !termCode || !divisionName) return res.status(400).json({ error: "file, termCode, and divisionName are required." });
 
   const client = await pool.connect();
   try {
     const protectedWork = await getProtectedWork(termCode, divisionName);
     const hasProtectedWork = protectedWork.preferences || protectedWork.tentativeAssignments || protectedWork.decisionLogs;
-
     if (hasProtectedWork && !forceReplace) {
-      return res.status(409).json({
-        code: "existing_work_detected",
-        error: "Existing work was found for this division.",
-        protectedWork,
-      });
+      return res.status(409).json({ code: "existing_work_detected", error: "Existing work was found for this division.", protectedWork });
     }
-
     const subjectMap = await getSubjectMap(termCode);
     const parsed = parseCsvBuffer(file);
     const rows = Array.isArray(parsed.data) ? parsed.data : [];
-    const sections = mergeBundleRows(rows.map((row) => inferSection(row, subjectMap, divisionName)));
+    const sections = buildInstructionalBundles(rows.map((row) => inferSection(row, subjectMap, divisionName)));
     const inDivision = sections.filter((row) => canonicalDivisionName(row.division) === canonicalDivisionName(divisionName));
-    const ignoredRowsFromOtherDivisions = sections.length - inDivision.length;
+    const ignoredRowsFromOtherDivisions = rows.filter((row) => canonicalDivisionName(findValue(row, ["DIVISION", "Division", "division"]) || divisionName) !== canonicalDivisionName(divisionName)).length;
     const unmappedSubjects = Array.from(new Set(inDivision.filter((s) => !s.discipline_code && s.subject_code).map((s) => s.subject_code))).sort();
 
     await client.query("BEGIN");
-
-    const existing = await client.query(
-      `SELECT assignment_group_id FROM scope_sections WHERE term_code = $1 AND division = $2`,
-      [termCode, divisionName]
-    );
+    const existing = await client.query(`SELECT assignment_group_id FROM scope_sections WHERE term_code = $1 AND division = $2`, [termCode, divisionName]);
     const existingIds = existing.rows.map((r) => r.assignment_group_id);
-
     if (forceReplace && existingIds.length) {
-      await client.query(
-        `DELETE FROM scope_preferences WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`,
-        [termCode, existingIds]
-      );
-      await client.query(
-        `DELETE FROM scope_assignments WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`,
-        [termCode, existingIds]
-      );
-      await client.query(
-        `DELETE FROM scope_audit_log WHERE term = $1 AND section_key = ANY($2::text[])`,
-        [termCode, existingIds]
-      );
+      await client.query(`DELETE FROM scope_preferences WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`, [termCode, existingIds]);
+      await client.query(`DELETE FROM scope_assignments WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`, [termCode, existingIds]);
+      await client.query(`DELETE FROM scope_audit_log WHERE term = $1 AND section_key = ANY($2::text[])`, [termCode, existingIds]);
     }
-
-    const deleted = await client.query(
-      `DELETE FROM scope_sections WHERE term_code = $1 AND division = $2`,
-      [termCode, divisionName]
-    );
+    const deleted = await client.query(`DELETE FROM scope_sections WHERE term_code = $1 AND division = $2`, [termCode, divisionName]);
 
     for (const section of inDivision) {
       await client.query(
@@ -567,27 +488,15 @@ router.post("/upload/schedule", upload.single("file"), async (req, res) => {
            raw_row = EXCLUDED.raw_row,
            updated_at = NOW()`,
         [
-          termCode,
-          divisionName,
-          section.assignment_group_id,
-          section.primary_subject_course,
-          section.primary_crn,
-          section.title,
-          section.campus,
-          section.subject_code,
-          section.course_number,
-          section.discipline_code,
-          section.instructional_method,
-          section.display_modality,
-          section.modality,
+          termCode, divisionName, section.assignment_group_id, section.primary_subject_course, section.primary_crn,
+          section.title, section.campus, section.subject_code, section.course_number, section.discipline_code,
+          section.instructional_method, section.display_modality, section.modality,
           JSON.stringify(section.meetings || []),
           JSON.stringify({ ...(section.raw_row || {}), linked_sections: section.linked_sections || [] }),
         ]
       );
     }
-
     await client.query("COMMIT");
-
     res.json({
       ok: true,
       importedCount: inDivision.length,
@@ -595,18 +504,12 @@ router.post("/upload/schedule", upload.single("file"), async (req, res) => {
       divisionName,
       warnings: unmappedSubjects.length ? [`${unmappedSubjects.length} subject code(s) are unmapped.`] : [],
       unmappedSubjects,
-      summary: {
-        totalRows: rows.length,
-        divisionRows: inDivision.length,
-        ignoredRowsFromOtherDivisions,
-      },
+      summary: { totalRows: rows.length, divisionRows: inDivision.length, ignoredRowsFromOtherDivisions },
     });
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: error.message, errors: [error.message] });
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 });
 
 router.get("/available-sections", async (req, res) => {
@@ -615,22 +518,17 @@ router.get("/available-sections", async (req, res) => {
   try {
     const params = [termCode];
     let where = `WHERE s.term_code = $1`;
-    if (disciplineCode) {
-      params.push(disciplineCode);
-      where += ` AND s.discipline_code = $2`;
-    }
+    if (disciplineCode) { params.push(disciplineCode); where += ` AND s.discipline_code = $2`; }
     const result = await query(
-      `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.subject_code, s.course_number, s.discipline_code,
-              s.instructional_method, s.display_modality, s.modality, s.meetings
+      `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus,
+              s.subject_code, s.course_number, s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings, s.raw_row
        FROM scope_sections s
        ${where}
        ORDER BY s.primary_subject_course, s.primary_crn`,
       params
     );
     res.json({ sections: result.rows.map((r) => ({ ...r, meetings: r.meetings || [] })) });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.get("/division-statuses", async (req, res) => {
@@ -638,29 +536,20 @@ router.get("/division-statuses", async (req, res) => {
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
     const result = await query(
-      `SELECT s.division AS division,
-              s.division AS division_name,
+      `SELECT s.division AS division, s.division AS division_name,
               COUNT(DISTINCT s.assignment_group_id)::int AS open_sections_count,
               COUNT(DISTINCT p.id)::int AS preferences_count,
               COUNT(DISTINCT a.id)::int AS assignments_count,
               COUNT(DISTINCT l.id)::int AS decision_logs_count
        FROM scope_sections s
-       LEFT JOIN scope_preferences p
-         ON p.term_code = s.term_code
-        AND p.assignment_group_id = s.assignment_group_id
-       LEFT JOIN scope_assignments a
-         ON a.term_code = s.term_code
-        AND a.assignment_group_id = s.assignment_group_id
-        AND COALESCE(a.status, 'tentative') <> 'released'
-       LEFT JOIN scope_audit_log l
-         ON l.term = s.term_code
-        AND l.section_key = s.assignment_group_id
+       LEFT JOIN scope_preferences p ON p.term_code = s.term_code AND p.assignment_group_id = s.assignment_group_id
+       LEFT JOIN scope_assignments a ON a.term_code = s.term_code AND a.assignment_group_id = s.assignment_group_id AND COALESCE(a.status, 'tentative') <> 'released'
+       LEFT JOIN scope_audit_log l ON l.term = s.term_code AND l.section_key = s.assignment_group_id
        WHERE s.term_code = $1
        GROUP BY s.division
        ORDER BY s.division`,
       [termCode]
     );
-
     const divisions = result.rows.map((row) => {
       const sectionCount = row.open_sections_count || 0;
       const prefCount = row.preferences_count || 0;
@@ -669,37 +558,19 @@ router.get("/division-statuses", async (req, res) => {
       if (sectionCount > 0) status = "loaded";
       if (prefCount > 0) status = "in_progress";
       if (assignmentCount > 0) status = "advanced";
-      return {
-        ...row,
-        sectionCount,
-        preferenceCount: prefCount,
-        submissionCount: prefCount,
-        tentativeAssignmentCount: assignmentCount,
-        approvedAssignmentCount: 0,
-        chairFinalizedCount: 0,
-        deanApprovedCount: 0,
-        status,
-      };
+      return { ...row, sectionCount, preferenceCount: prefCount, submissionCount: prefCount, tentativeAssignmentCount: assignmentCount, approvedAssignmentCount: 0, chairFinalizedCount: 0, deanApprovedCount: 0, status };
     });
-
     res.json({ divisions });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.get("/chair-workflow", async (req, res) => {
   const { termCode = "", disciplineCode = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
-
   try {
     const params = [termCode];
     let disciplineFilter = "";
-    if (disciplineCode) {
-      params.push(disciplineCode);
-      disciplineFilter = ` AND s.discipline_code = $2`;
-    }
-
+    if (disciplineCode) { params.push(disciplineCode); disciplineFilter = ` AND s.discipline_code = $2`; }
     const result = await query(
       `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus,
               s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings,
@@ -707,82 +578,47 @@ router.get("/chair-workflow", async (req, res) => {
               COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '') AS seniority_rank,
               p.preference_rank
        FROM scope_sections s
-       JOIN scope_pt_faculty pt
-         ON pt.division = s.division
-        AND pt.discipline = s.discipline_code
-        AND COALESCE(pt.active_status, 'active') = 'active'
-       LEFT JOIN scope_preferences p
-         ON p.term_code = s.term_code
-        AND p.assignment_group_id = s.assignment_group_id
-        AND p.employee_id = pt.employee_id
-       WHERE s.term_code = $1
-         ${disciplineFilter}
+       JOIN scope_pt_faculty pt ON pt.division = s.division AND pt.discipline = s.discipline_code AND COALESCE(pt.active_status, 'active') = 'active'
+       LEFT JOIN scope_preferences p ON p.term_code = s.term_code AND p.assignment_group_id = s.assignment_group_id AND p.employee_id = pt.employee_id
+       WHERE s.term_code = $1 ${disciplineFilter}
        ORDER BY s.primary_subject_course, s.primary_crn,
                 COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '999999') NULLS LAST,
                 p.preference_rank NULLS LAST, faculty_name`,
       params
     );
-
     res.json({ rows: result.rows.map((r) => ({ ...r, meetings: r.meetings || [] })) });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.get("/assignments", async (req, res) => {
   const { termCode = "", disciplineCode = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
-
   try {
     const params = [termCode];
     let disciplineFilter = "";
-    if (disciplineCode) {
-      params.push(disciplineCode);
-      disciplineFilter = ` AND a.discipline_code = $2`;
-    }
-
+    if (disciplineCode) { params.push(disciplineCode); disciplineFilter = ` AND a.discipline_code = $2`; }
     const result = await query(
       `SELECT a.id, a.assignment_group_id, a.employee_id, a.faculty_name, a.status, a.reason, a.created_at,
               s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.instructional_method, s.display_modality, s.modality, s.meetings
        FROM scope_assignments a
-       LEFT JOIN scope_sections s
-         ON s.term_code = a.term_code
-        AND s.assignment_group_id = a.assignment_group_id
-       WHERE a.term_code = $1
-         AND COALESCE(a.status, 'tentative') <> 'released'
-         ${disciplineFilter}
+       LEFT JOIN scope_sections s ON s.term_code = a.term_code AND s.assignment_group_id = a.assignment_group_id
+       WHERE a.term_code = $1 AND COALESCE(a.status, 'tentative') <> 'released' ${disciplineFilter}
        ORDER BY a.created_at DESC`,
       params
     );
     res.json({ assignments: result.rows.map((r) => ({ ...r, meetings: r.meetings || [] })) });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.post("/assignments", async (req, res) => {
   const { termCode = "", disciplineCode = "", assignmentGroupId = "", employeeId = "", actorName = "", reason = "" } = req.body || {};
-  if (!termCode || !assignmentGroupId || !employeeId) {
-    return res.status(400).json({ error: "termCode, assignmentGroupId, and employeeId are required." });
-  }
+  if (!termCode || !assignmentGroupId || !employeeId) return res.status(400).json({ error: "termCode, assignmentGroupId, and employeeId are required." });
   const client = await pool.connect();
   try {
-    const faculty = await client.query(
-      `SELECT CONCAT_WS(' ', first_name, last_name) AS faculty_name
-       FROM scope_pt_faculty
-       WHERE employee_id = $1
-       ORDER BY COALESCE(active_status, 'active') = 'active' DESC
-       LIMIT 1`,
-      [employeeId]
-    );
+    const faculty = await client.query(`SELECT CONCAT_WS(' ', first_name, last_name) AS faculty_name FROM scope_pt_faculty WHERE employee_id = $1 ORDER BY COALESCE(active_status, 'active') = 'active' DESC LIMIT 1`, [employeeId]);
     const facultyName = faculty.rows[0]?.faculty_name || employeeId;
-
     await client.query("BEGIN");
-    await client.query(
-      `DELETE FROM scope_assignments
-       WHERE term_code = $1 AND assignment_group_id = $2`,
-      [termCode, assignmentGroupId]
-    );
+    await client.query(`DELETE FROM scope_assignments WHERE term_code = $1 AND assignment_group_id = $2`, [termCode, assignmentGroupId]);
     const result = await client.query(
       `INSERT INTO scope_assignments
         (term_code, discipline_code, assignment_group_id, employee_id, faculty_name, status, actor_name, reason, updated_at)
@@ -790,25 +626,19 @@ router.post("/assignments", async (req, res) => {
        RETURNING id`,
       [termCode, disciplineCode, assignmentGroupId, employeeId, facultyName, actorName, reason]
     );
-
     await client.query("COMMIT");
     res.json({ success: true, id: result.rows[0]?.id, message: "Tentative assignment saved." });
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: error.message });
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 });
 
 router.delete("/assignments/:id", async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const existing = await client.query(
-      `SELECT * FROM scope_assignments WHERE id = $1 LIMIT 1`,
-      [req.params.id]
-    );
+    const existing = await client.query(`SELECT * FROM scope_assignments WHERE id = $1 LIMIT 1`, [req.params.id]);
     if (!existing.rows.length) {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Assignment not found." });
@@ -819,9 +649,7 @@ router.delete("/assignments/:id", async (req, res) => {
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: error.message });
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 });
 
 router.put("/assignments/:id/reassign", async (req, res) => {
@@ -835,26 +663,15 @@ router.put("/assignments/:id/reassign", async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Assignment not found." });
     }
-    const faculty = await client.query(
-      `SELECT CONCAT_WS(' ', first_name, last_name) AS faculty_name
-       FROM scope_pt_faculty WHERE employee_id = $1 LIMIT 1`,
-      [employeeId]
-    );
+    const faculty = await client.query(`SELECT CONCAT_WS(' ', first_name, last_name) AS faculty_name FROM scope_pt_faculty WHERE employee_id = $1 LIMIT 1`, [employeeId]);
     const facultyName = faculty.rows[0]?.faculty_name || employeeId;
-    await client.query(
-      `UPDATE scope_assignments
-       SET employee_id = $1, faculty_name = $2, actor_name = $3, reason = $4, updated_at = NOW()
-       WHERE id = $5`,
-      [employeeId, facultyName, actorName, reason, req.params.id]
-    );
+    await client.query(`UPDATE scope_assignments SET employee_id = $1, faculty_name = $2, actor_name = $3, reason = $4, updated_at = NOW() WHERE id = $5`, [employeeId, facultyName, actorName, reason, req.params.id]);
     await client.query("COMMIT");
     res.json({ success: true, message: "Tentative assignment reassigned." });
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: error.message });
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 });
 
 router.get("/preferences", async (req, res) => {
@@ -865,17 +682,13 @@ router.get("/preferences", async (req, res) => {
       `SELECT p.assignment_group_id, p.preference_rank, p.faculty_id, p.employee_id, p.faculty_name,
               s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings
        FROM scope_preferences p
-       LEFT JOIN scope_sections s
-         ON s.term_code = p.term_code
-        AND s.assignment_group_id = p.assignment_group_id
+       LEFT JOIN scope_sections s ON s.term_code = p.term_code AND s.assignment_group_id = p.assignment_group_id
        WHERE p.term_code = $1 AND p.faculty_id = $2
        ORDER BY p.preference_rank ASC`,
       [termCode, facultyId]
     );
     res.json({ preferences: result.rows.map((r) => ({ ...r, meetings: r.meetings || [] })) });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.post("/preferences", async (req, res) => {
@@ -898,28 +711,17 @@ router.post("/preferences", async (req, res) => {
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: error.message });
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 });
 
 router.get("/preferences/export", async (req, res) => {
   const { termCode = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
-    const result = await query(
-      `SELECT term_code, faculty_id, employee_id, faculty_name, assignment_group_id, discipline_code, preference_rank
-       FROM scope_preferences
-       WHERE term_code = $1
-       ORDER BY faculty_name, preference_rank`,
-      [termCode]
-    );
-    const csv = Papa.unparse(result.rows);
+    const result = await query(`SELECT term_code, faculty_id, employee_id, faculty_name, assignment_group_id, discipline_code, preference_rank FROM scope_preferences WHERE term_code = $1 ORDER BY faculty_name, preference_rank`, [termCode]);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.send(csv);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+    res.send(Papa.unparse(result.rows));
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.get("/decision-logs", async (req, res) => {
@@ -938,31 +740,14 @@ router.get("/decision-logs", async (req, res) => {
         )
       )`;
     }
-    const result = await query(
-      `SELECT id, actor_name, event_type,
-              COALESCE(section_key, '') AS section_key,
-              COALESCE(note, '') AS detail,
-              created_at
-       FROM scope_audit_log
-       WHERE term = $1
-       ${disciplineClause}
-       ORDER BY created_at DESC`,
-      params
-    );
-
+    const result = await query(`SELECT id, actor_name, event_type, COALESCE(section_key, '') AS section_key, COALESCE(note, '') AS detail, created_at FROM scope_audit_log WHERE term = $1 ${disciplineClause} ORDER BY created_at DESC`, params);
     const withDiscipline = await Promise.all(result.rows.map(async (row) => {
       if (!row.section_key) return { ...row, discipline_code: "" };
-      const section = await query(
-        `SELECT discipline_code FROM scope_sections WHERE term_code = $1 AND assignment_group_id = $2 LIMIT 1`,
-        [termCode, row.section_key]
-      );
+      const section = await query(`SELECT discipline_code FROM scope_sections WHERE term_code = $1 AND assignment_group_id = $2 LIMIT 1`, [termCode, row.section_key]);
       return { ...row, discipline_code: section.rows[0]?.discipline_code || "" };
     }));
-
     res.json({ logs: withDiscipline });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 export default router;
