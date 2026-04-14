@@ -184,113 +184,105 @@ function mergeBundleRows(rows, bundleId) {
 }
 
 /*
- Wave 10: transitive mixed-rule bundling
- Build an undirected graph where edges come from:
- - stacked/cross-list relationship
- - corequisite relationship
- Then take connected components as the staffing unit.
-
- Guardrail:
- Cross-list edges are only added among rows that share the same cross_list AND same corequisite target,
- unless neither row has any corequisite target. This helps avoid broad accidental over-merges.
+ Wave 11:
+ 1. Build stacked / cross-list groups first.
+ 2. For each base group, pull in any support/coreq sections referenced by ANY member.
+ 3. Recursively pull in additional stacked peers of those support sections if needed.
+ This allows one row to bridge stacked + coreq rules into a single staffing unit.
 */
 function buildInstructionalBundles(rows) {
   const byCrn = new Map();
-  const adjacency = new Map();
-
-  function ensureNode(crn) {
-    if (!crn) return;
-    if (!adjacency.has(crn)) adjacency.set(crn, new Set());
-  }
-
-  function connect(a, b) {
-    if (!a || !b || a === b) return;
-    ensureNode(a);
-    ensureNode(b);
-    adjacency.get(a).add(b);
-    adjacency.get(b).add(a);
-  }
+  const rowsByCrossList = new Map();
 
   for (const row of rows) {
     const crn = normalize(row.primary_crn);
-    if (!crn) continue;
-    byCrn.set(crn, row);
-    ensureNode(crn);
-  }
-
-  // Corequisite edges
-  for (const row of rows) {
-    const crn = normalize(row.primary_crn);
-    const coreq = normalize(row.corequisite_crn);
-    if (crn && coreq && byCrn.has(coreq)) {
-      connect(crn, coreq);
+    if (crn) byCrn.set(crn, row);
+    const cross = normalize(row.cross_list);
+    if (cross) {
+      const list = rowsByCrossList.get(cross) || [];
+      list.push(row);
+      rowsByCrossList.set(cross, list);
     }
   }
 
-  // Cross-list edges with guardrails
-  const rowsByCrossList = new Map();
-  for (const row of rows) {
-    const cross = normalize(row.cross_list);
-    if (!cross) continue;
-    const list = rowsByCrossList.get(cross) || [];
-    list.push(row);
-    rowsByCrossList.set(cross, list);
+  const baseGroups = [];
+  const assigned = new Set();
+
+  // Base groups = stacked/cross-listed groups first
+  for (const [cross, groupRows] of rowsByCrossList.entries()) {
+    const groupCrns = groupRows.map((r) => normalize(r.primary_crn)).filter(Boolean);
+    groupCrns.forEach((crn) => assigned.add(crn));
+    baseGroups.push(groupRows);
   }
 
-  for (const [cross, groupRows] of rowsByCrossList.entries()) {
-    for (let i = 0; i < groupRows.length; i++) {
-      for (let j = i + 1; j < groupRows.length; j++) {
-        const a = groupRows[i];
-        const b = groupRows[j];
-        const aCoreq = normalize(a.corequisite_crn);
-        const bCoreq = normalize(b.corequisite_crn);
+  // Add standalone rows not already part of a stacked group
+  for (const row of rows) {
+    const crn = normalize(row.primary_crn);
+    if (!crn || !assigned.has(crn)) {
+      if (crn) assigned.add(crn);
+      baseGroups.push([row]);
+    }
+  }
 
-        const sameCoreq = aCoreq && bCoreq && aCoreq === bCoreq;
-        const bothStandalone = !aCoreq && !bCoreq;
+  const finalBundles = [];
 
-        if (sameCoreq || bothStandalone) {
-          connect(normalize(a.primary_crn), normalize(b.primary_crn));
+  for (const base of baseGroups) {
+    const bundleMap = new Map();
+    const queue = [];
+
+    function addRow(row) {
+      const crn = normalize(row.primary_crn) || JSON.stringify(row.raw_row || row);
+      if (bundleMap.has(crn)) return;
+      bundleMap.set(crn, row);
+      queue.push(row);
+    }
+
+    base.forEach(addRow);
+
+    while (queue.length) {
+      const current = queue.shift();
+      const currentCoreq = normalize(current.corequisite_crn);
+
+      // If current points to a support section, pull it in
+      if (currentCoreq && byCrn.has(currentCoreq)) {
+        const support = byCrn.get(currentCoreq);
+        addRow(support);
+
+        // If support itself is stacked, pull in its stacked peers
+        const supportCross = normalize(support.cross_list);
+        if (supportCross && rowsByCrossList.has(supportCross)) {
+          for (const peer of rowsByCrossList.get(supportCross) || []) addRow(peer);
+        }
+      }
+
+      // If other rows point to current as their support, pull them in too
+      const currentCrn = normalize(current.primary_crn);
+      if (currentCrn) {
+        for (const row of rows) {
+          if (normalize(row.corequisite_crn) === currentCrn) {
+            addRow(row);
+            const peerCross = normalize(row.cross_list);
+            if (peerCross && rowsByCrossList.has(peerCross)) {
+              for (const peer of rowsByCrossList.get(peerCross) || []) addRow(peer);
+            }
+          }
         }
       }
     }
-  }
 
-  // Connected components
-  const visited = new Set();
-  const bundles = [];
-
-  for (const crn of adjacency.keys()) {
-    if (visited.has(crn)) continue;
-    const stack = [crn];
-    const component = [];
-
-    while (stack.length) {
-      const current = stack.pop();
-      if (!current || visited.has(current)) continue;
-      visited.add(current);
-      component.push(current);
-      for (const neighbor of adjacency.get(current) || []) {
-        if (!visited.has(neighbor)) stack.push(neighbor);
-      }
-    }
-
-    const bundleRows = component
-      .map((id) => byCrn.get(id))
-      .filter(Boolean);
-
+    const bundleRows = Array.from(bundleMap.values());
     const ids = bundleRows.map((r) => normalize(r.primary_crn)).filter(Boolean).sort().join("|") || Math.random().toString(36).slice(2, 8);
-    bundles.push(mergeBundleRows(bundleRows, `graph:${ids}`));
+    finalBundles.push(mergeBundleRows(bundleRows, `bundle:${ids}`));
   }
 
-  // Rows with no CRN still need standalone handling
-  const crnRows = new Set(rows.map((r) => normalize(r.primary_crn)).filter(Boolean));
-  for (const row of rows) {
-    const crn = normalize(row.primary_crn);
-    if (crn && crnRows.has(crn)) continue;
-    bundles.push(mergeBundleRows([row], `self:${Math.random().toString(36).slice(2, 8)}`));
+  // de-duplicate final bundles by CRN signature
+  const unique = new Map();
+  for (const bundle of finalBundles) {
+    const sig = (bundle.all_crns || []).slice().sort().join("|");
+    if (!unique.has(sig)) unique.set(sig, bundle);
   }
 
-  return bundles;
+  return Array.from(unique.values());
 }
 
 async function getProtectedWork(termCode, division) {
