@@ -142,11 +142,29 @@ function inferSection(row, subjectMap, divisionName) {
   };
 }
 
+function inferBundleType(rows) {
+  const count = rows.length;
+  const hasCross = rows.some((row) => normalize(row.cross_list));
+  const hasCoreq = rows.some((row) => normalize(row.corequisite_crn));
+  const subjectCourses = new Set(rows.map((row) => normalize(row.primary_subject_course)).filter(Boolean));
+  const titles = new Set(rows.map((row) => normalize(row.title)).filter(Boolean));
+
+  if (count <= 1) return "single";
+  if (hasCross && hasCoreq) return "mixed_bundle";
+  if (hasCoreq) return "corequisite_bundle";
+  if (hasCross) return "cross_listed";
+  if (subjectCourses.size <= 1 || titles.size <= 1) return "single_crn_multiline";
+  return "multi_part_course";
+}
+
 function mergeBundleRows(rows, bundleId) {
   const seed = rows[0] || {};
+  const bundleType = inferBundleType(rows);
   const bundle = {
     ...seed,
     assignment_group_id: bundleId,
+    bundle_type: bundleType,
+    is_true_linked: ["cross_listed", "corequisite_bundle", "mixed_bundle"].includes(bundleType),
     linked_sections: [],
     all_crns: [],
     all_titles: [],
