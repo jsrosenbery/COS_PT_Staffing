@@ -1,0 +1,14 @@
+// WAVE 14.1 FIX
+// Replace your staff_eligible logic with this
+
+const normalizedInstructor = normUpper(instructorName || "");
+
+const isStaff =
+  normalizedInstructor === "STAFF" ||
+  normalizedInstructor.startsWith("STAFF") ||
+  normalizedInstructor.includes("STAFF") ||
+  normalizedInstructor === "" ||
+  normalizedInstructor === "TBA" ||
+  normalizedInstructor.includes("TBA");
+
+staff_eligible: isStaff
