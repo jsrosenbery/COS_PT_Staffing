@@ -141,7 +141,17 @@ function inferSection(row, subjectMap, divisionName) {
     cross_list: crossList,
     corequisite_crn: corequisiteCrn,
     instructor_name: instructorName,
-    staff_eligible: normUpper(instructorName) === "STAFF",
+    const normalizedInstructor = normUpper(instructorName || "");
+
+const isStaff =
+  normalizedInstructor === "STAFF" ||
+  normalizedInstructor.startsWith("STAFF") ||
+  normalizedInstructor.includes("STAFF") ||
+  normalizedInstructor === "" ||
+  normalizedInstructor === "TBA" ||
+  normalizedInstructor.includes("TBA");
+
+staff_eligible: isStaff,
   };
 }
 
