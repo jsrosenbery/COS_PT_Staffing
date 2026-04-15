@@ -720,7 +720,7 @@ export default function PTFacultyStaffingMVP() {
   const [darkMode, setDarkMode] = useState(false);
   const [selectedChairName, setSelectedChairName] = useState(initialChairAssignments[0]?.chairName || "");
   const [selectedDeanName, setSelectedDeanName] = useState(initialDeanAssignments[0]?.deanName || "");
-  const [selectedFacultyId, setSelectedFacultyId] = useState(initialFaculty[0]?.id || "");
+  const [selectedFacultyId, setSelectedFacultyId] = useState("");
   const [chairAssignments, setChairAssignments] = useState(initialChairAssignments);
   const [deanAssignments, setDeanAssignments] = useState(initialDeanAssignments);
   const [ptStaffingRows, setPtStaffingRows] = useState(() => buildInitialPtRoster(initialFaculty, initialSeniority, initialDisciplines));
@@ -1105,44 +1105,54 @@ export default function PTFacultyStaffingMVP() {
     });
   }, [rosterPersistenceReady, ptStaffingRows]);
 
+  const previewFacultyOptions = useMemo(() => {
+    const grouped = new Map();
+    (ptStaffingRows || []).forEach((row) => {
+      if (normalize(row.active_status || "active") !== "active") return;
+      const employeeId = normalize(row.employee_id);
+      if (!employeeId) return;
+      if (!grouped.has(employeeId)) {
+        grouped.set(employeeId, {
+          id: employeeId,
+          employeeId,
+          firstName: row.first_name || "",
+          lastName: row.last_name || "",
+          email: row.email || "",
+          rows: [],
+        });
+      }
+      grouped.get(employeeId).rows.push(row);
+    });
+    return Array.from(grouped.values()).sort((a, b) =>
+      `${a.lastName} ${a.firstName}`.trim().localeCompare(`${b.lastName} ${b.firstName}`.trim())
+    );
+  }, [ptStaffingRows]);
+
+  useEffect(() => {
+    if (!previewFacultyOptions.length) return;
+    if (!previewFacultyOptions.some((item) => item.employeeId === selectedFacultyId)) {
+      setSelectedFacultyId(previewFacultyOptions[0].employeeId);
+    }
+  }, [previewFacultyOptions, selectedFacultyId]);
+
   const selectedFaculty = useMemo(
-    () => faculty.find((item) => item.id === selectedFacultyId) || faculty[0],
-    [faculty, selectedFacultyId]
+    () => previewFacultyOptions.find((item) => item.employeeId === selectedFacultyId) || previewFacultyOptions[0] || null,
+    [previewFacultyOptions, selectedFacultyId]
   );
 
   const facultySeniorityRows = useMemo(() => {
     if (!selectedFaculty) return [];
-    return seniority
-      .filter((row) => row.facultyId === selectedFaculty.id)
-      .map((row) => {
-        const discipline = disciplines.find((d) => d.id === row.disciplineId);
-        const fallbackMap = {
-          hist: "HIST",
-          math: "MATH",
-          pols: "POLS",
-          aj: "ADMINISTRATION_OF_JUSTICE",
-          anth: "ANTHROPOLOGY",
-          astr: "ASTRONOMY",
-          art: "ART",
-          asl: "AMERICAN_SIGN_LANGUAGE",
-          cina: "CINEMA",
-          music: "MUSIC",
-          bus: "BUSINESS",
-          biol: "BIOLOGICAL_SCIENCES",
-          chem: "CHEMISTRY",
-          chld: "CHILD_DEVELOPMENT",
-        };
-        return {
-          ...row,
-          disciplineCode:
-            discipline?.code ||
-            fallbackMap[row.disciplineId] ||
-            row.disciplineId?.toUpperCase?.() ||
-            row.disciplineId,
-          disciplineName: discipline?.name || row.disciplineId,
-        };
-      });
-  }, [selectedFaculty, seniority, disciplines]);
+    const rows = (selectedFaculty.rows || []).map((row) => ({
+      facultyId: selectedFaculty.employeeId,
+      employeeId: selectedFaculty.employeeId,
+      rank: row.seniority_rank || row.seniority_value || "",
+      seniorityDate: row.seniority_date || "",
+      disciplineCode: row.discipline || row.qualified_disciplines || "",
+      disciplineName: row.discipline || row.qualified_disciplines || "",
+      active: normalize(row.active_status || "active") === "active",
+    }));
+    return rows;
+  }, [selectedFaculty]);
 
   const roleScopedSections = useMemo(() => {
     if (role === "chair") {
@@ -1157,7 +1167,7 @@ export default function PTFacultyStaffingMVP() {
         return availableSections;
       }
       const scoped = availableSections.filter((section) => facultyCodes.includes(section.discipline_code));
-      return scoped.length ? scoped : availableSections;
+      return scoped;
     }
     return availableSections;
   }, [role, availableSections, chairDivisions, deanDivisions, facultySeniorityRows]);
@@ -1353,6 +1363,13 @@ export default function PTFacultyStaffingMVP() {
       if (disciplineCode && disciplineCode !== "ALL") {
         params.set("disciplineCode", disciplineCode);
       }
+      const scopedDivisions =
+        role === "chair" ? chairDivisions :
+        role === "dean" ? deanDivisions :
+        [];
+      if (scopedDivisions.length) {
+        params.set("divisions", scopedDivisions.join("|"));
+      }
 
       const response = await fetch(`${API_BASE}/available-sections?${params.toString()}`);
       const data = await response.json();
@@ -1407,6 +1424,11 @@ export default function PTFacultyStaffingMVP() {
       const workflowParams = new URLSearchParams({ termCode: activeTerm.code });
       const scopedDiscipline = selectedDisciplineCode && selectedDisciplineCode !== "ALL" ? selectedDisciplineCode : "";
       if (scopedDiscipline) workflowParams.set("disciplineCode", scopedDiscipline);
+      const scopedDivisions =
+        role === "chair" ? chairDivisions :
+        role === "dean" ? deanDivisions :
+        [];
+      if (scopedDivisions.length) workflowParams.set("divisions", scopedDivisions.join("|"));
 
       const [workflowResponse, assignmentsResponse, logsResponse] = await Promise.all([
         fetch(`${API_BASE}/chair-workflow?${workflowParams.toString()}`),
@@ -1556,7 +1578,7 @@ export default function PTFacultyStaffingMVP() {
   async function loadFacultyPreferences(facultyId = selectedFacultyId) {
     if (role !== "faculty" || !activeTerm?.code) return;
     try {
-      const params = new URLSearchParams({ termCode: activeTerm.code, facultyId });
+      const params = new URLSearchParams({ termCode: activeTerm.code, facultyId: facultyId || selectedFaculty?.employeeId || "" });
       const response = await fetch(`${API_BASE}/preferences?${params.toString()}`);
       const data = await response.json();
       if (!response.ok) {
@@ -1614,7 +1636,7 @@ export default function PTFacultyStaffingMVP() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           termCode: activeTerm.code,
-          facultyId: selectedFaculty.id,
+          facultyId: selectedFaculty.employeeId,
           employeeId: selectedFaculty.employeeId,
           facultyName: facultyName(selectedFaculty),
           preferences: facultyPreferences.map((item, index) => ({
@@ -1630,7 +1652,7 @@ export default function PTFacultyStaffingMVP() {
         return;
       }
       setPreferencesMessage(`Saved ${data.savedCount || 0} preference(s).`);
-      loadFacultyPreferences(selectedFaculty.id);
+      loadFacultyPreferences(selectedFaculty.employeeId);
     } catch (error) {
       setPreferencesMessage(error.message || "Could not save preferences.");
     } finally {
@@ -2663,8 +2685,8 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     setTimeout(() => loadFacultyPreferences(e.target.value), 0);
                   }}
                 >
-                  {faculty.map((item) => (
-                    <option key={item.id} value={item.id}>
+                  {previewFacultyOptions.map((item) => (
+                    <option key={item.employeeId} value={item.employeeId}>
                       {facultyName(item)}
                     </option>
                   ))}

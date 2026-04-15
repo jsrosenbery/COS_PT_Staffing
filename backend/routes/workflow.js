@@ -121,6 +121,7 @@ function inferSection(row, subjectMap, divisionName) {
   const meetings = parseMeetings(row);
   const crossList = normalize(findValue(row, ["Cross_List", "CROSS_LIST", "Cross List"]));
   const corequisiteCrn = normalize(findValue(row, ["COREQUISITE_CRN", "Corequisite_CRN", "Corequisite CRN"]));
+  const instructorName = normalize(findValue(row, ["INSTRUCTOR", "Instructor", "FACULTY", "Faculty"]));
   const disciplineCode = subjectMap.get(normUpper(subject)) || "";
   return {
     division,
@@ -139,6 +140,8 @@ function inferSection(row, subjectMap, divisionName) {
     raw_row: row,
     cross_list: crossList,
     corequisite_crn: corequisiteCrn,
+    instructor_name: instructorName,
+    staff_eligible: normUpper(instructorName) === "STAFF",
   };
 }
 
@@ -174,7 +177,9 @@ function mergeBundleRows(rows, bundleId) {
     all_crns: [],
     all_titles: [],
     all_subject_courses: [],
+    all_instructors: [],
     meetings: [],
+    staff_eligible: true,
   };
 
   for (const row of rows) {
@@ -189,6 +194,8 @@ function mergeBundleRows(rows, bundleId) {
     if (row.primary_crn && !bundle.all_crns.includes(row.primary_crn)) bundle.all_crns.push(row.primary_crn);
     if (row.title && !bundle.all_titles.includes(row.title)) bundle.all_titles.push(row.title);
     if (row.primary_subject_course && !bundle.all_subject_courses.includes(row.primary_subject_course)) bundle.all_subject_courses.push(row.primary_subject_course);
+    if (row.instructor_name && !bundle.all_instructors.includes(row.instructor_name)) bundle.all_instructors.push(row.instructor_name);
+    bundle.staff_eligible = bundle.staff_eligible && Boolean(row.staff_eligible);
     for (const meeting of row.meetings || []) {
       const sig = JSON.stringify(meeting);
       if (!(bundle.meetings || []).some((m) => JSON.stringify(m) === sig)) bundle.meetings.push(meeting);
@@ -434,7 +441,10 @@ router.post("/upload/schedule/preview", upload.single("file"), async (req, res) 
     const parsed = parseCsvBuffer(file);
     const rows = Array.isArray(parsed.data) ? parsed.data : [];
     const sections = buildInstructionalBundles(rows.map((row) => inferSection(row, subjectMap, divisionName)));
-    const inDivision = sections.filter((row) => canonicalDivisionName(row.division) === canonicalDivisionName(divisionName));
+    const inDivision = sections.filter((row) =>
+      canonicalDivisionName(row.division) === canonicalDivisionName(divisionName) &&
+      Boolean(row.staff_eligible)
+    );
     const ignoredRowsFromOtherDivisions = rows.filter((row) => canonicalDivisionName(findValue(row, ["DIVISION", "Division", "division"]) || divisionName) !== canonicalDivisionName(divisionName)).length;
     const unmappedSubjects = Array.from(new Set(inDivision.filter((s) => !s.discipline_code && s.subject_code).map((s) => s.subject_code))).sort();
     const protectedWork = await getProtectedWork(termCode, divisionName);
@@ -468,7 +478,10 @@ router.post("/upload/schedule", upload.single("file"), async (req, res) => {
     const parsed = parseCsvBuffer(file);
     const rows = Array.isArray(parsed.data) ? parsed.data : [];
     const sections = buildInstructionalBundles(rows.map((row) => inferSection(row, subjectMap, divisionName)));
-    const inDivision = sections.filter((row) => canonicalDivisionName(row.division) === canonicalDivisionName(divisionName));
+    const inDivision = sections.filter((row) =>
+      canonicalDivisionName(row.division) === canonicalDivisionName(divisionName) &&
+      Boolean(row.staff_eligible)
+    );
     const ignoredRowsFromOtherDivisions = rows.filter((row) => canonicalDivisionName(findValue(row, ["DIVISION", "Division", "division"]) || divisionName) !== canonicalDivisionName(divisionName)).length;
     const unmappedSubjects = Array.from(new Set(inDivision.filter((s) => !s.discipline_code && s.subject_code).map((s) => s.subject_code))).sort();
 
@@ -529,12 +542,20 @@ router.post("/upload/schedule", upload.single("file"), async (req, res) => {
 });
 
 router.get("/available-sections", async (req, res) => {
-  const { termCode = "", disciplineCode = "" } = req.query;
+  const { termCode = "", disciplineCode = "", divisions = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
     const params = [termCode];
-    let where = `WHERE s.term_code = $1`;
-    if (disciplineCode) { params.push(disciplineCode); where += ` AND s.discipline_code = $2`; }
+    let where = `WHERE s.term_code = $1 AND COALESCE((s.raw_row->>'staff_eligible')::boolean, true) = true`;
+    if (disciplineCode) {
+      params.push(disciplineCode);
+      where += ` AND s.discipline_code = $${params.length}`;
+    }
+    const divisionList = String(divisions || "").split("|").map((v) => v.trim()).filter(Boolean);
+    if (divisionList.length) {
+      params.push(divisionList);
+      where += ` AND s.division = ANY($${params.length}::text[])`;
+    }
     const result = await query(
       `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.subject_code, s.course_number,
               s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings, s.raw_row
@@ -581,25 +602,42 @@ router.get("/division-statuses", async (req, res) => {
 });
 
 router.get("/chair-workflow", async (req, res) => {
-  const { termCode = "", disciplineCode = "" } = req.query;
+  const { termCode = "", disciplineCode = "", divisions = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
     const params = [termCode];
-    let disciplineFilter = "";
-    if (disciplineCode) { params.push(disciplineCode); disciplineFilter = ` AND s.discipline_code = $2`; }
+    let where = `WHERE s.term_code = $1 AND COALESCE((s.raw_row->>'staff_eligible')::boolean, true) = true`;
+    if (disciplineCode) {
+      params.push(disciplineCode);
+      where += ` AND s.discipline_code = $${params.length}`;
+    }
+    const divisionList = String(divisions || "").split("|").map((v) => v.trim()).filter(Boolean);
+    if (divisionList.length) {
+      params.push(divisionList);
+      where += ` AND s.division = ANY($${params.length}::text[])`;
+    }
     const result = await query(
       `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus,
               s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings,
               pt.employee_id, CONCAT_WS(' ', pt.first_name, pt.last_name) AS faculty_name,
               COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '') AS seniority_rank,
-              p.preference_rank
+              pref.preference_rank
        FROM scope_sections s
-       JOIN scope_pt_faculty pt ON pt.division = s.division AND pt.discipline = s.discipline_code AND COALESCE(pt.active_status, 'active') = 'active'
-       LEFT JOIN scope_preferences p ON p.term_code = s.term_code AND p.assignment_group_id = s.assignment_group_id AND p.employee_id = pt.employee_id
-       WHERE s.term_code = $1 ${disciplineFilter}
+       JOIN scope_pt_faculty pt
+         ON pt.division = s.division
+        AND pt.discipline = s.discipline_code
+        AND COALESCE(pt.active_status, 'active') = 'active'
+       LEFT JOIN LATERAL (
+         SELECT MIN(p.preference_rank) AS preference_rank
+         FROM scope_preferences p
+         WHERE p.term_code = s.term_code
+           AND p.assignment_group_id = s.assignment_group_id
+           AND (p.employee_id = pt.employee_id OR p.faculty_id = pt.employee_id)
+       ) pref ON TRUE
+       ${where}
        ORDER BY s.primary_subject_course, s.primary_crn,
                 COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '999999') NULLS LAST,
-                p.preference_rank NULLS LAST, faculty_name`,
+                pref.preference_rank NULLS LAST, faculty_name`,
       params
     );
     res.json({ rows: result.rows.map((r) => ({ ...r, meetings: r.meetings || [] })) });
