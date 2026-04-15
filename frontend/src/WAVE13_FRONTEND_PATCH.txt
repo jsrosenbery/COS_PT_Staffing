@@ -1,0 +1,62 @@
+/*
+WAVE 13 PATCH NOTES
+
+Goal:
+Only show "Linked Sections" badge for TRUE linked staffing bundles.
+Do not show it for same-CRN multi-line rows.
+
+Apply these edits inside frontend/src/pt-faculty-staffing-mvp.jsx.
+
+Find wherever the badge is rendered for linked sections.
+Replace broad checks like:
+
+  linkedSections?.length > 1
+
+with this helper logic:
+
+const getBundleMeta = (section) => {
+  const raw = section?.raw_row || {};
+  const linkedSections = raw.linked_sections || section?.linked_sections || [];
+  const distinctCrns = new Set(
+    [
+      ...(section?.primary_crn ? String(section.primary_crn).split("/").map((x) => x.trim()) : []),
+      ...linkedSections
+        .map((s) => String(s?.primary_crn || "").trim())
+        .filter(Boolean),
+    ].filter(Boolean)
+  );
+
+  const bundleType = raw.bundle_type || section?.bundle_type || "single";
+  const isTrueLinkedBundle =
+    raw.is_true_linked_bundle ??
+    section?.is_true_linked_bundle ??
+    (
+      distinctCrns.size > 1 &&
+      ["cross_listed", "corequisite_bundle", "mixed_bundle"].includes(bundleType)
+    );
+
+  return {
+    linkedSections,
+    distinctCrnCount: raw.distinct_crn_count || section?.distinct_crn_count || distinctCrns.size,
+    bundleType,
+    isTrueLinkedBundle,
+  };
+};
+
+Then render badges like this:
+
+const meta = getBundleMeta(section);
+
+{meta.isTrueLinkedBundle ? (
+  <span className="section-badge linked">Linked Sections</span>
+) : meta.bundleType === "single_crn_multiline" || meta.bundleType === "multi_part_course" ? (
+  <span className="section-badge multipart">Multi-part course</span>
+) : null}
+
+Important:
+Anything with only one true CRN should NEVER show "Linked Sections",
+even if it came from multiple source rows.
+
+Examples that should stop showing Linked Sections:
+20532, 20557, 20034, 21180, 20033, 20097
+unless they truly bundle multiple distinct CRNs.
