@@ -143,17 +143,21 @@ function inferSection(row, subjectMap, divisionName) {
 }
 
 function inferBundleType(rows) {
-  const count = rows.length;
+  const distinctCrns = new Set(rows.map((row) => normalize(row.primary_crn)).filter(Boolean));
   const hasCross = rows.some((row) => normalize(row.cross_list));
   const hasCoreq = rows.some((row) => normalize(row.corequisite_crn));
   const subjectCourses = new Set(rows.map((row) => normalize(row.primary_subject_course)).filter(Boolean));
   const titles = new Set(rows.map((row) => normalize(row.title)).filter(Boolean));
 
-  if (count <= 1) return "single";
+  if (distinctCrns.size <= 1) {
+    if (rows.length <= 1) return "single";
+    if (subjectCourses.size <= 1 || titles.size <= 1) return "single_crn_multiline";
+    return "multi_part_course";
+  }
+
   if (hasCross && hasCoreq) return "mixed_bundle";
   if (hasCoreq) return "corequisite_bundle";
   if (hasCross) return "cross_listed";
-  if (subjectCourses.size <= 1 || titles.size <= 1) return "single_crn_multiline";
   return "multi_part_course";
 }
 
@@ -164,7 +168,8 @@ function mergeBundleRows(rows, bundleId) {
     ...seed,
     assignment_group_id: bundleId,
     bundle_type: bundleType,
-    is_true_linked: ["cross_listed", "corequisite_bundle", "mixed_bundle"].includes(bundleType),
+    is_true_linked: false,
+    distinct_crn_count: 0,
     linked_sections: [],
     all_crns: [],
     all_titles: [],
@@ -198,6 +203,8 @@ function mergeBundleRows(rows, bundleId) {
   bundle.primary_subject_course = bundle.all_subject_courses.join(" + ") || bundle.primary_subject_course;
   bundle.title = bundle.all_titles.join(" + ") || bundle.title;
   bundle.primary_crn = bundle.all_crns.join(" / ") || bundle.primary_crn;
+  bundle.distinct_crn_count = Array.from(new Set((bundle.all_crns || []).filter(Boolean))).length || 1;
+  bundle.is_true_linked = bundle.distinct_crn_count > 1 && ["cross_listed", "corequisite_bundle", "mixed_bundle"].includes(bundle.bundle_type);
   return bundle;
 }
 
@@ -501,7 +508,7 @@ router.post("/upload/schedule", upload.single("file"), async (req, res) => {
           section.title, section.campus, section.subject_code, section.course_number, section.discipline_code,
           section.instructional_method, section.display_modality, section.modality,
           JSON.stringify(section.meetings || []),
-          JSON.stringify({ ...(section.raw_row || {}), linked_sections: section.linked_sections || [] }),
+          JSON.stringify({ ...(section.raw_row || {}), linked_sections: section.linked_sections || [], bundle_type: section.bundle_type || "single", distinct_crn_count: section.distinct_crn_count || 1, is_true_linked: Boolean(section.is_true_linked) }),
         ]
       );
     }
