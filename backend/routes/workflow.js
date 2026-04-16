@@ -123,6 +123,15 @@ function inferSection(row, subjectMap, divisionName) {
   const corequisiteCrn = normalize(findValue(row, ["COREQUISITE_CRN", "Corequisite_CRN", "Corequisite CRN"]));
   const instructorName = normalize(findValue(row, ["INSTRUCTOR", "Instructor", "FACULTY", "Faculty"]));
   const disciplineCode = subjectMap.get(normUpper(subject)) || "";
+  const normalizedInstructor = normUpper(instructorName || "");
+  const isStaff =
+    normalizedInstructor === "STAFF" ||
+    normalizedInstructor.startsWith("STAFF") ||
+    normalizedInstructor.includes("STAFF") ||
+    normalizedInstructor === "" ||
+    normalizedInstructor === "TBA" ||
+    normalizedInstructor.includes("TBA");
+
   return {
     division,
     assignment_group_id: "",
@@ -141,17 +150,7 @@ function inferSection(row, subjectMap, divisionName) {
     cross_list: crossList,
     corequisite_crn: corequisiteCrn,
     instructor_name: instructorName,
-    const normalizedInstructor = normUpper(instructorName || "");
-
-const isStaff =
-  normalizedInstructor === "STAFF" ||
-  normalizedInstructor.startsWith("STAFF") ||
-  normalizedInstructor.includes("STAFF") ||
-  normalizedInstructor === "" ||
-  normalizedInstructor === "TBA" ||
-  normalizedInstructor.includes("TBA");
-
-staff_eligible: isStaff,
+    staff_eligible: isStaff,
   };
 }
 
