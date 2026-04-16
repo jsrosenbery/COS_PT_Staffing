@@ -3,7 +3,7 @@ import Papa from "papaparse";
 import cosLogo from "./assets/cos-logo.jpg";
 import AdminOperationsPanel from "./AdminOperationsPanel";
 import { buildInitialPtRoster } from "./adminOpsUtils";
-import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty } from "./persistenceApi";
+import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty, appendAuditLog, wipeActivePTRoster } from "./persistenceApi";
 import { API_BASE, fetchJson } from "./apiClient";
 
 const initialTerms = [];
@@ -758,6 +758,8 @@ export default function PTFacultyStaffingMVP() {
   const [loadingSections, setLoadingSections] = useState(false);
   const [sectionsError, setSectionsError] = useState("");
   const [selectedDisciplineCode, setSelectedDisciplineCode] = useState("ALL");
+  const [ptFacultyDisciplineFilter, setPtFacultyDisciplineFilter] = useState("ALL");
+  const [preferenceWipeMessage, setPreferenceWipeMessage] = useState("");
   const [chairWorkflowRows, setChairWorkflowRows] = useState([]);
   const [tentativeAssignments, setTentativeAssignments] = useState([]);
   const [decisionLogs, setDecisionLogs] = useState([]);
@@ -891,6 +893,62 @@ export default function PTFacultyStaffingMVP() {
       setRosterPersistenceReady(true);
     }
   }
+
+
+  async function writeAudit(eventType, note, extras = {}) {
+    try {
+      await appendAuditLog({
+        event_type: eventType,
+        actor_name:
+          role === "admin" ? "Scheduler / Admin" :
+          role === "dean" ? selectedDeanName || "Dean" :
+          role === "chair" ? selectedChairName || "Division Chair" :
+          selectedFaculty ? facultyName(selectedFaculty) : "System",
+        actor_role: role,
+        division: extras.division || "",
+        term: extras.term || activeTerm?.code || "",
+        section_key: extras.section_key || "",
+        instructor_name: extras.instructor_name || "",
+        old_value: extras.old_value || null,
+        new_value: extras.new_value || null,
+        note: note || "",
+        source: extras.source || "ui",
+      });
+    } catch (error) {
+      console.warn("Could not write audit log", error);
+    }
+  }
+
+  async function wipePreferencesForDivision() {
+    if (!activeTerm?.code || !selectedUploadDivision) return;
+    const confirmed = window.confirm(
+      `Delete saved faculty preferences for ${selectedUploadDivision} in ${activeTerm.code}? This cannot be undone.`
+    );
+    if (!confirmed) return;
+    setPreferenceWipeMessage("");
+    try {
+      const response = await fetch(`${API_BASE}/preferences?termCode=${encodeURIComponent(activeTerm.code)}&division=${encodeURIComponent(selectedUploadDivision)}`, {
+        method: "DELETE",
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setPreferenceWipeMessage(data.error || "Could not wipe preferences.");
+        return;
+      }
+      setPreferenceWipeMessage(`Deleted ${data.deletedCount || 0} saved preference row(s) for ${selectedUploadDivision}.`);
+      await writeAudit("preferences_wiped", `Cleared saved faculty preferences for ${selectedUploadDivision}.`, {
+        division: selectedUploadDivision,
+        term: activeTerm.code,
+        new_value: String(data.deletedCount || 0),
+      });
+      if (role === "chair" || role === "dean" || role === "admin") {
+        await loadChairWorkflow();
+      }
+    } catch (error) {
+      setPreferenceWipeMessage(error.message || "Could not wipe preferences.");
+    }
+  }
+
 
   async function loadTerms() {
     try {
@@ -1089,9 +1147,17 @@ export default function PTFacultyStaffingMVP() {
       return;
     }
     const rows = expandRolesForSave(chairAssignments, deanAssignments);
-    saveRoles(rows).catch((error) => {
-      console.warn("Could not persist role directory", error);
-    });
+    (async () => {
+      try {
+        await saveRoles(rows);
+        await writeAudit("role_directory_saved", `Saved ${rows.length} role-directory row(s).`, {
+          term: activeTerm?.code || "",
+          new_value: String(rows.length),
+        });
+      } catch (error) {
+        console.warn("Could not persist role directory", error);
+      }
+    })();
   }, [directoryPersistenceReady, chairAssignments, deanAssignments]);
 
   useEffect(() => {
@@ -1100,9 +1166,17 @@ export default function PTFacultyStaffingMVP() {
       skipNextRosterPersistRef.current = false;
       return;
     }
-    savePTFaculty(ptStaffingRows).catch((error) => {
-      console.warn("Could not persist PT roster", error);
-    });
+    (async () => {
+      try {
+        await savePTFaculty(ptStaffingRows);
+        await writeAudit("pt_roster_saved", `Saved ${ptStaffingRows.length} active PT roster row(s).`, {
+          term: activeTerm?.code || "",
+          new_value: String(ptStaffingRows.length),
+        });
+      } catch (error) {
+        console.warn("Could not persist PT roster", error);
+      }
+    })();
   }, [rosterPersistenceReady, ptStaffingRows]);
 
   const previewFacultyOptions = useMemo(() => {
@@ -1111,6 +1185,8 @@ export default function PTFacultyStaffingMVP() {
       if (normalize(row.active_status || "active") !== "active") return;
       const employeeId = normalize(row.employee_id);
       if (!employeeId) return;
+      const approvedDiscipline = normalize(row.discipline || row.qualified_disciplines || "");
+      if (ptFacultyDisciplineFilter !== "ALL" && approvedDiscipline !== ptFacultyDisciplineFilter) return;
       if (!grouped.has(employeeId)) {
         grouped.set(employeeId, {
           id: employeeId,
@@ -1126,7 +1202,7 @@ export default function PTFacultyStaffingMVP() {
     return Array.from(grouped.values()).sort((a, b) =>
       `${a.lastName} ${a.firstName}`.trim().localeCompare(`${b.lastName} ${b.firstName}`.trim())
     );
-  }, [ptStaffingRows]);
+  }, [ptStaffingRows, ptFacultyDisciplineFilter]);
 
   useEffect(() => {
     if (!previewFacultyOptions.length) return;
@@ -1161,8 +1237,10 @@ export default function PTFacultyStaffingMVP() {
     if (role === "dean") {
       return availableSections.filter((section) => deanDivisions.includes(canonicalDivisionName(section.division)));
     }
-    if (role === "faculty") {
-      const facultyCodes = facultySeniorityRows.map((row) => row.disciplineCode).filter(Boolean);
+    if (role === "faculty" || role === "chair" || role === "dean" || role === "admin") {
+      const facultyCodes = facultySeniorityRows
+        .map((row) => row.disciplineCode)
+        .filter((code) => !ptFacultyDisciplineFilter || ptFacultyDisciplineFilter === "ALL" || code === ptFacultyDisciplineFilter);
       if (!facultyCodes.length) {
         return availableSections;
       }
@@ -1652,6 +1730,12 @@ export default function PTFacultyStaffingMVP() {
         return;
       }
       setPreferencesMessage(`Saved ${data.savedCount || 0} preference(s).`);
+      await writeAudit("preferences_saved", `Saved ${data.savedCount || 0} faculty preference row(s).`, {
+        division: "",
+        term: activeTerm.code,
+        instructor_name: facultyName(selectedFaculty),
+        new_value: String(data.savedCount || 0),
+      });
       loadFacultyPreferences(selectedFaculty.employeeId);
     } catch (error) {
       setPreferencesMessage(error.message || "Could not save preferences.");
@@ -2037,6 +2121,11 @@ export default function PTFacultyStaffingMVP() {
                 <div style={{ marginTop: 8, fontSize: 14, maxWidth: 720, lineHeight: 1.5, opacity: 0.96 }}>
                   Smarter faculty staffing starts here.
                 </div>
+                {preferenceWipeMessage ? (
+                  <div style={{ marginTop: 10, color: preferenceWipeMessage.startsWith("Deleted") ? "#166534" : "#b91c1c", fontWeight: 700 }}>
+                    {preferenceWipeMessage}
+                  </div>
+                ) : null}
               </div>
             </div>
             <div style={{ ...ui.row, alignItems: "center" }}>
@@ -2601,7 +2690,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
         ) : null}
 
 
-        {role === "chair" ? (
+        {(role === "chair" || role === "dean" || role === "admin") ? (
           <div style={ui.card}>
             <div style={ui.between}>
               <div>
@@ -2633,7 +2722,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           </div>
         ) : null}
 
-        {role === "dean" ? (
+        {(role === "dean" || role === "admin") ? (
           <div style={ui.card}>
             <div style={ui.between}>
               <div>
@@ -2665,16 +2754,32 @@ OH,ORNAMENTAL_HORTICULTURE`}
           </div>
         ) : null}
 
-        {role === "faculty" ? (
+        {(role === "faculty" || role === "chair" || role === "dean" || role === "admin") ? (
           <div style={ui.card}>
             <div style={ui.between}>
               <div>
                 <h2 style={ui.cardTitle}>Part-Time Faculty View</h2>
                 <div style={ui.cardDesc}>
-                  This view is scoped to a sample faculty member's seniority disciplines for preview purposes. If no sample mapping matches the loaded schedule yet, the view will temporarily fall back to all available sections so you can keep testing.
+                  This view is driven by the uploaded PT roster. Filter by discipline to narrow the preview faculty list to instructors approved for that discipline.
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <select
+                  style={ui.alphaSelect}
+                  value={ptFacultyDisciplineFilter}
+                  onChange={(e) => {
+                    setPtFacultyDisciplineFilter(e.target.value);
+                    setSelectedFacultyId("");
+                    setFacultyPreferences([]);
+                  }}
+                >
+                  <option value="ALL">All PT disciplines</option>
+                  {Array.from(new Set((ptStaffingRows || []).map((row) => normalize(row.discipline || row.qualified_disciplines || "")).filter(Boolean))).sort().map((code) => (
+                    <option key={code} value={code}>
+                      {code}
+                    </option>
+                  ))}
+                </select>
                 <select
                   style={ui.alphaSelect}
                   value={selectedFacultyId}
@@ -2691,7 +2796,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     </option>
                   ))}
                 </select>
-                <button style={ui.btn} onClick={() => loadFacultyPreferences(selectedFacultyId)}>
+                <button style={ui.btn} onClick={() => loadFacultyPreferences(selectedFacultyId || selectedFaculty?.employeeId)}>
                   Load Saved Preferences
                 </button>
               </div>
@@ -2730,6 +2835,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   <button style={ui.btn} onClick={exportPreferences}>
                     Export Preferences
                   </button>
+                  {role === "admin" ? (
+                    <button style={ui.btn} onClick={wipePreferencesForDivision}>
+                      Wipe Division Preferences
+                    </button>
+                  ) : null}
                   <button
                     style={ui.btn}
                     onClick={() => downloadCsvFromRows(
@@ -3196,7 +3306,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           ) : null}
 
-          {role === "faculty" ? (
+          {(role === "faculty" || role === "chair" || role === "dean" || role === "admin") ? (
             <div className="cos-panel-grid" style={ui.panelGrid}>
               <div>
                 <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
@@ -3331,7 +3441,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <td style={ui.td}>
                         <span style={modalityPillStyle(sectionModalityLabel(section))}>{sectionModalityLabel(section)}</span>
                       </td>
-                      {role === "faculty" ? (
+                      {(role === "faculty" || role === "chair" || role === "dean" || role === "admin") ? (
                         <td style={ui.td}>
                           <button style={ui.btnPrimary} onClick={() => addPreference(section)}>
                             Add to Preferences

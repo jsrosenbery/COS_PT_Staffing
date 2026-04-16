@@ -777,6 +777,37 @@ router.post("/preferences", async (req, res) => {
   } finally { client.release(); }
 });
 
+
+router.delete("/preferences", async (req, res) => {
+  const { termCode = "", division = "" } = req.query;
+  if (!termCode || !division) return res.status(400).json({ error: "termCode and division are required." });
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const sectionResult = await client.query(
+      `SELECT assignment_group_id
+       FROM scope_sections
+       WHERE term_code = $1 AND division = $2`,
+      [termCode, division]
+    );
+    const sectionIds = sectionResult.rows.map((r) => r.assignment_group_id);
+    if (!sectionIds.length) {
+      await client.query("COMMIT");
+      return res.json({ success: true, deletedCount: 0 });
+    }
+    const deleteResult = await client.query(
+      `DELETE FROM scope_preferences
+       WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`,
+      [termCode, sectionIds]
+    );
+    await client.query("COMMIT");
+    res.json({ success: true, deletedCount: deleteResult.rowCount || 0 });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: error.message });
+  } finally { client.release(); }
+});
+
 router.get("/preferences/export", async (req, res) => {
   const { termCode = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
