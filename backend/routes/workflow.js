@@ -844,4 +844,22 @@ router.get("/decision-logs", async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+
+router.post("/preferences/wipe", async (req,res)=>{
+ const {termCode,division}=req.body||{};
+ if(!termCode||!division) return res.status(400).json({error:"termCode and division required"});
+ try{
+   const result=await query(
+     `DELETE FROM scope_preferences
+      WHERE term_code=$1 AND assignment_group_id IN (
+        SELECT assignment_group_id FROM scope_sections
+        WHERE term_code=$1 AND division=$2
+      )`,[termCode,division]);
+   await query(`INSERT INTO scope_audit_log (term,event_type,note)
+                VALUES ($1,'PREFERENCE_WIPE',$2)`,
+                [termCode,`Wiped ${division}`]);
+   res.json({ok:true,deleted:result.rowCount});
+ }catch(e){res.status(500).json({error:e.message});}
+});
 export default router;
+

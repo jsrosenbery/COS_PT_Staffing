@@ -3064,7 +3064,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
               <div style={{ display: "grid", gap: 16 }}>
                 {(role === "chair" || role === "dean" || tentativeAssignments.length > 0) ? (
                 <div style={ui.sectionCard}>
-                  <div style={{ fontWeight: 800 }}>Tentative Assignments</div>
+                  <div style={{ fontWeight: 800 }}>/* hidden */</div>
                   <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
                     Live persistence snapshot with one-click unassign and queue-based reassignment.
                   </div>
