@@ -145,10 +145,6 @@ function normalize(s) {
   return String(s ?? "").trim();
 }
 
-function normalizeDisciplineCode(value) {
-  return normalize(value).toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-}
-
 
 function canonicalDivisionName(value) {
   const raw = normalize(value);
@@ -1189,7 +1185,7 @@ export default function PTFacultyStaffingMVP() {
       if (normalize(row.active_status || "active") !== "active") return;
       const employeeId = normalize(row.employee_id);
       if (!employeeId) return;
-      const approvedDiscipline = normalizeDisciplineCode(row.discipline || row.qualified_disciplines || "");
+      const approvedDiscipline = normalize(row.discipline || row.qualified_disciplines || "");
       if (ptFacultyDisciplineFilter !== "ALL" && approvedDiscipline !== ptFacultyDisciplineFilter) return;
       if (!grouped.has(employeeId)) {
         grouped.set(employeeId, {
@@ -1227,7 +1223,7 @@ export default function PTFacultyStaffingMVP() {
       employeeId: selectedFaculty.employeeId,
       rank: row.seniority_rank || row.seniority_value || "",
       seniorityDate: row.seniority_date || "",
-      disciplineCode: normalizeDisciplineCode(row.discipline || row.qualified_disciplines || ""),
+      disciplineCode: row.discipline || row.qualified_disciplines || "",
       disciplineName: row.discipline || row.qualified_disciplines || "",
       active: normalize(row.active_status || "active") === "active",
     }));
@@ -1248,7 +1244,7 @@ export default function PTFacultyStaffingMVP() {
       if (!facultyCodes.length) {
         return availableSections;
       }
-      const scoped = availableSections.filter((section) => facultyCodes.includes(normalizeDisciplineCode(section.discipline_code)));
+      const scoped = availableSections.filter((section) => facultyCodes.includes(section.discipline_code));
       return scoped;
     }
     return availableSections;
@@ -2778,7 +2774,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   }}
                 >
                   <option value="ALL">All PT disciplines</option>
-                  {Array.from(new Set((ptStaffingRows || []).map((row) => normalizeDisciplineCode(row.discipline || row.qualified_disciplines || "")).filter(Boolean))).sort().map((code) => (
+                  {Array.from(new Set((ptStaffingRows || []).map((row) => normalize(row.discipline || row.qualified_disciplines || "")).filter(Boolean))).sort().map((code) => (
                     <option key={code} value={code}>
                       {code}
                     </option>
