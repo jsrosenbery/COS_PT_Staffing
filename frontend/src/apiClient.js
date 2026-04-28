@@ -3,10 +3,25 @@ const RAW_BASE =
   "https://cos-pt-staffing.onrender.com/api";
 
 export const API_BASE = RAW_BASE.replace(/\/$/, "");
+const API_TOKEN = (import.meta.env.VITE_API_TOKEN || "").trim();
+
+export function withAuthHeaders(options = {}) {
+  if (!API_TOKEN) return options;
+
+  const headers = new Headers(options.headers || {});
+  if (!headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${API_TOKEN}`);
+  }
+  return { ...options, headers };
+}
+
+export function apiFetch(input, options = {}) {
+  return fetch(input, withAuthHeaders(options));
+}
 
 export async function fetchJson(path, options = {}) {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
-  const response = await fetch(`${API_BASE}${normalizedPath}`, options);
+  const response = await apiFetch(`${API_BASE}${normalizedPath}`, options);
 
   const contentType = response.headers.get("content-type") || "";
   const text = await response.text();

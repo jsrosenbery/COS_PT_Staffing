@@ -4,7 +4,7 @@ import cosLogo from "./assets/cos-logo.jpg";
 import AdminOperationsPanel from "./AdminOperationsPanel";
 import { buildInitialPtRoster } from "./adminOpsUtils";
 import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty, appendAuditLog, wipeActivePTRoster } from "./persistenceApi";
-import { API_BASE, fetchJson } from "./apiClient";
+import { API_BASE, apiFetch, fetchJson } from "./apiClient";
 
 const initialTerms = [];
 
@@ -927,7 +927,7 @@ export default function PTFacultyStaffingMVP() {
     if (!confirmed) return;
     setPreferenceWipeMessage("");
     try {
-      const response = await fetch(`${API_BASE}/preferences?termCode=${encodeURIComponent(activeTerm.code)}&division=${encodeURIComponent(selectedUploadDivision)}`, {
+      const response = await apiFetch(`${API_BASE}/preferences?termCode=${encodeURIComponent(activeTerm.code)}&division=${encodeURIComponent(selectedUploadDivision)}`, {
         method: "DELETE",
       });
       const data = await response.json();
@@ -1449,7 +1449,7 @@ export default function PTFacultyStaffingMVP() {
         params.set("divisions", scopedDivisions.join("|"));
       }
 
-      const response = await fetch(`${API_BASE}/available-sections?${params.toString()}`);
+      const response = await apiFetch(`${API_BASE}/available-sections?${params.toString()}`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -1480,7 +1480,7 @@ export default function PTFacultyStaffingMVP() {
     if (!activeTerm?.code) return;
     setLoadingDivisionStatuses(true);
     try {
-      const response = await fetch(`${API_BASE}/division-statuses?termCode=${encodeURIComponent(activeTerm.code)}`);
+      const response = await apiFetch(`${API_BASE}/division-statuses?termCode=${encodeURIComponent(activeTerm.code)}`);
       const data = await response.json();
       if (!response.ok) {
         setDivisionStatuses([]);
@@ -1509,9 +1509,9 @@ export default function PTFacultyStaffingMVP() {
       if (scopedDivisions.length) workflowParams.set("divisions", scopedDivisions.join("|"));
 
       const [workflowResponse, assignmentsResponse, logsResponse] = await Promise.all([
-        fetch(`${API_BASE}/chair-workflow?${workflowParams.toString()}`),
-        fetch(`${API_BASE}/assignments?${workflowParams.toString()}`),
-        fetch(`${API_BASE}/decision-logs?${workflowParams.toString()}`),
+        apiFetch(`${API_BASE}/chair-workflow?${workflowParams.toString()}`),
+        apiFetch(`${API_BASE}/assignments?${workflowParams.toString()}`),
+        apiFetch(`${API_BASE}/decision-logs?${workflowParams.toString()}`),
       ]);
 
       const workflowData = await workflowResponse.json();
@@ -1569,7 +1569,7 @@ export default function PTFacultyStaffingMVP() {
     setChairMessage("");
     try {
       const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
-      const response = await fetch(`${API_BASE}/assignments`, {
+      const response = await apiFetch(`${API_BASE}/assignments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1601,7 +1601,7 @@ export default function PTFacultyStaffingMVP() {
     setChairMessage("");
     try {
       const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
-      const response = await fetch(`${API_BASE}/assignments/${assignment.id}`, {
+      const response = await apiFetch(`${API_BASE}/assignments/${assignment.id}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ actorName }),
@@ -1633,7 +1633,7 @@ export default function PTFacultyStaffingMVP() {
     setChairMessage("");
     try {
       const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
-      const response = await fetch(`${API_BASE}/assignments/${assignment.id}/reassign`, {
+      const response = await apiFetch(`${API_BASE}/assignments/${assignment.id}/reassign`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1657,7 +1657,7 @@ export default function PTFacultyStaffingMVP() {
     if (role !== "faculty" || !activeTerm?.code) return;
     try {
       const params = new URLSearchParams({ termCode: activeTerm.code, facultyId: facultyId || selectedFaculty?.employeeId || "" });
-      const response = await fetch(`${API_BASE}/preferences?${params.toString()}`);
+      const response = await apiFetch(`${API_BASE}/preferences?${params.toString()}`);
       const data = await response.json();
       if (!response.ok) {
         setPreferencesMessage(data.error || "Could not load saved preferences.");
@@ -1709,7 +1709,7 @@ export default function PTFacultyStaffingMVP() {
     setSavingPreferences(true);
     setPreferencesMessage("");
     try {
-      const response = await fetch(`${API_BASE}/preferences`, {
+      const response = await apiFetch(`${API_BASE}/preferences`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1761,7 +1761,7 @@ export default function PTFacultyStaffingMVP() {
 
   async function exportPreferences() {
     try {
-      const response = await fetch(`${API_BASE}/preferences/export?termCode=${activeTerm.code}`);
+      const response = await apiFetch(`${API_BASE}/preferences/export?termCode=${activeTerm.code}`);
       const text = await response.text();
       const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
@@ -1782,7 +1782,7 @@ export default function PTFacultyStaffingMVP() {
     setLoadingMappingList(true);
     setMappingAdminError("");
     try {
-      const response = await fetch(`${API_BASE}/subject-mapping?scope=global&termCode=${activeTerm.code}`);
+      const response = await apiFetch(`${API_BASE}/subject-mapping?scope=global&termCode=${activeTerm.code}`);
       const data = await response.json();
       if (!response.ok) {
         setMappingAdminError(data.error || "Could not load mappings.");
@@ -1800,7 +1800,7 @@ export default function PTFacultyStaffingMVP() {
   async function handleExportMappings() {
     setMappingAdminError("");
     try {
-      const response = await fetch(`${API_BASE}/subject-mapping/export?scope=global&termCode=${activeTerm.code}`);
+      const response = await apiFetch(`${API_BASE}/subject-mapping/export?scope=global&termCode=${activeTerm.code}`);
       if (!response.ok) {
         let data = {};
         try {
@@ -1829,7 +1829,7 @@ export default function PTFacultyStaffingMVP() {
   useEffect(() => {
     async function loadMappingStatus() {
       try {
-        const response = await fetch(`${API_BASE}/subject-mapping/${activeTerm.code}/status`);
+        const response = await apiFetch(`${API_BASE}/subject-mapping/${activeTerm.code}/status`);
         const data = await response.json();
         if (!response.ok) return;
 
@@ -1864,7 +1864,7 @@ export default function PTFacultyStaffingMVP() {
       formData.append("file", file);
       formData.append("termCode", activeTerm.code);
 
-      const response = await fetch(`${API_BASE}/upload/subject-mapping`, {
+      const response = await apiFetch(`${API_BASE}/upload/subject-mapping`, {
         method: "POST",
         body: formData,
       });

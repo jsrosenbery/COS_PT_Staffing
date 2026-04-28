@@ -4,7 +4,10 @@ import Papa from "papaparse";
 import { pool, query } from "../db.js";
 
 const router = express.Router();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: Number(process.env.MAX_UPLOAD_BYTES || 5 * 1024 * 1024) },
+});
 
 function normalize(value) {
   return String(value ?? "").trim();
@@ -352,16 +355,30 @@ router.get("/terms", async (_req, res) => {
 router.post("/terms", async (req, res) => {
   const { termCode = "", termName = "", isActive = false } = req.body || {};
   if (!termCode.trim() || !termName.trim()) return res.status(400).json({ error: "termCode and termName are required." });
+  const client = await pool.connect();
   try {
-    const result = await query(
+    await client.query("BEGIN");
+    if (Boolean(isActive)) {
+      await client.query(`UPDATE scope_terms SET is_active = FALSE, updated_at = NOW()`);
+    }
+    const result = await client.query(
       `INSERT INTO scope_terms (term_code, term_name, is_active, updated_at)
        VALUES ($1,$2,$3,NOW())
-       ON CONFLICT (term_code) DO UPDATE SET term_name = EXCLUDED.term_name, updated_at = NOW()
+       ON CONFLICT (term_code) DO UPDATE SET
+         term_name = EXCLUDED.term_name,
+         is_active = CASE WHEN EXCLUDED.is_active THEN TRUE ELSE scope_terms.is_active END,
+         updated_at = NOW()
        RETURNING id, term_code, term_name, is_active`,
       [termCode.trim(), termName.trim(), Boolean(isActive)]
     );
+    await client.query("COMMIT");
     res.json({ term: result.rows[0] });
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
+  }
 });
 
 router.post("/terms/activate", async (req, res) => {
@@ -370,10 +387,17 @@ router.post("/terms/activate", async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const existing = await client.query(
+      `SELECT id, term_code, term_name FROM scope_terms WHERE term_code = $1 FOR UPDATE`,
+      [termCode.trim()]
+    );
+    if (!existing.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Term not found." });
+    }
     await client.query(`UPDATE scope_terms SET is_active = FALSE, updated_at = NOW()`);
     const result = await client.query(`UPDATE scope_terms SET is_active = TRUE, updated_at = NOW() WHERE term_code = $1 RETURNING id, term_code, term_name, is_active`, [termCode.trim()]);
     await client.query("COMMIT");
-    if (!result.rows.length) return res.status(404).json({ error: "Term not found." });
     res.json({ term: result.rows[0] });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -491,6 +515,9 @@ router.post("/upload/schedule", upload.single("file"), async (req, res) => {
       canonicalDivisionName(row.division) === canonicalDivisionName(divisionName) &&
       Boolean(row.staff_eligible)
     );
+    if (!inDivision.length) {
+      return res.status(400).json({ error: "No staff-eligible sections matched the selected division. Refusing to replace existing schedule data." });
+    }
     const ignoredRowsFromOtherDivisions = rows.filter((row) => canonicalDivisionName(findValue(row, ["DIVISION", "Division", "division"]) || divisionName) !== canonicalDivisionName(divisionName)).length;
     const unmappedSubjects = Array.from(new Set(inDivision.filter((s) => !s.discipline_code && s.subject_code).map((s) => s.subject_code))).sort();
 
@@ -500,7 +527,11 @@ router.post("/upload/schedule", upload.single("file"), async (req, res) => {
     if (forceReplace && existingIds.length) {
       await client.query(`DELETE FROM scope_preferences WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`, [termCode, existingIds]);
       await client.query(`DELETE FROM scope_assignments WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])`, [termCode, existingIds]);
-      await client.query(`DELETE FROM scope_audit_log WHERE term = $1 AND section_key = ANY($2::text[])`, [termCode, existingIds]);
+      await client.query(
+        `INSERT INTO scope_audit_log (term, event_type, division, note, source)
+         VALUES ($1, 'SCHEDULE_FORCE_REPLACE', $2, $3, 'backend')`,
+        [termCode, divisionName, `Replaced ${existingIds.length} schedule bundle(s); prior audit entries were retained.`]
+      );
     }
     const deleted = await client.query(`DELETE FROM scope_sections WHERE term_code = $1 AND division = $2`, [termCode, divisionName]);
 

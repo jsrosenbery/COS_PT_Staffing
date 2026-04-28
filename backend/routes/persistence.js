@@ -18,7 +18,13 @@ router.get("/roles", async (_req, res) => {
 });
 
 router.post("/roles", async (req, res) => {
-  const rows = Array.isArray(req.body) ? req.body : [];
+  if (!Array.isArray(req.body)) {
+    return res.status(400).json({ error: "Expected an array of role rows." });
+  }
+  const rows = req.body;
+  if (!rows.length) {
+    return res.status(400).json({ error: "Refusing to replace roles with an empty payload." });
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -68,7 +74,13 @@ router.get("/pt-faculty", async (req, res) => {
 });
 
 router.post("/pt-faculty", async (req, res) => {
-  const rows = Array.isArray(req.body) ? req.body : [];
+  if (!Array.isArray(req.body)) {
+    return res.status(400).json({ error: "Expected an array of PT faculty rows." });
+  }
+  const rows = req.body;
+  if (!rows.length) {
+    return res.status(400).json({ error: "Refusing to replace PT faculty with an empty payload. Use DELETE /pt-faculty to inactivate the roster." });
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
