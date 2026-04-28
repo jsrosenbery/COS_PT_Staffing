@@ -18,9 +18,10 @@ const PORT = process.env.PORT || 10000;
 const API_TOKEN = (process.env.API_TOKEN || "").trim();
 const AUTH_DISABLED = String(process.env.AUTH_DISABLED || "").toLowerCase() === "true";
 const CORS_ORIGIN = (process.env.CORS_ORIGIN || "").trim();
+const authConfigured = Boolean(API_TOKEN) || AUTH_DISABLED;
 
-if (!API_TOKEN && !AUTH_DISABLED) {
-  throw new Error("API_TOKEN is required. Set AUTH_DISABLED=true only for local development.");
+if (!authConfigured) {
+  console.warn("API_TOKEN is not set. Protected API routes will return 503 until it is configured.");
 }
 
 const corsOrigins = CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean);
@@ -32,10 +33,14 @@ app.use(express.json({ limit: "10mb" }));
 app.use((req, res, next) => {
   if (req.method === "OPTIONS" || req.path === "/api/health" || AUTH_DISABLED) return next();
 
+  if (!API_TOKEN) {
+    return res.status(503).json({ error: "API_TOKEN is not configured on the backend." });
+  }
+
   const auth = req.get("authorization") || "";
   const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   const apiKey = req.get("x-api-token") || "";
-  if (API_TOKEN && (bearer === API_TOKEN || apiKey === API_TOKEN)) return next();
+  if (bearer === API_TOKEN || apiKey === API_TOKEN) return next();
 
   return res.status(401).json({ error: "Unauthorized" });
 });
