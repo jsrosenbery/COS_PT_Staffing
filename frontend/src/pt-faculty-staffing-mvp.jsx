@@ -145,10 +145,51 @@ function normalize(s) {
   return String(s ?? "").trim();
 }
 
+function compactKey(value) {
+  return normalize(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function splitScopeValues(...values) {
+  return values
+    .flatMap((value) => String(value ?? "").split(/[|,;]/))
+    .map(normalize)
+    .filter(Boolean);
+}
+
+function sectionScopeKeys(section) {
+  const raw = section?.raw_row || {};
+  const primarySubject = normalize(section?.primary_subject_course).split(/\s+/)[0] || "";
+  return new Set(
+    splitScopeValues(
+      section?.discipline_code,
+      section?.subject_code,
+      section?.division,
+      primarySubject,
+      raw.discipline_code,
+      raw.discipline,
+      raw.DISCIPLINE,
+      raw.subject_code,
+      raw.Subject,
+      raw.SUBJECT,
+      raw.division,
+      raw.Division,
+      raw.DIVISION
+    ).map(compactKey).filter(Boolean)
+  );
+}
+
+function sectionMatchesFacultyScope(section, facultyScopeKeys) {
+  if (!facultyScopeKeys.size) return true;
+  for (const key of sectionScopeKeys(section)) {
+    if (facultyScopeKeys.has(key)) return true;
+  }
+  return false;
+}
+
 
 function canonicalDivisionName(value) {
   const raw = normalize(value);
-  const key = raw.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const key = compactKey(raw);
   const aliases = {
     "industrytechnology": "Industry and Technology",
     "industryandtechnology": "Industry and Technology",
@@ -1225,6 +1266,10 @@ export default function PTFacultyStaffingMVP() {
       seniorityDate: row.seniority_date || "",
       disciplineCode: row.discipline || row.qualified_disciplines || "",
       disciplineName: row.discipline || row.qualified_disciplines || "",
+      division: row.division || "",
+      scopeKeys: splitScopeValues(row.discipline, row.qualified_disciplines, row.division)
+        .map(compactKey)
+        .filter(Boolean),
       active: normalize(row.active_status || "active") === "active",
     }));
     return rows;
@@ -1237,18 +1282,25 @@ export default function PTFacultyStaffingMVP() {
     if (role === "dean") {
       return availableSections.filter((section) => deanDivisions.includes(canonicalDivisionName(section.division)));
     }
-    if (role === "faculty" || role === "chair" || role === "dean" || role === "admin") {
-      const facultyCodes = facultySeniorityRows
-        .map((row) => row.disciplineCode)
-        .filter((code) => !ptFacultyDisciplineFilter || ptFacultyDisciplineFilter === "ALL" || code === ptFacultyDisciplineFilter);
-      if (!facultyCodes.length) {
+    if (role === "faculty") {
+      const facultyScopeKeys = new Set(
+        facultySeniorityRows
+          .filter((row) => {
+            if (!ptFacultyDisciplineFilter || ptFacultyDisciplineFilter === "ALL") return true;
+            return splitScopeValues(row.disciplineCode, row.disciplineName, row.division)
+              .map(compactKey)
+              .includes(compactKey(ptFacultyDisciplineFilter));
+          })
+          .flatMap((row) => row.scopeKeys)
+      );
+      if (!facultyScopeKeys.size) {
         return availableSections;
       }
-      const scoped = availableSections.filter((section) => facultyCodes.includes(section.discipline_code));
+      const scoped = availableSections.filter((section) => sectionMatchesFacultyScope(section, facultyScopeKeys));
       return scoped;
     }
     return availableSections;
-  }, [role, availableSections, chairDivisions, deanDivisions, facultySeniorityRows]);
+  }, [role, availableSections, chairDivisions, deanDivisions, facultySeniorityRows, ptFacultyDisciplineFilter]);
 
   const roleAvailableDisciplineCodes = useMemo(() => {
     return Array.from(
