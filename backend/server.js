@@ -15,9 +15,30 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 10000;
+const API_TOKEN = (process.env.API_TOKEN || "").trim();
+const AUTH_DISABLED = String(process.env.AUTH_DISABLED || "").toLowerCase() === "true";
+const CORS_ORIGIN = (process.env.CORS_ORIGIN || "").trim();
 
-app.use(cors());
+if (!API_TOKEN && !AUTH_DISABLED) {
+  throw new Error("API_TOKEN is required. Set AUTH_DISABLED=true only for local development.");
+}
+
+const corsOrigins = CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean);
+if (corsOrigins.length || AUTH_DISABLED) {
+  app.use(cors(corsOrigins.length ? { origin: corsOrigins } : undefined));
+}
 app.use(express.json({ limit: "10mb" }));
+
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS" || req.path === "/api/health" || AUTH_DISABLED) return next();
+
+  const auth = req.get("authorization") || "";
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  const apiKey = req.get("x-api-token") || "";
+  if (API_TOKEN && (bearer === API_TOKEN || apiKey === API_TOKEN)) return next();
+
+  return res.status(401).json({ error: "Unauthorized" });
+});
 
 async function ensureSchema() {
   const schemaPath = path.join(__dirname, "schema.sql");
