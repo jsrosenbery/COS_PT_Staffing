@@ -1706,9 +1706,14 @@ export default function PTFacultyStaffingMVP() {
     }
   }
   async function loadFacultyPreferences(facultyId = selectedFacultyId) {
-    if (role !== "faculty" || !activeTerm?.code) return;
+    if (!activeTerm?.code) return;
     try {
-      const params = new URLSearchParams({ termCode: activeTerm.code, facultyId: facultyId || selectedFaculty?.employeeId || "" });
+      const resolvedFacultyId = facultyId || selectedFaculty?.employeeId || "";
+      if (!resolvedFacultyId) {
+        setPreferencesMessage("Select a faculty member before loading preferences.");
+        return;
+      }
+      const params = new URLSearchParams({ termCode: activeTerm.code, facultyId: resolvedFacultyId });
       const response = await apiFetch(`${API_BASE}/preferences?${params.toString()}`);
       const data = await response.json();
       if (!response.ok) {
