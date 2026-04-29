@@ -104,6 +104,22 @@ const initialSubmissions = [];
 const initialAssignments = [];
 const initialDecisionLog = [];
 
+const availabilityDayOptions = [
+  { key: "M", label: "Mon" },
+  { key: "T", label: "Tue" },
+  { key: "W", label: "Wed" },
+  { key: "R", label: "Thu" },
+  { key: "F", label: "Fri" },
+  { key: "A", label: "Sat" },
+  { key: "U", label: "Sun" },
+];
+
+const availabilityTimeOptions = [
+  { key: "morning", label: "Morning", detail: "7:00-11:00", start: 7 * 60, end: 11 * 60 },
+  { key: "afternoon", label: "Afternoon", detail: "11:01-4:00", start: 11 * 60 + 1, end: 16 * 60 },
+  { key: "evening", label: "Evening", detail: "4:01-11:00", start: 16 * 60 + 1, end: 23 * 60 },
+];
+
 const hiddenColumns = new Set([
   "SCHEDULE_TYPE",
   "ACCOUNTING_METHOD",
@@ -404,6 +420,37 @@ function matchesSectionFilters(section, filters) {
   const modalityMatch = !filters?.modalities?.length || filters.modalities.includes(modality);
 
   return campusMatch && methodMatch && modalityMatch;
+}
+
+function sectionAvailabilitySummary(section, availability = {}) {
+  const selectedDays = Array.isArray(availability.days) ? availability.days : [];
+  const selectedBlocks = Array.isArray(availability.timeBlocks) ? availability.timeBlocks : [];
+  if (!selectedDays.length && !selectedBlocks.length) {
+    return { matches: true, label: "No availability selected" };
+  }
+
+  const meetings = Array.isArray(section?.meetings) ? section.meetings.filter((meeting) => !isAsyncLikeMeeting(meeting)) : [];
+  if (!meetings.length) {
+    return { matches: true, label: "No fixed meeting pattern" };
+  }
+
+  const sectionDays = Array.from(new Set(meetings.flatMap((meeting) => normalizeDayTokens(meeting.days))));
+  const dayMatch = !selectedDays.length || sectionDays.some((day) => selectedDays.includes(day));
+  const blockMatch = !selectedBlocks.length || meetings.some((meeting) => {
+    const start = parseClockToMinutes(meeting.start_time);
+    const end = parseClockToMinutes(meeting.end_time);
+    if (start === null || end === null || start === end) return false;
+    return availabilityTimeOptions
+      .filter((block) => selectedBlocks.includes(block.key))
+      .some((block) => start < block.end && block.start < end);
+  });
+  const matches = dayMatch && blockMatch;
+  const label = matches ? "Availability match" : "Outside availability";
+  return { matches, label, dayMatch, blockMatch };
+}
+
+function courseSortKey(section) {
+  return `${section?.primary_subject_course || ""} ${section?.primary_crn || ""}`.trim();
 }
 
 function pillStyle(background, color, borderColor) {
@@ -807,10 +854,12 @@ export default function PTFacultyStaffingMVP() {
   const [chairMessage, setChairMessage] = useState("");
   const [loadingChairWorkflow, setLoadingChairWorkflow] = useState(false);
   const [facultyPreferences, setFacultyPreferences] = useState([]);
+  const [facultyAvailability, setFacultyAvailability] = useState({ days: [], timeBlocks: [] });
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [preferencesMessage, setPreferencesMessage] = useState("");
   const [dragIndex, setDragIndex] = useState(null);
   const [showOnlyConflictFree, setShowOnlyConflictFree] = useState(false);
+  const [showOnlyPreferredSections, setShowOnlyPreferredSections] = useState(false);
   const [mappingList, setMappingList] = useState([]);
   const [loadingMappingList, setLoadingMappingList] = useState(false);
   const [mappingAdminError, setMappingAdminError] = useState("");
@@ -1343,6 +1392,10 @@ export default function PTFacultyStaffingMVP() {
       const conflictingAssignment = employeeAssignments.find((assignment) => hasMeetingConflict(row, assignment)) || null;
       const enrichedRow = {
         ...row,
+        availabilitySummary: sectionAvailabilitySummary(row, {
+          days: row.availability_days || [],
+          timeBlocks: row.availability_time_blocks || [],
+        }),
         has_tentative_assignment: currentAssignment?.employee_id === row.employee_id,
         section_assigned_to_other: Boolean(currentAssignment && currentAssignment.employee_id !== row.employee_id),
         assigned_elsewhere: employeeAssignments.length > 0,
@@ -1385,12 +1438,17 @@ export default function PTFacultyStaffingMVP() {
           return String(a.faculty_name || a.employee_id || "").localeCompare(String(b.faculty_name || b.employee_id || ""));
         });
         const eligibleCandidates = candidates.filter((row) => !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict);
-        return { ...section, candidates, eligibleCandidates };
+        const preferenceRanks = candidates
+          .map((row) => Number(row.preference_rank))
+          .filter((rank) => Number.isFinite(rank));
+        const bestPreferenceRank = preferenceRanks.length ? Math.min(...preferenceRanks) : null;
+        return { ...section, candidates, eligibleCandidates, bestPreferenceRank };
       })
       .sort((a, b) => {
-        const ac = `${a.primary_subject_course || ""} ${a.primary_crn || ""}`.trim();
-        const bc = `${b.primary_subject_course || ""} ${b.primary_crn || ""}`.trim();
-        return ac.localeCompare(bc);
+        const aPref = Number.isFinite(Number(a.bestPreferenceRank)) ? Number(a.bestPreferenceRank) : 999999;
+        const bPref = Number.isFinite(Number(b.bestPreferenceRank)) ? Number(b.bestPreferenceRank) : 999999;
+        if (aPref !== bPref) return aPref - bPref;
+        return courseSortKey(a).localeCompare(courseSortKey(b));
       });
   }, [chairWorkflowRows, tentativeAssignments, sectionFilters]);
 
@@ -1474,13 +1532,32 @@ export default function PTFacultyStaffingMVP() {
     return Array.from(new Set(facultyPreferences.map((item) => item.discipline_code).filter(Boolean))).sort();
   }, [facultyPreferences]);
 
-  const selectableSections = useMemo(() => {
-    const selectedIds = new Set(facultyPreferences.map((item) => item.assignment_group_id));
-    const base = visibleSections.filter((section) => !selectedIds.has(section.assignment_group_id));
-    return showOnlyConflictFree
-      ? base.filter((section) => !facultyPreferences.some((pref) => hasMeetingConflict(section, pref)))
-      : base;
-  }, [visibleSections, facultyPreferences, showOnlyConflictFree]);
+  const facultySectionRows = useMemo(() => {
+    const rankBySection = new Map(facultyPreferences.map((item, index) => [item.assignment_group_id, index + 1]));
+    const rows = visibleSections.map((section) => {
+      const preferenceRank = rankBySection.get(section.assignment_group_id) || null;
+      return {
+        ...section,
+        preference_rank: preferenceRank,
+        is_preferred: Boolean(preferenceRank),
+        availabilitySummary: sectionAvailabilitySummary(section, facultyAvailability),
+      };
+    });
+    const preferredFiltered = showOnlyPreferredSections ? rows.filter((section) => section.is_preferred) : rows;
+    const conflictFiltered = showOnlyConflictFree
+      ? preferredFiltered.filter((section) => !facultyPreferences.some((pref) => pref.assignment_group_id !== section.assignment_group_id && hasMeetingConflict(section, pref)))
+      : preferredFiltered;
+
+    return [...conflictFiltered].sort((a, b) => {
+      const aPref = Number.isFinite(Number(a.preference_rank)) ? Number(a.preference_rank) : 999999;
+      const bPref = Number.isFinite(Number(b.preference_rank)) ? Number(b.preference_rank) : 999999;
+      if (aPref !== bPref) return aPref - bPref;
+      const aAvailability = a.availabilitySummary?.matches ? 0 : 1;
+      const bAvailability = b.availabilitySummary?.matches ? 0 : 1;
+      if (aAvailability !== bAvailability) return aAvailability - bAvailability;
+      return courseSortKey(a).localeCompare(courseSortKey(b));
+    });
+  }, [visibleSections, facultyPreferences, facultyAvailability, showOnlyPreferredSections, showOnlyConflictFree]);
 
   async function loadAvailableSections(disciplineCode = selectedDisciplineCode) {
     if (!activeTerm?.code) return;
@@ -1719,13 +1796,30 @@ export default function PTFacultyStaffingMVP() {
       if (!response.ok) {
         setPreferencesMessage(data.error || "Could not load saved preferences.");
         setFacultyPreferences([]);
+        setFacultyAvailability({ days: [], timeBlocks: [] });
         return;
       }
       setFacultyPreferences(data.preferences || []);
+      setFacultyAvailability({
+        days: Array.isArray(data.availability?.days) ? data.availability.days : [],
+        timeBlocks: Array.isArray(data.availability?.timeBlocks) ? data.availability.timeBlocks : [],
+      });
     } catch (error) {
       setPreferencesMessage(error.message || "Could not load saved preferences.");
       setFacultyPreferences([]);
+      setFacultyAvailability({ days: [], timeBlocks: [] });
     }
+  }
+
+  function toggleAvailabilityValue(kind, value) {
+    setFacultyAvailability((current) => {
+      const currentValues = Array.isArray(current[kind]) ? current[kind] : [];
+      const nextValues = currentValues.includes(value)
+        ? currentValues.filter((item) => item !== value)
+        : [...currentValues, value];
+      return { ...current, [kind]: nextValues };
+    });
+    setPreferencesMessage("");
   }
 
   function addPreference(section) {
@@ -1779,6 +1873,7 @@ export default function PTFacultyStaffingMVP() {
             discipline_code: item.discipline_code,
             preference_rank: index + 1,
           })),
+          availability: facultyAvailability,
         }),
       });
       const data = await response.json();
@@ -2825,10 +2920,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   style={ui.alphaSelect}
                   value={ptFacultyDisciplineFilter}
                   onChange={(e) => {
-                    setPtFacultyDisciplineFilter(e.target.value);
-                    setSelectedFacultyId("");
-                    setFacultyPreferences([]);
-                  }}
+                      setPtFacultyDisciplineFilter(e.target.value);
+                      setSelectedFacultyId("");
+                      setFacultyPreferences([]);
+                      setFacultyAvailability({ days: [], timeBlocks: [] });
+                    }}
                 >
                   <option value="ALL">All PT disciplines</option>
                   {Array.from(new Set((ptStaffingRows || []).map((row) => normalize(row.discipline || row.qualified_disciplines || "")).filter(Boolean))).sort().map((code) => (
@@ -2841,11 +2937,12 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   style={ui.alphaSelect}
                   value={selectedFacultyId}
                   onChange={(e) => {
-                    setSelectedFacultyId(e.target.value);
-                    setSelectedDisciplineCode("ALL");
-                    setFacultyPreferences([]);
-                    setTimeout(() => loadFacultyPreferences(e.target.value), 0);
-                  }}
+                      setSelectedFacultyId(e.target.value);
+                      setSelectedDisciplineCode("ALL");
+                      setFacultyPreferences([]);
+                      setFacultyAvailability({ days: [], timeBlocks: [] });
+                      setTimeout(() => loadFacultyPreferences(e.target.value), 0);
+                    }}
                 >
                   {previewFacultyOptions.map((item) => (
                     <option key={item.employeeId} value={item.employeeId}>
@@ -3060,6 +3157,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                   <div style={{ fontWeight: 700 }}>{row.faculty_name}</div>
                                   <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
                                     Seniority #{row.seniority_rank || "—"} • Preference #{row.preference_rank || "—"}
+                                  </div>
+                                  <div style={{ marginTop: 6 }}>
+                                    <span style={workflowStatePillStyle(row.availabilitySummary?.matches ? "assigned" : "bypass")}>
+                                      {row.availabilitySummary?.label || "No availability selected"}
+                                    </span>
                                   </div>
                                   {isCurrentAssignee ? (
                                     <div style={{ marginTop: 6, color: "#166534", fontSize: 12, fontWeight: 700 }}>
@@ -3367,7 +3469,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           ) : null}
 
-          {(role === "faculty" || role === "chair" || role === "dean" || role === "admin") ? (
+          {role === "faculty" ? (
             <div className="cos-panel-grid" style={ui.panelGrid}>
               <div>
                 <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
@@ -3381,6 +3483,54 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   />
                   Show only sections with no direct meeting-pattern conflict against my current preferences
                 </label>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 10, color: "#334155" }}>
+                  <input
+                    type="checkbox"
+                    checked={showOnlyPreferredSections}
+                    onChange={(e) => setShowOnlyPreferredSections(e.target.checked)}
+                  />
+                  Show only sections listed in my preferences
+                </label>
+                <div style={{ ...ui.sectionCard, marginTop: 12 }}>
+                  <div style={{ fontWeight: 800 }}>Availability</div>
+                  <div style={{ marginTop: 10, color: "var(--text-muted)", fontSize: 13 }}>
+                    Save day and time interests along with section preferences.
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+                      Days
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {availabilityDayOptions.map((day) => (
+                        <label key={day.key} style={{ ...ui.filterChip, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", ...(facultyAvailability.days.includes(day.key) ? ui.filterChipActive : {}) }}>
+                          <input
+                            type="checkbox"
+                            checked={facultyAvailability.days.includes(day.key)}
+                            onChange={() => toggleAvailabilityValue("days", day.key)}
+                          />
+                          {day.label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+                      Times
+                    </div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {availabilityTimeOptions.map((block) => (
+                        <label key={block.key} style={{ ...ui.filterChip, display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", ...(facultyAvailability.timeBlocks.includes(block.key) ? ui.filterChipActive : {}) }}>
+                          <input
+                            type="checkbox"
+                            checked={facultyAvailability.timeBlocks.includes(block.key)}
+                            onChange={() => toggleAvailabilityValue("timeBlocks", block.key)}
+                          />
+                          {block.label} {block.detail}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
               <div style={{ ...ui.sectionCard, marginTop: 12 }}>
                 <div style={{ fontWeight: 700 }}>My Preferences</div>
@@ -3435,6 +3585,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </button>
                   <button style={ui.btn} onClick={() => {
                     setFacultyPreferences([]);
+                    setFacultyAvailability({ days: [], timeBlocks: [] });
                     setPreferencesMessage("");
                   }}>
                     Clear List
@@ -3482,12 +3633,13 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   <th style={ui.th}>Campus</th>
                   <th style={ui.th}>Method</th>
                   <th style={ui.th}>Modality</th>
+                  {role === "faculty" ? <th style={ui.th}>Interest</th> : null}
                   {role === "faculty" ? <th style={ui.th}>Action</th> : null}
                 </tr>
               </thead>
               <tbody>
-                {(role === "faculty" ? selectableSections : visibleSections).length ? (
-                  (role === "faculty" ? selectableSections : visibleSections).map((section) => (
+                {(role === "faculty" ? facultySectionRows : visibleSections).length ? (
+                  (role === "faculty" ? facultySectionRows : visibleSections).map((section) => (
                     <tr key={section.assignment_group_id}>
                       <td style={ui.td}>{section.discipline_code || ""}</td>
                       <td style={ui.td}>{section.primary_subject_course || ""}</td>
@@ -3502,12 +3654,28 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <td style={ui.td}>
                         <span style={modalityPillStyle(sectionModalityLabel(section))}>{sectionModalityLabel(section)}</span>
                       </td>
-                      {(role === "faculty" || role === "chair" || role === "dean" || role === "admin") ? (
+                      {role === "faculty" ? (
                         <td style={ui.td}>
-                          <button style={ui.btnPrimary} onClick={() => addPreference(section)}>
-                            Add to Preferences
-                          </button>
-                          {facultyPreferences.some((item) => hasMeetingConflict(section, item)) ? (
+                          {section.is_preferred ? <span style={workflowStatePillStyle("top")}>Preference #{section.preference_rank}</span> : <span style={ui.chip}>Not ranked</span>}
+                          <div style={{ marginTop: 6 }}>
+                            <span style={workflowStatePillStyle(section.availabilitySummary?.matches ? "assigned" : "bypass")}>
+                              {section.availabilitySummary?.label || "No availability selected"}
+                            </span>
+                          </div>
+                        </td>
+                      ) : null}
+                      {role === "faculty" ? (
+                        <td style={ui.td}>
+                          {section.is_preferred ? (
+                            <button style={ui.btn} onClick={() => removePreference(section.assignment_group_id)}>
+                              Remove
+                            </button>
+                          ) : (
+                            <button style={ui.btnPrimary} onClick={() => addPreference(section)}>
+                              Add to Preferences
+                            </button>
+                          )}
+                          {facultyPreferences.some((item) => item.assignment_group_id !== section.assignment_group_id && hasMeetingConflict(section, item)) ? (
                             <div style={{ marginTop: 6, color: "#b45309", fontSize: 12, fontWeight: 700 }}>
                               Conflicts with a selected meeting pattern
                             </div>
@@ -3518,7 +3686,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   ))
                 ) : (
                   <tr>
-                    <td style={ui.td} colSpan={role === "faculty" ? 10 : 9}>
+                    <td style={ui.td} colSpan={role === "faculty" ? 11 : 9}>
                       No PT-eligible open sections found yet. Upload a schedule, then click Refresh Sections.
                     </td>
                   </tr>
