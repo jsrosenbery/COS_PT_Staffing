@@ -111,6 +111,19 @@ CREATE TABLE IF NOT EXISTS scope_preferences (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS scope_faculty_availability (
+  id SERIAL PRIMARY KEY,
+  term_code TEXT NOT NULL,
+  faculty_id TEXT NOT NULL DEFAULT '',
+  employee_id TEXT NOT NULL DEFAULT '',
+  faculty_name TEXT NOT NULL DEFAULT '',
+  availability_days JSONB NOT NULL DEFAULT '[]'::jsonb,
+  availability_time_blocks JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (term_code, faculty_id)
+);
+
 CREATE TABLE IF NOT EXISTS scope_assignments (
   id SERIAL PRIMARY KEY,
   term_code TEXT NOT NULL,
@@ -136,6 +149,7 @@ CREATE INDEX IF NOT EXISTS idx_scope_pt_faculty_lookup ON scope_pt_faculty (divi
 CREATE INDEX IF NOT EXISTS idx_scope_sections_term_division ON scope_sections (term_code, division);
 CREATE INDEX IF NOT EXISTS idx_scope_preferences_term_faculty ON scope_preferences (term_code, faculty_id);
 CREATE INDEX IF NOT EXISTS idx_scope_preferences_term_section ON scope_preferences (term_code, assignment_group_id);
+CREATE INDEX IF NOT EXISTS idx_scope_faculty_availability_term_faculty ON scope_faculty_availability (term_code, faculty_id);
 CREATE INDEX IF NOT EXISTS idx_scope_assignments_term_section ON scope_assignments (term_code, assignment_group_id);
 CREATE INDEX IF NOT EXISTS idx_scope_audit_term_section ON scope_audit_log (term, section_key);
 

@@ -661,7 +661,9 @@ router.get("/chair-workflow", async (req, res) => {
               s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings,
               pt.employee_id, CONCAT_WS(' ', pt.first_name, pt.last_name) AS faculty_name,
               COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '') AS seniority_rank,
-              pref.preference_rank
+              pref.preference_rank,
+              COALESCE(av.availability_days, '[]'::jsonb) AS availability_days,
+              COALESCE(av.availability_time_blocks, '[]'::jsonb) AS availability_time_blocks
        FROM scope_sections s
        JOIN scope_pt_faculty pt
          ON pt.division = s.division
@@ -689,6 +691,9 @@ router.get("/chair-workflow", async (req, res) => {
            AND p.assignment_group_id = s.assignment_group_id
            AND (p.employee_id = pt.employee_id OR p.faculty_id = pt.employee_id)
        ) pref ON TRUE
+       LEFT JOIN scope_faculty_availability av
+         ON av.term_code = s.term_code
+        AND (av.faculty_id = pt.employee_id OR av.employee_id = pt.employee_id)
        ${where}
        ORDER BY s.primary_subject_course, s.primary_crn,
                 COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '999999') NULLS LAST,
@@ -787,7 +792,8 @@ router.get("/preferences", async (req, res) => {
   const { termCode = "", facultyId = "" } = req.query;
   if (!termCode || !facultyId) return res.status(400).json({ error: "termCode and facultyId are required." });
   try {
-    const result = await query(
+    const [result, availabilityResult] = await Promise.all([
+      query(
       `SELECT p.assignment_group_id, p.preference_rank, p.faculty_id, p.employee_id, p.faculty_name,
               s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings
        FROM scope_preferences p
@@ -795,14 +801,31 @@ router.get("/preferences", async (req, res) => {
        WHERE p.term_code = $1 AND p.faculty_id = $2
        ORDER BY p.preference_rank ASC`,
       [termCode, facultyId]
-    );
-    res.json({ preferences: result.rows.map((r) => ({ ...r, meetings: r.meetings || [] })) });
+      ),
+      query(
+        `SELECT availability_days, availability_time_blocks
+         FROM scope_faculty_availability
+         WHERE term_code = $1 AND faculty_id = $2
+         LIMIT 1`,
+        [termCode, facultyId]
+      ),
+    ]);
+    const availability = availabilityResult.rows[0] || {};
+    res.json({
+      preferences: result.rows.map((r) => ({ ...r, meetings: r.meetings || [] })),
+      availability: {
+        days: Array.isArray(availability.availability_days) ? availability.availability_days : [],
+        timeBlocks: Array.isArray(availability.availability_time_blocks) ? availability.availability_time_blocks : [],
+      },
+    });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
 router.post("/preferences", async (req, res) => {
-  const { termCode = "", facultyId = "", employeeId = "", facultyName = "", preferences = [] } = req.body || {};
+  const { termCode = "", facultyId = "", employeeId = "", facultyName = "", preferences = [], availability = {} } = req.body || {};
   if (!termCode || !facultyId) return res.status(400).json({ error: "termCode and facultyId are required." });
+  const availabilityDays = Array.isArray(availability.days) ? availability.days.map((value) => String(value || "").trim()).filter(Boolean) : [];
+  const availabilityTimeBlocks = Array.isArray(availability.timeBlocks) ? availability.timeBlocks.map((value) => String(value || "").trim()).filter(Boolean) : [];
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -815,6 +838,18 @@ router.post("/preferences", async (req, res) => {
         [termCode, facultyId, employeeId, facultyName, pref.assignment_group_id, pref.discipline_code || "", pref.preference_rank || 1]
       );
     }
+    await client.query(
+      `INSERT INTO scope_faculty_availability
+        (term_code, faculty_id, employee_id, faculty_name, availability_days, availability_time_blocks, updated_at)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,NOW())
+       ON CONFLICT (term_code, faculty_id) DO UPDATE SET
+         employee_id = EXCLUDED.employee_id,
+         faculty_name = EXCLUDED.faculty_name,
+         availability_days = EXCLUDED.availability_days,
+         availability_time_blocks = EXCLUDED.availability_time_blocks,
+         updated_at = NOW()`,
+      [termCode, facultyId, employeeId, facultyName, JSON.stringify(availabilityDays), JSON.stringify(availabilityTimeBlocks)]
+    );
     await client.query("COMMIT");
     res.json({ success: true, savedCount: preferences.length });
   } catch (error) {
