@@ -662,6 +662,7 @@ router.get("/chair-workflow", async (req, res) => {
               pt.employee_id, CONCAT_WS(' ', pt.first_name, pt.last_name) AS faculty_name,
               COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '') AS seniority_rank,
               pref.preference_rank,
+              section_pref.section_preference_rank,
               COALESCE(av.availability_days, '[]'::jsonb) AS availability_days,
               COALESCE(av.availability_time_blocks, '[]'::jsonb) AS availability_time_blocks
        FROM scope_sections s
@@ -691,11 +692,17 @@ router.get("/chair-workflow", async (req, res) => {
            AND p.assignment_group_id = s.assignment_group_id
            AND (p.employee_id = pt.employee_id OR p.faculty_id = pt.employee_id)
        ) pref ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT MIN(p.preference_rank) AS section_preference_rank
+         FROM scope_preferences p
+         WHERE p.term_code = s.term_code
+           AND p.assignment_group_id = s.assignment_group_id
+       ) section_pref ON TRUE
        LEFT JOIN scope_faculty_availability av
          ON av.term_code = s.term_code
         AND (av.faculty_id = pt.employee_id OR av.employee_id = pt.employee_id)
        ${where}
-       ORDER BY s.primary_subject_course, s.primary_crn,
+       ORDER BY section_pref.section_preference_rank NULLS LAST, s.primary_subject_course, s.primary_crn,
                 COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '999999') NULLS LAST,
                 pref.preference_rank NULLS LAST, faculty_name`,
       params

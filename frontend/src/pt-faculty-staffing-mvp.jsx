@@ -1416,6 +1416,7 @@ export default function PTFacultyStaffingMVP() {
           display_modality: row.display_modality,
           modality: row.modality,
           meetings: row.meetings,
+          section_preference_rank: row.section_preference_rank,
           candidates: [],
           currentAssignment,
         });
@@ -1438,8 +1439,10 @@ export default function PTFacultyStaffingMVP() {
           return String(a.faculty_name || a.employee_id || "").localeCompare(String(b.faculty_name || b.employee_id || ""));
         });
         const eligibleCandidates = candidates.filter((row) => !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict);
-        const preferenceRanks = candidates
-          .map((row) => Number(row.preference_rank))
+        const preferenceRanks = [
+          Number(section.section_preference_rank),
+          ...candidates.map((row) => Number(row.preference_rank)),
+        ]
           .filter((rank) => Number.isFinite(rank));
         const bestPreferenceRank = preferenceRanks.length ? Math.min(...preferenceRanks) : null;
         return { ...section, candidates, eligibleCandidates, bestPreferenceRank };
@@ -3129,6 +3132,9 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           ) : (
                             <span style={workflowStatePillStyle("conflict")}>No eligible candidate</span>
                           )}
+                          {section.bestPreferenceRank ? (
+                            <span style={workflowStatePillStyle("advanced")}>Preference #{section.bestPreferenceRank}</span>
+                          ) : null}
                         </div>
                       </div>
 
