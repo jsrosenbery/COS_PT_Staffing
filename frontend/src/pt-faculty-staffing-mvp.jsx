@@ -3118,25 +3118,6 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     </button>
                   ))}
                 </div>
-                <div style={{ display: "grid", gap: 6, marginTop: 14 }}>
-                  <label style={ui.small}>Sort assignment queue</label>
-                  <select
-                    style={ui.select}
-                    value={workflowSort}
-                    onChange={(e) => setWorkflowSort(e.target.value)}
-                  >
-                    <option value="preference">Saved preference order</option>
-                    <option value="course">Course / CRN</option>
-                    <option value="time">Meeting time</option>
-                    <option value="campus">Campus</option>
-                    <option value="method">Method</option>
-                    <option value="modality">Modality</option>
-                    <option value="seniority">Top candidate seniority</option>
-                  </select>
-                  <div style={ui.small}>
-                    {chairPreferenceRows.length} saved preference row(s) loaded for sorting.
-                  </div>
-                </div>
               </div>
 
               <div style={ui.commandLane}>
@@ -3214,6 +3195,36 @@ OH,ORNAMENTAL_HORTICULTURE`}
             <>
             <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
               {filteredSectionQueue.length} visible queued section(s), {tentativeAssignments.length} tentative assignment(s), {filteredDecisionLogs.length} visible audit entr{filteredDecisionLogs.length === 1 ? "y" : "ies"}.
+            </div>
+
+            <div style={{ ...ui.sectionCard, marginTop: 12, background: "var(--bg-soft)" }}>
+              <div style={{ ...ui.between, alignItems: "flex-end" }}>
+                <div>
+                  <div style={{ fontWeight: 800 }}>Section Assignment Queue</div>
+                  <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                    Sort and review the section cards below before assigning PT faculty.
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: 6, minWidth: 260 }}>
+                  <label style={ui.small}>Sort sections by</label>
+                  <select
+                    style={ui.select}
+                    value={workflowSort}
+                    onChange={(e) => setWorkflowSort(e.target.value)}
+                  >
+                    <option value="preference">Saved preference order</option>
+                    <option value="course">Course / CRN</option>
+                    <option value="time">Meeting time</option>
+                    <option value="campus">Campus</option>
+                    <option value="method">Method</option>
+                    <option value="modality">Modality</option>
+                    <option value="seniority">Top candidate seniority</option>
+                  </select>
+                  <div style={ui.small}>
+                    {chairPreferenceRows.length} saved preference row(s) loaded for sorting.
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="cos-panel-grid" style={{ ...ui.panelGrid, marginTop: 16 }}>
