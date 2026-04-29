@@ -1425,6 +1425,7 @@ export default function PTFacultyStaffingMVP() {
     const activeAssignments = tentativeAssignments.filter((assignment) => assignment.status !== "released");
 
     chairWorkflowRows.forEach((row) => {
+      if (selectedDisciplineCode !== "ALL" && row.discipline_code !== selectedDisciplineCode) return;
       if (!matchesSectionFilters(row, sectionFilters)) return;
       const key = row.assignment_group_id;
       const currentAssignment = activeAssignments.find((assignment) => assignment.assignment_group_id === key) || null;
@@ -1498,7 +1499,7 @@ export default function PTFacultyStaffingMVP() {
         if (aPref !== bPref) return aPref - bPref;
         return courseSortKey(a).localeCompare(courseSortKey(b));
       });
-  }, [chairWorkflowRows, chairPreferenceLookups, tentativeAssignments, sectionFilters]);
+  }, [chairWorkflowRows, chairPreferenceLookups, tentativeAssignments, sectionFilters, selectedDisciplineCode]);
 
   const workflowMetrics = useMemo(() => {
     const assigned = sectionQueue.filter((section) => Boolean(section.currentAssignment)).length;
@@ -3202,7 +3203,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 <div>
                   <div style={{ fontWeight: 800 }}>Section Assignment Queue</div>
                   <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
-                    Sort and review the section cards below before assigning PT faculty.
+                    Sort and review the {selectedDisciplineCode === "ALL" ? "currently scoped" : selectedDisciplineCode} section cards below before assigning PT faculty.
                   </div>
                 </div>
                 <div style={{ display: "grid", gap: 6, minWidth: 260 }}>
