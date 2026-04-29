@@ -849,6 +849,7 @@ export default function PTFacultyStaffingMVP() {
   const [ptFacultyDisciplineFilter, setPtFacultyDisciplineFilter] = useState("ALL");
   const [preferenceWipeMessage, setPreferenceWipeMessage] = useState("");
   const [chairWorkflowRows, setChairWorkflowRows] = useState([]);
+  const [chairPreferenceRows, setChairPreferenceRows] = useState([]);
   const [tentativeAssignments, setTentativeAssignments] = useState([]);
   const [decisionLogs, setDecisionLogs] = useState([]);
   const [chairMessage, setChairMessage] = useState("");
@@ -1380,6 +1381,34 @@ export default function PTFacultyStaffingMVP() {
     return Array.from(new Set(filterOptionSections.map((section) => sectionModalityLabel(section)).filter(Boolean))).sort();
   }, [filterOptionSections]);
 
+  const chairPreferenceLookups = useMemo(() => {
+    const sectionRankByAssignment = new Map();
+    const candidateRankByAssignmentEmployee = new Map();
+
+    chairPreferenceRows.forEach((row) => {
+      const assignmentId = normalize(row.assignment_group_id);
+      if (!assignmentId) return;
+      const rank = Number(row.preference_rank);
+      if (!Number.isFinite(rank)) return;
+
+      const currentSectionRank = sectionRankByAssignment.get(assignmentId);
+      if (!Number.isFinite(currentSectionRank) || rank < currentSectionRank) {
+        sectionRankByAssignment.set(assignmentId, rank);
+      }
+
+      const employeeId = normalize(row.employee_id || row.faculty_id);
+      if (employeeId) {
+        const key = `${assignmentId}::${employeeId}`;
+        const currentCandidateRank = candidateRankByAssignmentEmployee.get(key);
+        if (!Number.isFinite(currentCandidateRank) || rank < currentCandidateRank) {
+          candidateRankByAssignmentEmployee.set(key, rank);
+        }
+      }
+    });
+
+    return { sectionRankByAssignment, candidateRankByAssignmentEmployee };
+  }, [chairPreferenceRows]);
+
   const sectionQueue = useMemo(() => {
     const grouped = new Map();
     const activeAssignments = tentativeAssignments.filter((assignment) => assignment.status !== "released");
@@ -1390,8 +1419,11 @@ export default function PTFacultyStaffingMVP() {
       const currentAssignment = activeAssignments.find((assignment) => assignment.assignment_group_id === key) || null;
       const employeeAssignments = activeAssignments.filter((assignment) => assignment.employee_id === row.employee_id && assignment.assignment_group_id !== key);
       const conflictingAssignment = employeeAssignments.find((assignment) => hasMeetingConflict(row, assignment)) || null;
+      const exportedPreferenceRank = chairPreferenceLookups.candidateRankByAssignmentEmployee.get(`${normalize(key)}::${normalize(row.employee_id)}`);
+      const rowPreferenceRank = Number.isFinite(Number(row.preference_rank)) ? Number(row.preference_rank) : exportedPreferenceRank;
       const enrichedRow = {
         ...row,
+        preference_rank: rowPreferenceRank,
         availabilitySummary: sectionAvailabilitySummary(row, {
           days: row.availability_days || [],
           timeBlocks: row.availability_time_blocks || [],
@@ -1416,7 +1448,9 @@ export default function PTFacultyStaffingMVP() {
           display_modality: row.display_modality,
           modality: row.modality,
           meetings: row.meetings,
-          section_preference_rank: row.section_preference_rank,
+          section_preference_rank: Number.isFinite(Number(row.section_preference_rank))
+            ? Number(row.section_preference_rank)
+            : chairPreferenceLookups.sectionRankByAssignment.get(normalize(key)),
           candidates: [],
           currentAssignment,
         });
@@ -1453,7 +1487,7 @@ export default function PTFacultyStaffingMVP() {
         if (aPref !== bPref) return aPref - bPref;
         return courseSortKey(a).localeCompare(courseSortKey(b));
       });
-  }, [chairWorkflowRows, tentativeAssignments, sectionFilters]);
+  }, [chairWorkflowRows, chairPreferenceLookups, tentativeAssignments, sectionFilters]);
 
   const workflowMetrics = useMemo(() => {
     const assigned = sectionQueue.filter((section) => Boolean(section.currentAssignment)).length;
@@ -1653,6 +1687,7 @@ export default function PTFacultyStaffingMVP() {
       if (!workflowResponse.ok) {
         setChairMessage(workflowData.error || "Could not load workflow.");
         setChairWorkflowRows([]);
+        setChairPreferenceRows([]);
         setTentativeAssignments([]);
         setDecisionLogs([]);
         return;
@@ -1660,6 +1695,7 @@ export default function PTFacultyStaffingMVP() {
       if (!assignmentsResponse.ok) {
         setChairMessage(assignmentsData.error || "Could not load tentative assignments.");
         setChairWorkflowRows(workflowData.rows || []);
+        setChairPreferenceRows([]);
         setTentativeAssignments([]);
         setDecisionLogs([]);
         return;
@@ -1667,18 +1703,32 @@ export default function PTFacultyStaffingMVP() {
       if (!logsResponse.ok) {
         setChairMessage(logsData.error || "Could not load decision logs.");
         setChairWorkflowRows(workflowData.rows || []);
+        setChairPreferenceRows([]);
         setTentativeAssignments(assignmentsData.assignments || []);
         setDecisionLogs([]);
         return;
       }
 
+      let exportedPreferences = [];
+      try {
+        const preferenceResponse = await apiFetch(`${API_BASE}/preferences/export?termCode=${encodeURIComponent(activeTerm.code)}`);
+        if (preferenceResponse.ok) {
+          const preferenceCsv = await preferenceResponse.text();
+          exportedPreferences = Papa.parse(preferenceCsv, { header: true, skipEmptyLines: true }).data || [];
+        }
+      } catch (_error) {
+        exportedPreferences = [];
+      }
+
       setChairWorkflowRows(Array.isArray(workflowData.rows) ? workflowData.rows : []);
+      setChairPreferenceRows(exportedPreferences);
       setTentativeAssignments(Array.isArray(assignmentsData.assignments) ? assignmentsData.assignments : []);
       setDecisionLogs(Array.isArray(logsData.logs) ? logsData.logs : []);
       loadDivisionStatuses();
     } catch (error) {
       setChairMessage(error.message || "Could not load workflow.");
       setChairWorkflowRows([]);
+      setChairPreferenceRows([]);
       setTentativeAssignments([]);
       setDecisionLogs([]);
     } finally {
@@ -3231,7 +3281,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
               <div style={{ display: "grid", gap: 16 }}>
                 {(role === "chair" || role === "dean" || tentativeAssignments.length > 0) ? (
                 <div style={ui.sectionCard}>
-                  <div style={{ fontWeight: 800 }}>/* hidden */</div>
+                  <div style={{ fontWeight: 800 }}>Tentative Assignments</div>
                   <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
                     Live persistence snapshot with one-click unassign and queue-based reassignment.
                   </div>
