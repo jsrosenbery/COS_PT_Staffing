@@ -665,7 +665,22 @@ router.get("/chair-workflow", async (req, res) => {
        FROM scope_sections s
        JOIN scope_pt_faculty pt
          ON pt.division = s.division
-        AND pt.discipline = s.discipline_code
+        AND (
+          LOWER(REGEXP_REPLACE(COALESCE(pt.discipline, ''), '[^a-zA-Z0-9]', '', 'g')) IN (
+            LOWER(REGEXP_REPLACE(COALESCE(s.discipline_code, ''), '[^a-zA-Z0-9]', '', 'g')),
+            LOWER(REGEXP_REPLACE(COALESCE(s.subject_code, ''), '[^a-zA-Z0-9]', '', 'g')),
+            LOWER(REGEXP_REPLACE(COALESCE(s.division, ''), '[^a-zA-Z0-9]', '', 'g'))
+          )
+          OR LOWER(REGEXP_REPLACE(COALESCE(s.discipline_code, ''), '[^a-zA-Z0-9]', '', 'g')) = ANY(
+            REGEXP_SPLIT_TO_ARRAY(LOWER(REGEXP_REPLACE(COALESCE(pt.qualified_disciplines, ''), '[^a-zA-Z0-9|]', '', 'g')), '\\|')
+          )
+          OR LOWER(REGEXP_REPLACE(COALESCE(s.subject_code, ''), '[^a-zA-Z0-9]', '', 'g')) = ANY(
+            REGEXP_SPLIT_TO_ARRAY(LOWER(REGEXP_REPLACE(COALESCE(pt.qualified_disciplines, ''), '[^a-zA-Z0-9|]', '', 'g')), '\\|')
+          )
+          OR LOWER(REGEXP_REPLACE(COALESCE(s.division, ''), '[^a-zA-Z0-9]', '', 'g')) = ANY(
+            REGEXP_SPLIT_TO_ARRAY(LOWER(REGEXP_REPLACE(COALESCE(pt.qualified_disciplines, ''), '[^a-zA-Z0-9|]', '', 'g')), '\\|')
+          )
+        )
         AND COALESCE(pt.active_status, 'active') = 'active'
        LEFT JOIN LATERAL (
          SELECT MIN(p.preference_rank) AS preference_rank
