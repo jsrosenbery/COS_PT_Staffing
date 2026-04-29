@@ -2994,6 +2994,8 @@ OH,ORNAMENTAL_HORTICULTURE`}
               </div>
             ) : null}
 
+            {role !== "admin" ? (
+            <>
             <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
               {filteredSectionQueue.length} visible queued section(s), {tentativeAssignments.length} tentative assignment(s), {filteredDecisionLogs.length} visible audit entr{filteredDecisionLogs.length === 1 ? "y" : "ies"}.
             </div>
@@ -3211,6 +3213,8 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
               </div>
             </div>
+            </>
+            ) : null}
           </div>
         ) : null}
 
