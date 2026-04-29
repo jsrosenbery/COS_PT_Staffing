@@ -453,6 +453,13 @@ function courseSortKey(section) {
   return `${section?.primary_subject_course || ""} ${section?.primary_crn || ""}`.trim();
 }
 
+function sectionStartMinutes(section) {
+  const starts = (section?.meetings || [])
+    .map((meeting) => parseClockToMinutes(meeting.start_time))
+    .filter((value) => value !== null);
+  return starts.length ? Math.min(...starts) : 999999;
+}
+
 function pillStyle(background, color, borderColor) {
   return {
     display: "inline-flex",
@@ -574,6 +581,7 @@ function sectionStateSummary(section, topCandidate) {
 function candidateReasonSummary(section, row, topCandidate, currentAssignment) {
   const isTop = topCandidate?.employee_id === row.employee_id;
   const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
+  const sectionHasSavedPreference = Number.isFinite(Number(section?.bestPreferenceRank));
   if (isCurrentAssignee) {
     return {
       title: "Current tentative holder",
@@ -610,9 +618,11 @@ function candidateReasonSummary(section, row, topCandidate, currentAssignment) {
     };
   }
   return {
-    title: "Assignable with rationale",
-    detail: "This candidate can be chosen, but bypassing the top available person requires a documented reason.",
-    kind: "bypass",
+    title: sectionHasSavedPreference ? "Assignable with rationale" : "Assignable",
+    detail: sectionHasSavedPreference
+      ? "This section is on a saved preference list, so bypassing the top available person requires a documented reason."
+      : "This section is not on a saved preference list, so this candidate can be assigned without bypass rationale.",
+    kind: sectionHasSavedPreference ? "bypass" : "top",
   };
 }
 
@@ -877,6 +887,7 @@ export default function PTFacultyStaffingMVP() {
   const [auditSearch, setAuditSearch] = useState("");
   const [auditTypeFilter, setAuditTypeFilter] = useState("ALL");
   const [workflowView, setWorkflowView] = useState("all");
+  const [workflowSort, setWorkflowSort] = useState("preference");
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
 
@@ -1497,12 +1508,41 @@ export default function PTFacultyStaffingMVP() {
     return { assigned, ready, blocked, reassignmentPool, total: sectionQueue.length };
   }, [sectionQueue]);
 
+  const sortedSectionQueue = useMemo(() => {
+    return [...sectionQueue].sort((a, b) => {
+      if (workflowSort === "campus") {
+        const campusCompare = normalize(a.campus).localeCompare(normalize(b.campus));
+        if (campusCompare) return campusCompare;
+      } else if (workflowSort === "method") {
+        const methodCompare = sectionMethodLabel(a).localeCompare(sectionMethodLabel(b));
+        if (methodCompare) return methodCompare;
+      } else if (workflowSort === "modality") {
+        const modalityCompare = sectionModalityLabel(a).localeCompare(sectionModalityLabel(b));
+        if (modalityCompare) return modalityCompare;
+      } else if (workflowSort === "time") {
+        const timeCompare = sectionStartMinutes(a) - sectionStartMinutes(b);
+        if (timeCompare) return timeCompare;
+      } else if (workflowSort === "seniority") {
+        const aRank = Number.isFinite(Number(a.eligibleCandidates?.[0]?.seniority_rank)) ? Number(a.eligibleCandidates[0].seniority_rank) : 999999;
+        const bRank = Number.isFinite(Number(b.eligibleCandidates?.[0]?.seniority_rank)) ? Number(b.eligibleCandidates[0].seniority_rank) : 999999;
+        if (aRank !== bRank) return aRank - bRank;
+      } else if (workflowSort === "course") {
+        return courseSortKey(a).localeCompare(courseSortKey(b));
+      } else {
+        const aPref = Number.isFinite(Number(a.bestPreferenceRank)) ? Number(a.bestPreferenceRank) : 999999;
+        const bPref = Number.isFinite(Number(b.bestPreferenceRank)) ? Number(b.bestPreferenceRank) : 999999;
+        if (aPref !== bPref) return aPref - bPref;
+      }
+      return courseSortKey(a).localeCompare(courseSortKey(b));
+    });
+  }, [sectionQueue, workflowSort]);
+
   const filteredSectionQueue = useMemo(() => {
-    if (workflowView === "assigned") return sectionQueue.filter((section) => Boolean(section.currentAssignment));
-    if (workflowView === "ready") return sectionQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length));
-    if (workflowView === "blocked") return sectionQueue.filter((section) => !section.currentAssignment && !section.eligibleCandidates?.length);
-    return sectionQueue;
-  }, [sectionQueue, workflowView]);
+    if (workflowView === "assigned") return sortedSectionQueue.filter((section) => Boolean(section.currentAssignment));
+    if (workflowView === "ready") return sortedSectionQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length));
+    if (workflowView === "blocked") return sortedSectionQueue.filter((section) => !section.currentAssignment && !section.eligibleCandidates?.length);
+    return sortedSectionQueue;
+  }, [sortedSectionQueue, workflowView]);
 
   const auditEventOptions = useMemo(() => {
     return Array.from(new Set(decisionLogs.map((entry) => normalize(entry.event_type)).filter(Boolean))).sort();
@@ -1736,9 +1776,9 @@ export default function PTFacultyStaffingMVP() {
     }
   }
 
-  async function assignSectionToInstructor(row, topEmployeeId) {
+  async function assignSectionToInstructor(row, topEmployeeId, requiresRationale = false) {
     if (!row?.assignment_group_id || !row?.employee_id || !activeTerm?.code) return;
-    const isBypass = Boolean(topEmployeeId && topEmployeeId !== row.employee_id);
+    const isBypass = Boolean(requiresRationale && topEmployeeId && topEmployeeId !== row.employee_id);
     let reason = "";
     if (isBypass) {
       reason = window.prompt("Bypassing the current top candidate requires a rationale. Enter a brief explanation:", "") || "";
@@ -1838,6 +1878,7 @@ export default function PTFacultyStaffingMVP() {
   async function loadFacultyPreferences(facultyId = selectedFacultyId) {
     if (!activeTerm?.code) return;
     try {
+      setPreferencesMessage("Loading saved preferences...");
       const resolvedFacultyId = facultyId || selectedFaculty?.employeeId || "";
       if (!resolvedFacultyId) {
         setPreferencesMessage("Select a faculty member before loading preferences.");
@@ -1857,6 +1898,7 @@ export default function PTFacultyStaffingMVP() {
         days: Array.isArray(data.availability?.days) ? data.availability.days : [],
         timeBlocks: Array.isArray(data.availability?.timeBlocks) ? data.availability.timeBlocks : [],
       });
+      setPreferencesMessage(`Loaded ${(data.preferences || []).length} saved preference(s).`);
     } catch (error) {
       setPreferencesMessage(error.message || "Could not load saved preferences.");
       setFacultyPreferences([]);
@@ -3076,12 +3118,31 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     </button>
                   ))}
                 </div>
+                <div style={{ display: "grid", gap: 6, marginTop: 14 }}>
+                  <label style={ui.small}>Sort assignment queue</label>
+                  <select
+                    style={ui.select}
+                    value={workflowSort}
+                    onChange={(e) => setWorkflowSort(e.target.value)}
+                  >
+                    <option value="preference">Saved preference order</option>
+                    <option value="course">Course / CRN</option>
+                    <option value="time">Meeting time</option>
+                    <option value="campus">Campus</option>
+                    <option value="method">Method</option>
+                    <option value="modality">Modality</option>
+                    <option value="seniority">Top candidate seniority</option>
+                  </select>
+                  <div style={ui.small}>
+                    {chairPreferenceRows.length} saved preference row(s) loaded for sorting.
+                  </div>
+                </div>
               </div>
 
               <div style={ui.commandLane}>
                 <div style={ui.miniKicker}>Workflow</div>
                 <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>Assignment State</h2>
-                <div style={ui.cardDesc}>Seniority stays first, preference rank still breaks ties, and reassignment remains available when a chair needs discretion.</div>
+                <div style={ui.cardDesc}>Preference sort is available for the section queue, while each section still shows seniority, preference rank, and reassignment status.</div>
                 <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))", marginTop: 12 }}>
                   <div style={ui.metricTile}>
                     <div style={ui.miniKicker}>Ready</div>
@@ -3203,6 +3264,8 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                         {section.candidates.slice(0, 5).map((row) => {
                           const isTop = topCandidate?.employee_id === row.employee_id;
+                          const sectionHasSavedPreference = Number.isFinite(Number(section.bestPreferenceRank));
+                          const requiresPreferenceRationale = sectionHasSavedPreference && !isTop;
                           const currentAssignment = currentAssignmentByGroup.get(section.assignment_group_id) || section.currentAssignment || null;
                           const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
                           const reasonSummary = candidateReasonSummary(section, row, topCandidate, currentAssignment);
@@ -3245,7 +3308,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                     {!isCurrentAssignee && !row.has_tentative_assignment && row.section_assigned_to_other ? <span style={workflowStatePillStyle("filled")}>Section filled</span> : null}
                                     {!isCurrentAssignee && !row.has_tentative_assignment && row.has_assignment_conflict ? <span style={workflowStatePillStyle("conflict")}>Time conflict</span> : null}
                                     {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isTop ? <span style={workflowStatePillStyle("top")}>Top candidate</span> : null}
-                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && !isTop ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
+                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && requiresPreferenceRationale ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
                                     {section.currentAssignment && !isCurrentAssignee && !row.has_assignment_conflict ? <span style={workflowStatePillStyle("bypass")}>Reassign requires rationale</span> : null}
                                   </div>
                                   {isCurrentAssignee || row.has_tentative_assignment ? (
@@ -3259,8 +3322,8 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                   ) : row.section_assigned_to_other ? (
                                     <button style={ui.btn} disabled>Filled</button>
                                   ) : (
-                                    <button style={isTop ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, topCandidate?.employee_id)}>
-                                      {isTop ? "Assign" : "Assign with Rationale"}
+                                    <button style={isTop || !requiresPreferenceRationale ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, topCandidate?.employee_id, requiresPreferenceRationale)}>
+                                      {requiresPreferenceRationale ? "Assign with Rationale" : "Assign"}
                                     </button>
                                   )}
                                 </div>
@@ -3668,7 +3731,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </button>
                 </div>
                 {preferencesMessage ? (
-                  <div style={{ marginTop: 10, color: preferencesMessage.toLowerCase().includes("saved") ? "#166534" : "#b91c1c", fontWeight: 700 }}>
+                  <div style={{ marginTop: 10, color: /saved|loaded|loading/i.test(preferencesMessage) ? "#166534" : "#b91c1c", fontWeight: 700 }}>
                     {preferencesMessage}
                   </div>
                 ) : null}
