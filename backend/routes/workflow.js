@@ -900,7 +900,15 @@ router.get("/preferences/export", async (req, res) => {
   const { termCode = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
-    const result = await query(`SELECT term_code, faculty_id, employee_id, faculty_name, assignment_group_id, discipline_code, preference_rank FROM scope_preferences WHERE term_code = $1 ORDER BY faculty_name, preference_rank`, [termCode]);
+    const result = await query(
+      `SELECT p.term_code, p.faculty_id, p.employee_id, p.faculty_name, p.assignment_group_id, p.discipline_code, p.preference_rank,
+              s.primary_subject_course, s.primary_crn, s.title
+       FROM scope_preferences p
+       LEFT JOIN scope_sections s ON s.term_code = p.term_code AND s.assignment_group_id = p.assignment_group_id
+       WHERE p.term_code = $1
+       ORDER BY p.faculty_name, p.preference_rank`,
+      [termCode]
+    );
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.send(Papa.unparse(result.rows));
   } catch (error) { res.status(500).json({ error: error.message }); }

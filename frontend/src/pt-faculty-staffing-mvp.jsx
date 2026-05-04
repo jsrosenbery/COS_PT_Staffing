@@ -459,6 +459,27 @@ function finiteNumberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function sectionPreferenceMatchKeys(item = {}) {
+  const keys = new Set();
+  [item.assignment_group_id, item.primary_crn].forEach((value) => {
+    const compact = compactKey(value);
+    if (compact) keys.add(compact);
+    const crns = String(value ?? "").match(/\d{4,}/g) || [];
+    crns.forEach((crn) => keys.add(`crn:${crn}`));
+    if (crns.length > 1) keys.add(`crns:${[...crns].sort().join("|")}`);
+  });
+  return Array.from(keys);
+}
+
+function minRankForKeys(map, keys, suffix = "") {
+  let best = null;
+  keys.forEach((key) => {
+    const rank = map.get(`${key}${suffix}`);
+    if (rank !== undefined && (best === null || rank < best)) best = rank;
+  });
+  return best;
+}
+
 function sectionStartMinutes(section) {
   const starts = (section?.meetings || [])
     .map((meeting) => parseClockToMinutes(meeting.start_time))
@@ -1404,23 +1425,27 @@ export default function PTFacultyStaffingMVP() {
     const candidateRankByAssignmentEmployee = new Map();
 
     chairPreferenceRows.forEach((row) => {
-      const assignmentId = normalize(row.assignment_group_id);
-      if (!assignmentId) return;
+      const matchKeys = sectionPreferenceMatchKeys(row);
+      if (!matchKeys.length) return;
       const rank = finiteNumberOrNull(row.preference_rank);
       if (rank === null) return;
 
-      const currentSectionRank = sectionRankByAssignment.get(assignmentId);
-      if (!Number.isFinite(currentSectionRank) || rank < currentSectionRank) {
-        sectionRankByAssignment.set(assignmentId, rank);
-      }
+      matchKeys.forEach((matchKey) => {
+        const currentSectionRank = sectionRankByAssignment.get(matchKey);
+        if (!Number.isFinite(currentSectionRank) || rank < currentSectionRank) {
+          sectionRankByAssignment.set(matchKey, rank);
+        }
+      });
 
       const employeeId = normalize(row.employee_id || row.faculty_id);
       if (employeeId) {
-        const key = `${assignmentId}::${employeeId}`;
-        const currentCandidateRank = candidateRankByAssignmentEmployee.get(key);
-        if (!Number.isFinite(currentCandidateRank) || rank < currentCandidateRank) {
-          candidateRankByAssignmentEmployee.set(key, rank);
-        }
+        matchKeys.forEach((matchKey) => {
+          const key = `${matchKey}::${employeeId}`;
+          const currentCandidateRank = candidateRankByAssignmentEmployee.get(key);
+          if (!Number.isFinite(currentCandidateRank) || rank < currentCandidateRank) {
+            candidateRankByAssignmentEmployee.set(key, rank);
+          }
+        });
       }
     });
 
@@ -1438,7 +1463,8 @@ export default function PTFacultyStaffingMVP() {
       const currentAssignment = activeAssignments.find((assignment) => assignment.assignment_group_id === key) || null;
       const employeeAssignments = activeAssignments.filter((assignment) => assignment.employee_id === row.employee_id && assignment.assignment_group_id !== key);
       const conflictingAssignment = employeeAssignments.find((assignment) => hasMeetingConflict(row, assignment)) || null;
-      const exportedPreferenceRank = chairPreferenceLookups.candidateRankByAssignmentEmployee.get(`${normalize(key)}::${normalize(row.employee_id)}`);
+      const rowMatchKeys = sectionPreferenceMatchKeys(row);
+      const exportedPreferenceRank = minRankForKeys(chairPreferenceLookups.candidateRankByAssignmentEmployee, rowMatchKeys, `::${normalize(row.employee_id)}`);
       const rowPreferenceRank = finiteNumberOrNull(row.preference_rank) ?? exportedPreferenceRank ?? null;
       const enrichedRow = {
         ...row,
@@ -1467,7 +1493,7 @@ export default function PTFacultyStaffingMVP() {
           display_modality: row.display_modality,
           modality: row.modality,
           meetings: row.meetings,
-          section_preference_rank: finiteNumberOrNull(row.section_preference_rank) ?? chairPreferenceLookups.sectionRankByAssignment.get(normalize(key)) ?? null,
+          section_preference_rank: finiteNumberOrNull(row.section_preference_rank) ?? minRankForKeys(chairPreferenceLookups.sectionRankByAssignment, rowMatchKeys) ?? null,
           candidates: [],
           currentAssignment,
         });
@@ -3062,6 +3088,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   Load Saved Preferences
                 </button>
               </div>
+              {preferencesMessage ? (
+                <div style={{ marginTop: 8, color: /saved|loaded|loading/i.test(preferencesMessage) ? "#166534" : "#b91c1c", fontWeight: 700, fontSize: 13 }}>
+                  {preferencesMessage}
+                </div>
+              ) : null}
             </div>
             <div style={{ marginTop: 12 }}>
               {facultySeniorityRows.length ? (
