@@ -453,6 +453,12 @@ function courseSortKey(section) {
   return `${section?.primary_subject_course || ""} ${section?.primary_crn || ""}`.trim();
 }
 
+function finiteNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function sectionStartMinutes(section) {
   const starts = (section?.meetings || [])
     .map((meeting) => parseClockToMinutes(meeting.start_time))
@@ -581,7 +587,7 @@ function sectionStateSummary(section, topCandidate) {
 function candidateReasonSummary(section, row, topCandidate, currentAssignment) {
   const isTop = topCandidate?.employee_id === row.employee_id;
   const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
-  const sectionHasSavedPreference = Number.isFinite(Number(section?.bestPreferenceRank));
+  const sectionHasSavedPreference = finiteNumberOrNull(section?.bestPreferenceRank) !== null;
   if (isCurrentAssignee) {
     return {
       title: "Current tentative holder",
@@ -1400,8 +1406,8 @@ export default function PTFacultyStaffingMVP() {
     chairPreferenceRows.forEach((row) => {
       const assignmentId = normalize(row.assignment_group_id);
       if (!assignmentId) return;
-      const rank = Number(row.preference_rank);
-      if (!Number.isFinite(rank)) return;
+      const rank = finiteNumberOrNull(row.preference_rank);
+      if (rank === null) return;
 
       const currentSectionRank = sectionRankByAssignment.get(assignmentId);
       if (!Number.isFinite(currentSectionRank) || rank < currentSectionRank) {
@@ -1433,7 +1439,7 @@ export default function PTFacultyStaffingMVP() {
       const employeeAssignments = activeAssignments.filter((assignment) => assignment.employee_id === row.employee_id && assignment.assignment_group_id !== key);
       const conflictingAssignment = employeeAssignments.find((assignment) => hasMeetingConflict(row, assignment)) || null;
       const exportedPreferenceRank = chairPreferenceLookups.candidateRankByAssignmentEmployee.get(`${normalize(key)}::${normalize(row.employee_id)}`);
-      const rowPreferenceRank = Number.isFinite(Number(row.preference_rank)) ? Number(row.preference_rank) : exportedPreferenceRank;
+      const rowPreferenceRank = finiteNumberOrNull(row.preference_rank) ?? exportedPreferenceRank ?? null;
       const enrichedRow = {
         ...row,
         preference_rank: rowPreferenceRank,
@@ -1461,9 +1467,7 @@ export default function PTFacultyStaffingMVP() {
           display_modality: row.display_modality,
           modality: row.modality,
           meetings: row.meetings,
-          section_preference_rank: Number.isFinite(Number(row.section_preference_rank))
-            ? Number(row.section_preference_rank)
-            : chairPreferenceLookups.sectionRankByAssignment.get(normalize(key)),
+          section_preference_rank: finiteNumberOrNull(row.section_preference_rank) ?? chairPreferenceLookups.sectionRankByAssignment.get(normalize(key)) ?? null,
           candidates: [],
           currentAssignment,
         });
@@ -1477,26 +1481,26 @@ export default function PTFacultyStaffingMVP() {
     return Array.from(grouped.values())
       .map((section) => {
         const candidates = [...section.candidates].sort((a, b) => {
-          const aRank = Number.isFinite(Number(a.seniority_rank)) ? Number(a.seniority_rank) : 999999;
-          const bRank = Number.isFinite(Number(b.seniority_rank)) ? Number(b.seniority_rank) : 999999;
+          const aRank = finiteNumberOrNull(a.seniority_rank) ?? 999999;
+          const bRank = finiteNumberOrNull(b.seniority_rank) ?? 999999;
           if (aRank !== bRank) return aRank - bRank;
-          const aPref = Number.isFinite(Number(a.preference_rank)) ? Number(a.preference_rank) : 999999;
-          const bPref = Number.isFinite(Number(b.preference_rank)) ? Number(b.preference_rank) : 999999;
+          const aPref = finiteNumberOrNull(a.preference_rank) ?? 999999;
+          const bPref = finiteNumberOrNull(b.preference_rank) ?? 999999;
           if (aPref !== bPref) return aPref - bPref;
           return String(a.faculty_name || a.employee_id || "").localeCompare(String(b.faculty_name || b.employee_id || ""));
         });
         const eligibleCandidates = candidates.filter((row) => !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict);
         const preferenceRanks = [
-          Number(section.section_preference_rank),
-          ...candidates.map((row) => Number(row.preference_rank)),
+          finiteNumberOrNull(section.section_preference_rank),
+          ...candidates.map((row) => finiteNumberOrNull(row.preference_rank)),
         ]
-          .filter((rank) => Number.isFinite(rank));
+          .filter((rank) => rank !== null);
         const bestPreferenceRank = preferenceRanks.length ? Math.min(...preferenceRanks) : null;
         return { ...section, candidates, eligibleCandidates, bestPreferenceRank };
       })
       .sort((a, b) => {
-        const aPref = Number.isFinite(Number(a.bestPreferenceRank)) ? Number(a.bestPreferenceRank) : 999999;
-        const bPref = Number.isFinite(Number(b.bestPreferenceRank)) ? Number(b.bestPreferenceRank) : 999999;
+        const aPref = finiteNumberOrNull(a.bestPreferenceRank) ?? 999999;
+        const bPref = finiteNumberOrNull(b.bestPreferenceRank) ?? 999999;
         if (aPref !== bPref) return aPref - bPref;
         return courseSortKey(a).localeCompare(courseSortKey(b));
       });
@@ -1525,14 +1529,14 @@ export default function PTFacultyStaffingMVP() {
         const timeCompare = sectionStartMinutes(a) - sectionStartMinutes(b);
         if (timeCompare) return timeCompare;
       } else if (workflowSort === "seniority") {
-        const aRank = Number.isFinite(Number(a.eligibleCandidates?.[0]?.seniority_rank)) ? Number(a.eligibleCandidates[0].seniority_rank) : 999999;
-        const bRank = Number.isFinite(Number(b.eligibleCandidates?.[0]?.seniority_rank)) ? Number(b.eligibleCandidates[0].seniority_rank) : 999999;
+        const aRank = finiteNumberOrNull(a.eligibleCandidates?.[0]?.seniority_rank) ?? 999999;
+        const bRank = finiteNumberOrNull(b.eligibleCandidates?.[0]?.seniority_rank) ?? 999999;
         if (aRank !== bRank) return aRank - bRank;
       } else if (workflowSort === "course") {
         return courseSortKey(a).localeCompare(courseSortKey(b));
       } else {
-        const aPref = Number.isFinite(Number(a.bestPreferenceRank)) ? Number(a.bestPreferenceRank) : 999999;
-        const bPref = Number.isFinite(Number(b.bestPreferenceRank)) ? Number(b.bestPreferenceRank) : 999999;
+        const aPref = finiteNumberOrNull(a.bestPreferenceRank) ?? 999999;
+        const bPref = finiteNumberOrNull(b.bestPreferenceRank) ?? 999999;
         if (aPref !== bPref) return aPref - bPref;
       }
       return courseSortKey(a).localeCompare(courseSortKey(b));
@@ -1541,7 +1545,7 @@ export default function PTFacultyStaffingMVP() {
 
   const filteredSectionQueue = useMemo(() => {
     const preferenceScopedQueue = showOnlyPreferenceQueue
-      ? sortedSectionQueue.filter((section) => Number.isFinite(Number(section.bestPreferenceRank)))
+      ? sortedSectionQueue.filter((section) => finiteNumberOrNull(section.bestPreferenceRank) !== null)
       : sortedSectionQueue;
     if (workflowView === "assigned") return preferenceScopedQueue.filter((section) => Boolean(section.currentAssignment));
     if (workflowView === "ready") return preferenceScopedQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length));
@@ -1550,7 +1554,7 @@ export default function PTFacultyStaffingMVP() {
   }, [sortedSectionQueue, workflowView, showOnlyPreferenceQueue]);
 
   const preferenceQueueCount = useMemo(() => {
-    return sectionQueue.filter((section) => Number.isFinite(Number(section.bestPreferenceRank))).length;
+    return sectionQueue.filter((section) => finiteNumberOrNull(section.bestPreferenceRank) !== null).length;
   }, [sectionQueue]);
 
   const auditEventOptions = useMemo(() => {
@@ -1635,8 +1639,8 @@ export default function PTFacultyStaffingMVP() {
       : preferredFiltered;
 
     return [...conflictFiltered].sort((a, b) => {
-      const aPref = Number.isFinite(Number(a.preference_rank)) ? Number(a.preference_rank) : 999999;
-      const bPref = Number.isFinite(Number(b.preference_rank)) ? Number(b.preference_rank) : 999999;
+      const aPref = finiteNumberOrNull(a.preference_rank) ?? 999999;
+      const bPref = finiteNumberOrNull(b.preference_rank) ?? 999999;
       if (aPref !== bPref) return aPref - bPref;
       const aAvailability = a.availabilitySummary?.matches ? 0 : 1;
       const bAvailability = b.availabilitySummary?.matches ? 0 : 1;
@@ -3303,7 +3307,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                         {section.candidates.slice(0, 5).map((row) => {
                           const isTop = topCandidate?.employee_id === row.employee_id;
-                          const sectionHasSavedPreference = Number.isFinite(Number(section.bestPreferenceRank));
+                          const sectionHasSavedPreference = finiteNumberOrNull(section.bestPreferenceRank) !== null;
                           const requiresPreferenceRationale = sectionHasSavedPreference && !isTop;
                           const currentAssignment = currentAssignmentByGroup.get(section.assignment_group_id) || section.currentAssignment || null;
                           const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
