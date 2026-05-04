@@ -1423,21 +1423,30 @@ export default function PTFacultyStaffingMVP() {
   const chairPreferenceLookups = useMemo(() => {
     const sectionRankByAssignment = new Map();
     const candidateRankByAssignmentEmployee = new Map();
+    const selectedFacultySectionRankByAssignment = new Map();
+    const selectedFacultyKey = normalize(selectedFacultyId || selectedFaculty?.employeeId);
 
     chairPreferenceRows.forEach((row) => {
       const matchKeys = sectionPreferenceMatchKeys(row);
       if (!matchKeys.length) return;
       const rank = finiteNumberOrNull(row.preference_rank);
       if (rank === null) return;
+      const employeeId = normalize(row.employee_id || row.faculty_id);
+      const isSelectedFacultyPreference = selectedFacultyKey && employeeId === selectedFacultyKey;
 
       matchKeys.forEach((matchKey) => {
         const currentSectionRank = sectionRankByAssignment.get(matchKey);
         if (!Number.isFinite(currentSectionRank) || rank < currentSectionRank) {
           sectionRankByAssignment.set(matchKey, rank);
         }
+        if (isSelectedFacultyPreference) {
+          const currentSelectedRank = selectedFacultySectionRankByAssignment.get(matchKey);
+          if (!Number.isFinite(currentSelectedRank) || rank < currentSelectedRank) {
+            selectedFacultySectionRankByAssignment.set(matchKey, rank);
+          }
+        }
       });
 
-      const employeeId = normalize(row.employee_id || row.faculty_id);
       if (employeeId) {
         matchKeys.forEach((matchKey) => {
           const key = `${matchKey}::${employeeId}`;
@@ -1449,8 +1458,8 @@ export default function PTFacultyStaffingMVP() {
       }
     });
 
-    return { sectionRankByAssignment, candidateRankByAssignmentEmployee };
-  }, [chairPreferenceRows]);
+    return { sectionRankByAssignment, candidateRankByAssignmentEmployee, selectedFacultySectionRankByAssignment };
+  }, [chairPreferenceRows, selectedFacultyId, selectedFaculty]);
 
   const sectionQueue = useMemo(() => {
     const grouped = new Map();
@@ -1493,6 +1502,7 @@ export default function PTFacultyStaffingMVP() {
           display_modality: row.display_modality,
           modality: row.modality,
           meetings: row.meetings,
+          selected_faculty_preference_rank: minRankForKeys(chairPreferenceLookups.selectedFacultySectionRankByAssignment, rowMatchKeys),
           section_preference_rank: finiteNumberOrNull(row.section_preference_rank) ?? minRankForKeys(chairPreferenceLookups.sectionRankByAssignment, rowMatchKeys) ?? null,
           candidates: [],
           currentAssignment,
@@ -1517,12 +1527,14 @@ export default function PTFacultyStaffingMVP() {
         });
         const eligibleCandidates = candidates.filter((row) => !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict);
         const preferenceRanks = [
+          finiteNumberOrNull(section.selected_faculty_preference_rank),
           finiteNumberOrNull(section.section_preference_rank),
           ...candidates.map((row) => finiteNumberOrNull(row.preference_rank)),
         ]
           .filter((rank) => rank !== null);
         const bestPreferenceRank = preferenceRanks.length ? Math.min(...preferenceRanks) : null;
-        return { ...section, candidates, eligibleCandidates, bestPreferenceRank };
+        const selectedFacultyPreferenceRank = finiteNumberOrNull(section.selected_faculty_preference_rank);
+        return { ...section, candidates, eligibleCandidates, bestPreferenceRank, selectedFacultyPreferenceRank };
       })
       .sort((a, b) => {
         const aPref = finiteNumberOrNull(a.bestPreferenceRank) ?? 999999;
@@ -1561,8 +1573,8 @@ export default function PTFacultyStaffingMVP() {
       } else if (workflowSort === "course") {
         return courseSortKey(a).localeCompare(courseSortKey(b));
       } else {
-        const aPref = finiteNumberOrNull(a.bestPreferenceRank) ?? 999999;
-        const bPref = finiteNumberOrNull(b.bestPreferenceRank) ?? 999999;
+        const aPref = finiteNumberOrNull(a.selectedFacultyPreferenceRank) ?? finiteNumberOrNull(a.bestPreferenceRank) ?? 999999;
+        const bPref = finiteNumberOrNull(b.selectedFacultyPreferenceRank) ?? finiteNumberOrNull(b.bestPreferenceRank) ?? 999999;
         if (aPref !== bPref) return aPref - bPref;
       }
       return courseSortKey(a).localeCompare(courseSortKey(b));
@@ -1571,7 +1583,12 @@ export default function PTFacultyStaffingMVP() {
 
   const filteredSectionQueue = useMemo(() => {
     const preferenceScopedQueue = showOnlyPreferenceQueue
-      ? sortedSectionQueue.filter((section) => finiteNumberOrNull(section.bestPreferenceRank) !== null)
+      ? sortedSectionQueue.filter((section) => {
+        const hasSelectedFacultyPrefs = chairPreferenceLookups.selectedFacultySectionRankByAssignment.size > 0;
+        return hasSelectedFacultyPrefs
+          ? finiteNumberOrNull(section.selectedFacultyPreferenceRank) !== null
+          : finiteNumberOrNull(section.bestPreferenceRank) !== null;
+      })
       : sortedSectionQueue;
     if (workflowView === "assigned") return preferenceScopedQueue.filter((section) => Boolean(section.currentAssignment));
     if (workflowView === "ready") return preferenceScopedQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length));
@@ -1580,8 +1597,11 @@ export default function PTFacultyStaffingMVP() {
   }, [sortedSectionQueue, workflowView, showOnlyPreferenceQueue]);
 
   const preferenceQueueCount = useMemo(() => {
-    return sectionQueue.filter((section) => finiteNumberOrNull(section.bestPreferenceRank) !== null).length;
-  }, [sectionQueue]);
+    const hasSelectedFacultyPrefs = chairPreferenceLookups.selectedFacultySectionRankByAssignment.size > 0;
+    return sectionQueue.filter((section) => hasSelectedFacultyPrefs
+      ? finiteNumberOrNull(section.selectedFacultyPreferenceRank) !== null
+      : finiteNumberOrNull(section.bestPreferenceRank) !== null).length;
+  }, [sectionQueue, chairPreferenceLookups]);
 
   const auditEventOptions = useMemo(() => {
     return Array.from(new Set(decisionLogs.map((entry) => normalize(entry.event_type)).filter(Boolean))).sort();
@@ -3246,7 +3266,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 <div>
                   <div style={{ fontWeight: 800 }}>Section Assignment Queue</div>
                   <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
-                    Sort and review the {selectedDisciplineCode === "ALL" ? "currently scoped" : selectedDisciplineCode} section cards below before assigning PT faculty.
+                    Sort and review the {selectedDisciplineCode === "ALL" ? "currently scoped" : selectedDisciplineCode} section cards below before assigning PT faculty. Preference order follows {selectedFaculty ? facultyName(selectedFaculty) : "the selected faculty member"} first when that person has saved choices.
                   </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                     <button
@@ -3319,6 +3339,9 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           )}
                           {section.bestPreferenceRank ? (
                             <span style={workflowStatePillStyle("advanced")}>Preference #{section.bestPreferenceRank}</span>
+                          ) : null}
+                          {section.selectedFacultyPreferenceRank ? (
+                            <span style={workflowStatePillStyle("top")}>{selectedFaculty ? facultyName(selectedFaculty) : "Selected faculty"} #{section.selectedFacultyPreferenceRank}</span>
                           ) : null}
                         </div>
                       </div>
