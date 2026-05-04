@@ -888,6 +888,7 @@ export default function PTFacultyStaffingMVP() {
   const [auditTypeFilter, setAuditTypeFilter] = useState("ALL");
   const [workflowView, setWorkflowView] = useState("all");
   const [workflowSort, setWorkflowSort] = useState("preference");
+  const [showOnlyPreferenceQueue, setShowOnlyPreferenceQueue] = useState(false);
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
 
@@ -1539,11 +1540,18 @@ export default function PTFacultyStaffingMVP() {
   }, [sectionQueue, workflowSort]);
 
   const filteredSectionQueue = useMemo(() => {
-    if (workflowView === "assigned") return sortedSectionQueue.filter((section) => Boolean(section.currentAssignment));
-    if (workflowView === "ready") return sortedSectionQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length));
-    if (workflowView === "blocked") return sortedSectionQueue.filter((section) => !section.currentAssignment && !section.eligibleCandidates?.length);
-    return sortedSectionQueue;
-  }, [sortedSectionQueue, workflowView]);
+    const preferenceScopedQueue = showOnlyPreferenceQueue
+      ? sortedSectionQueue.filter((section) => Number.isFinite(Number(section.bestPreferenceRank)))
+      : sortedSectionQueue;
+    if (workflowView === "assigned") return preferenceScopedQueue.filter((section) => Boolean(section.currentAssignment));
+    if (workflowView === "ready") return preferenceScopedQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length));
+    if (workflowView === "blocked") return preferenceScopedQueue.filter((section) => !section.currentAssignment && !section.eligibleCandidates?.length);
+    return preferenceScopedQueue;
+  }, [sortedSectionQueue, workflowView, showOnlyPreferenceQueue]);
+
+  const preferenceQueueCount = useMemo(() => {
+    return sectionQueue.filter((section) => Number.isFinite(Number(section.bestPreferenceRank))).length;
+  }, [sectionQueue]);
 
   const auditEventOptions = useMemo(() => {
     return Array.from(new Set(decisionLogs.map((entry) => normalize(entry.event_type)).filter(Boolean))).sort();
@@ -3204,6 +3212,25 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   <div style={{ fontWeight: 800 }}>Section Assignment Queue</div>
                   <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
                     Sort and review the {selectedDisciplineCode === "ALL" ? "currently scoped" : selectedDisciplineCode} section cards below before assigning PT faculty.
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                    <button
+                      type="button"
+                      style={{ ...ui.filterChip, ...(showOnlyPreferenceQueue ? {} : ui.filterChipActive) }}
+                      onClick={() => setShowOnlyPreferenceQueue(false)}
+                    >
+                      All queued sections ({sectionQueue.length})
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...ui.filterChip, ...(showOnlyPreferenceQueue ? ui.filterChipActive : {}) }}
+                      onClick={() => {
+                        setShowOnlyPreferenceQueue(true);
+                        setWorkflowSort("preference");
+                      }}
+                    >
+                      Preference sections only ({preferenceQueueCount})
+                    </button>
                   </div>
                 </div>
                 <div style={{ display: "grid", gap: 6, minWidth: 260 }}>
