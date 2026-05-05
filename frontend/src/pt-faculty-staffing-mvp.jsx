@@ -414,12 +414,36 @@ function matchesSectionFilters(section, filters) {
   const campus = normalize(section?.campus);
   const method = sectionMethodLabel(section);
   const modality = sectionModalityLabel(section);
+  const search = normalize(filters?.search).toLowerCase();
 
   const campusMatch = !filters?.campuses?.length || filters.campuses.includes(campus);
   const methodMatch = !filters?.methods?.length || filters.methods.includes(method);
   const modalityMatch = !filters?.modalities?.length || filters.modalities.includes(modality);
+  const meetings = Array.isArray(section?.meetings) ? section.meetings : [];
+  const dayMatch = !filters?.days?.length || meetings
+    .flatMap((meeting) => normalizeDayTokens(meeting.days))
+    .some((day) => filters.days.includes(day));
+  const timeMatch = !filters?.timeBlocks?.length || meetings.some((meeting) => {
+    const start = parseClockToMinutes(meeting.start_time);
+    const end = parseClockToMinutes(meeting.end_time);
+    if (start === null || end === null || start === end) return false;
+    return availabilityTimeOptions
+      .filter((block) => filters.timeBlocks.includes(block.key))
+      .some((block) => start < block.end && block.start < end);
+  });
+  const searchMatch = !search || [
+    section?.primary_subject_course,
+    section?.primary_crn,
+    section?.title,
+    section?.division,
+    section?.campus,
+    section?.discipline_code,
+    method,
+    modality,
+    formatMeetings(section?.meetings),
+  ].some((value) => normalize(value).toLowerCase().includes(search));
 
-  return campusMatch && methodMatch && modalityMatch;
+  return campusMatch && methodMatch && modalityMatch && dayMatch && timeMatch && searchMatch;
 }
 
 function sectionAvailabilitySummary(section, availability = {}) {
@@ -531,6 +555,20 @@ function workflowStatePillStyle(kind) {
   if (kind === "advanced") return pillStyle("#ede9fe", "#5b21b6", "#c4b5fd");
   if (kind === "loaded") return pillStyle("#ecfccb", "#3f6212", "#bef264");
   return pillStyle("#f8fafc", "#475569", "#cbd5e1");
+}
+
+function assignmentStatusLabel(status) {
+  const key = normalize(status || "tentative").toLowerCase();
+  if (key === "chair_submitted") return "Submitted";
+  if (key === "dean_approved") return "Dean approved";
+  return "Tentative";
+}
+
+function assignmentStatusKind(status) {
+  const key = normalize(status || "tentative").toLowerCase();
+  if (key === "chair_submitted") return "top";
+  if (key === "dean_approved") return "assigned";
+  return "advanced";
 }
 
 function divisionStatusMeta(status) {
@@ -902,7 +940,7 @@ export default function PTFacultyStaffingMVP() {
   const [loadingMappingList, setLoadingMappingList] = useState(false);
   const [mappingAdminError, setMappingAdminError] = useState("");
   const [showMappingList, setShowMappingList] = useState(false);
-  const [sectionFilters, setSectionFilters] = useState({ campuses: [], methods: [], modalities: [] });
+  const [sectionFilters, setSectionFilters] = useState({ campuses: [], methods: [], modalities: [], days: [], timeBlocks: [], search: "" });
   const [selectedUploadDivision, setSelectedUploadDivision] = useState("");
   const [pendingUploadFile, setPendingUploadFile] = useState(null);
   const [uploadConflict, setUploadConflict] = useState(null);
@@ -1138,6 +1176,13 @@ export default function PTFacultyStaffingMVP() {
       loadChairWorkflow();
     }
   }, [role, activeTerm?.code, selectedDisciplineCode, selectedChairName, selectedDeanName]);
+
+  useEffect(() => {
+    if (activeTerm?.code) {
+      setSelectedDisciplineCode("ALL");
+      loadAvailableSections("ALL");
+    }
+  }, [role, activeTerm?.code, selectedChairName, selectedDeanName]);
 
 
   const themeVars = darkMode
@@ -1397,6 +1442,12 @@ export default function PTFacultyStaffingMVP() {
     ).sort();
   }, [roleScopedSections]);
 
+  useEffect(() => {
+    if (selectedDisciplineCode !== "ALL" && roleAvailableDisciplineCodes.length && !roleAvailableDisciplineCodes.includes(selectedDisciplineCode)) {
+      setSelectedDisciplineCode("ALL");
+    }
+  }, [selectedDisciplineCode, roleAvailableDisciplineCodes]);
+
   const filterOptionSections = useMemo(() => {
     const workflowTemplates = chairWorkflowRows.map((row) => ({
       campus: row.campus,
@@ -1552,6 +1603,14 @@ export default function PTFacultyStaffingMVP() {
     return { assigned, ready, blocked, reassignmentPool, total: sectionQueue.length };
   }, [sectionQueue]);
 
+  const assignmentStatusCounts = useMemo(() => {
+    return tentativeAssignments.reduce((counts, assignment) => {
+      const status = normalize(assignment.status || "tentative").toLowerCase();
+      counts[status] = (counts[status] || 0) + 1;
+      return counts;
+    }, { tentative: 0, chair_submitted: 0, dean_approved: 0 });
+  }, [tentativeAssignments]);
+
   const sortedSectionQueue = useMemo(() => {
     return [...sectionQueue].sort((a, b) => {
       if (workflowSort === "campus") {
@@ -1616,7 +1675,13 @@ export default function PTFacultyStaffingMVP() {
     });
   }, [decisionLogs, auditSearch, auditTypeFilter]);
 
-  const activeSectionFilterCount = sectionFilters.campuses.length + sectionFilters.methods.length + sectionFilters.modalities.length;
+  const activeSectionFilterCount =
+    sectionFilters.campuses.length +
+    sectionFilters.methods.length +
+    sectionFilters.modalities.length +
+    sectionFilters.days.length +
+    sectionFilters.timeBlocks.length +
+    (sectionFilters.search.trim() ? 1 : 0);
 
   const divisionReportRows = useMemo(() => {
     return [...divisionStatuses]
@@ -1934,6 +1999,75 @@ export default function PTFacultyStaffingMVP() {
       setChairMessage(error.message || "Could not reassign section.");
     }
   }
+
+  async function submitAssignmentsToDean() {
+    if (!activeTerm?.code) return;
+    const submittedCount = assignmentStatusCounts.tentative || 0;
+    if (!submittedCount) {
+      setChairMessage("There are no tentative assignments in the current scope to submit.");
+      return;
+    }
+    const confirmed = window.confirm(`Submit ${submittedCount} tentative assignment(s) to dean review for the current scope?`);
+    if (!confirmed) return;
+    setChairMessage("");
+    try {
+      const scopedDivisions = role === "chair" ? chairDivisions : [];
+      const response = await apiFetch(`${API_BASE}/assignments/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          termCode: activeTerm.code,
+          disciplineCode: selectedDisciplineCode !== "ALL" ? selectedDisciplineCode : "",
+          divisions: scopedDivisions,
+          actorName: selectedChairName || "Division Chair",
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setChairMessage(data.error || "Could not submit assignments.");
+        return;
+      }
+      setChairMessage(data.message || "Assignments submitted to dean review.");
+      await loadChairWorkflow();
+    } catch (error) {
+      setChairMessage(error.message || "Could not submit assignments.");
+    }
+  }
+
+  async function approveSubmittedAssignments() {
+    if (!activeTerm?.code) return;
+    const approvedCount = assignmentStatusCounts.chair_submitted || 0;
+    if (!approvedCount) {
+      setChairMessage("There are no chair-submitted assignments in the current scope to approve.");
+      return;
+    }
+    const confirmed = window.confirm(`Approve ${approvedCount} submitted assignment(s) for the current scope?`);
+    if (!confirmed) return;
+    setChairMessage("");
+    try {
+      const scopedDivisions = role === "dean" ? deanDivisions : [];
+      const response = await apiFetch(`${API_BASE}/assignments/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          termCode: activeTerm.code,
+          disciplineCode: selectedDisciplineCode !== "ALL" ? selectedDisciplineCode : "",
+          divisions: scopedDivisions,
+          actorName: selectedDeanName || "Dean",
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setChairMessage(data.error || "Could not approve assignments.");
+        return;
+      }
+      setChairMessage(data.message || "Assignments approved.");
+      await loadChairWorkflow();
+    } catch (error) {
+      setChairMessage(error.message || "Could not approve assignments.");
+    }
+  }
+
   async function loadFacultyPreferences(facultyId = selectedFacultyId) {
     if (!activeTerm?.code) return;
     try {
@@ -2062,7 +2196,7 @@ export default function PTFacultyStaffingMVP() {
   }
 
   function clearSectionFilters() {
-    setSectionFilters({ campuses: [], methods: [], modalities: [] });
+    setSectionFilters({ campuses: [], methods: [], modalities: [], days: [], timeBlocks: [], search: "" });
   }
 
   async function exportPreferences() {
@@ -3140,11 +3274,21 @@ OH,ORNAMENTAL_HORTICULTURE`}
               <div style={ui.commandLane}>
                 <div style={ui.miniKicker}>Controls</div>
                 <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>Workflow Controls</h2>
-                <div style={ui.cardDesc}>Refresh the queue, export data, and pivot the view without hunting through the page.</div>
+                <div style={ui.cardDesc}>Refresh the queue, export data, and advance staffing decisions through review.</div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
                   <button style={ui.btnPrimary} onClick={loadChairWorkflow}>
                     {loadingChairWorkflow ? "Refreshing..." : "Refresh Workflow"}
                   </button>
+                  {role === "chair" ? (
+                    <button style={ui.btnPrimary} onClick={submitAssignmentsToDean} disabled={!assignmentStatusCounts.tentative}>
+                      Submit to Dean ({assignmentStatusCounts.tentative || 0})
+                    </button>
+                  ) : null}
+                  {role === "dean" ? (
+                    <button style={ui.btnPrimary} onClick={approveSubmittedAssignments} disabled={!assignmentStatusCounts.chair_submitted}>
+                      Approve Submitted ({assignmentStatusCounts.chair_submitted || 0})
+                    </button>
+                  ) : null}
                   <button style={ui.btn} onClick={exportPreferences}>
                     Export Preferences
                   </button>
@@ -3165,49 +3309,32 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     Export Division Summary
                   </button>
                 </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-                  {[
-                    ["all", `All (${workflowMetrics.total})`],
-                    ["ready", `Ready (${workflowMetrics.ready})`],
-                    ["assigned", `Assigned (${workflowMetrics.assigned})`],
-                    ["blocked", `Blocked (${workflowMetrics.blocked})`],
-                  ].map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      style={{ ...ui.filterChip, ...(workflowView === value ? ui.filterChipActive : {}) }}
-                      onClick={() => setWorkflowView(value)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               <div style={ui.commandLane}>
                 <div style={ui.miniKicker}>Workflow</div>
                 <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>Assignment State</h2>
-                <div style={ui.cardDesc}>Preference sort is available for the section queue, while each section still shows seniority, preference rank, and reassignment status.</div>
+                <div style={ui.cardDesc}>Current scope counts for chair submission and dean approval.</div>
                 <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))", marginTop: 12 }}>
                   <div style={ui.metricTile}>
-                    <div style={ui.miniKicker}>Ready</div>
+                    <div style={ui.miniKicker}>Tentative</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{assignmentStatusCounts.tentative || 0}</div>
+                    <div style={ui.small}>Chair selections not yet submitted.</div>
+                  </div>
+                  <div style={ui.metricTile}>
+                    <div style={ui.miniKicker}>Submitted</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{assignmentStatusCounts.chair_submitted || 0}</div>
+                    <div style={ui.small}>Waiting for dean review.</div>
+                  </div>
+                  <div style={ui.metricTile}>
+                    <div style={ui.miniKicker}>Approved</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{assignmentStatusCounts.dean_approved || 0}</div>
+                    <div style={ui.small}>Approved by dean.</div>
+                  </div>
+                  <div style={ui.metricTile}>
+                    <div style={ui.miniKicker}>Ready Queue</div>
                     <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{workflowMetrics.ready}</div>
-                    <div style={ui.small}>Queue items with at least one conflict-free candidate.</div>
-                  </div>
-                  <div style={ui.metricTile}>
-                    <div style={ui.miniKicker}>Assigned</div>
-                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{workflowMetrics.assigned}</div>
-                    <div style={ui.small}>Sections holding a tentative assignee right now.</div>
-                  </div>
-                  <div style={ui.metricTile}>
-                    <div style={ui.miniKicker}>Blocked</div>
-                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{workflowMetrics.blocked}</div>
-                    <div style={ui.small}>No clear candidate is available without intervention.</div>
-                  </div>
-                  <div style={ui.metricTile}>
-                    <div style={ui.miniKicker}>Reassignment Pool</div>
-                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{workflowMetrics.reassignmentPool}</div>
-                    <div style={ui.small}>Already placed sections that can still be adjusted.</div>
+                    <div style={ui.small}>Unassigned sections with a conflict-free candidate.</div>
                   </div>
                 </div>
               </div>
@@ -3258,7 +3385,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             {role !== "admin" ? (
             <>
             <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
-              {filteredSectionQueue.length} visible queued section(s), {tentativeAssignments.length} tentative assignment(s), {filteredDecisionLogs.length} visible audit entr{filteredDecisionLogs.length === 1 ? "y" : "ies"}.
+              {filteredSectionQueue.length} visible queued section(s), {assignmentStatusCounts.tentative || 0} tentative, {assignmentStatusCounts.chair_submitted || 0} submitted, {assignmentStatusCounts.dean_approved || 0} approved, {filteredDecisionLogs.length} visible audit entr{filteredDecisionLogs.length === 1 ? "y" : "ies"}.
             </div>
 
             <div style={{ ...ui.sectionCard, marginTop: 12, background: "var(--bg-soft)" }}>
@@ -3286,6 +3413,23 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     >
                       Preference sections only ({preferenceQueueCount})
                     </button>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                    {[
+                      ["all", `All (${workflowMetrics.total})`],
+                      ["ready", `Ready (${workflowMetrics.ready})`],
+                      ["assigned", `Assigned (${workflowMetrics.assigned})`],
+                      ["blocked", `Blocked (${workflowMetrics.blocked})`],
+                    ].map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        style={{ ...ui.filterChip, ...(workflowView === value ? ui.filterChipActive : {}) }}
+                        onClick={() => setWorkflowView(value)}
+                      >
+                        {label}
+                      </button>
+                    ))}
                   </div>
                 </div>
                 <div style={{ display: "grid", gap: 6, minWidth: 260 }}>
@@ -3331,7 +3475,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           <span style={methodPillStyle(sectionMethodLabel(section))}>{sectionMethodLabel(section)}</span>
                           <span style={modalityPillStyle(sectionModalityLabel(section))}>{sectionModalityLabel(section)}</span>
                           {section.currentAssignment ? (
-                            <span style={workflowStatePillStyle("assigned")}>Assigned</span>
+                            <span style={workflowStatePillStyle(assignmentStatusKind(section.currentAssignment.status))}>{assignmentStatusLabel(section.currentAssignment.status)}</span>
                           ) : topCandidate ? (
                             <span style={workflowStatePillStyle("top")}>Next in line ready</span>
                           ) : (
@@ -3353,7 +3497,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 13 }}>{stateSummary.detail}</div>
                         {section.currentAssignment ? (
                           <div style={{ marginTop: 8, color: "#166534", fontWeight: 700, fontSize: 13 }}>
-                            Tentatively assigned to {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
+                            {assignmentStatusLabel(section.currentAssignment.status)} assignment: {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
                           </div>
                         ) : null}
                       </div>
@@ -3441,9 +3585,9 @@ OH,ORNAMENTAL_HORTICULTURE`}
               <div style={{ display: "grid", gap: 16 }}>
                 {(role === "chair" || role === "dean" || tentativeAssignments.length > 0) ? (
                 <div style={ui.sectionCard}>
-                  <div style={{ fontWeight: 800 }}>Tentative Assignments</div>
+                  <div style={{ fontWeight: 800 }}>Staffing Decisions</div>
                   <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
-                    Live persistence snapshot with one-click unassign and queue-based reassignment.
+                    Live persistence snapshot for tentative, submitted, and approved assignments.
                   </div>
                   <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                     {tentativeAssignments.length ? tentativeAssignments.map((assignment) => (
@@ -3457,6 +3601,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                               {formatMeetings(assignment.meetings)}
                             </div>
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                              <span style={workflowStatePillStyle(assignmentStatusKind(assignment.status))}>{assignmentStatusLabel(assignment.status)}</span>
                               <span style={methodPillStyle(sectionMethodLabel(assignment))}>{sectionMethodLabel(assignment)}</span>
                               <span style={modalityPillStyle(sectionModalityLabel(assignment))}>{sectionModalityLabel(assignment)}</span>
                             </div>
@@ -3595,6 +3740,58 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
 
             <div style={{ marginTop: 14 }}>
+              <label style={{ ...ui.small, display: "block", marginBottom: 8 }}>Search sections</label>
+              <input
+                style={ui.input}
+                value={sectionFilters.search}
+                onChange={(event) => setSectionFilters((current) => ({ ...current, search: event.target.value }))}
+                placeholder="Search course, CRN, title, campus, discipline, modality, or meeting time"
+              />
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+                Days
+              </div>
+              <div style={{ ...ui.row, gap: 8 }}>
+                {availabilityDayOptions.map((day) => {
+                  const active = sectionFilters.days.includes(day.key);
+                  return (
+                    <button
+                      key={day.key}
+                      type="button"
+                      style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
+                      onClick={() => toggleSectionFilter("days", day.key)}
+                    >
+                      {day.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+                Time
+              </div>
+              <div style={{ ...ui.row, gap: 8 }}>
+                {availabilityTimeOptions.map((block) => {
+                  const active = sectionFilters.timeBlocks.includes(block.key);
+                  return (
+                    <button
+                      key={block.key}
+                      type="button"
+                      style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
+                      onClick={() => toggleSectionFilter("timeBlocks", block.key)}
+                    >
+                      {block.label} ({block.detail})
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
                 Campus
               </div>
@@ -3673,7 +3870,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
             Showing {visibleSections.length} section(s)
             {selectedDisciplineCode !== "ALL" ? ` for ${selectedDisciplineCode}` : ""}
-            {(sectionFilters.campuses.length || sectionFilters.methods.length || sectionFilters.modalities.length) ? " with active display filters." : "."}
+            {activeSectionFilterCount ? ` with ${activeSectionFilterCount} active display filter(s).` : "."}
           </div>
           {role !== "admin" ? (
             <div style={{ marginTop: 8, color: "var(--text-subtle)", fontSize: 13 }}>

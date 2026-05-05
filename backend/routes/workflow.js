@@ -617,6 +617,9 @@ router.get("/division-statuses", async (req, res) => {
               COUNT(DISTINCT s.assignment_group_id)::int AS open_sections_count,
               COUNT(DISTINCT p.id)::int AS preferences_count,
               COUNT(DISTINCT a.id)::int AS assignments_count,
+              COUNT(DISTINCT a.id) FILTER (WHERE COALESCE(a.status, 'tentative') = 'tentative')::int AS tentative_assignments_count,
+              COUNT(DISTINCT a.id) FILTER (WHERE COALESCE(a.status, 'tentative') = 'chair_submitted')::int AS chair_submitted_count,
+              COUNT(DISTINCT a.id) FILTER (WHERE COALESCE(a.status, 'tentative') = 'dean_approved')::int AS dean_approved_count,
               COUNT(DISTINCT l.id)::int AS decision_logs_count
        FROM scope_sections s
        LEFT JOIN scope_preferences p ON p.term_code = s.term_code AND p.assignment_group_id = s.assignment_group_id
@@ -631,11 +634,23 @@ router.get("/division-statuses", async (req, res) => {
       const sectionCount = row.open_sections_count || 0;
       const prefCount = row.preferences_count || 0;
       const assignmentCount = row.assignments_count || 0;
+      const submittedCount = row.chair_submitted_count || 0;
+      const approvedCount = row.dean_approved_count || 0;
       let status = "clean";
       if (sectionCount > 0) status = "loaded";
       if (prefCount > 0) status = "in_progress";
       if (assignmentCount > 0) status = "advanced";
-      return { ...row, sectionCount, preferenceCount: prefCount, submissionCount: prefCount, tentativeAssignmentCount: assignmentCount, approvedAssignmentCount: 0, chairFinalizedCount: 0, deanApprovedCount: 0, status };
+      return {
+        ...row,
+        sectionCount,
+        preferenceCount: prefCount,
+        submissionCount: submittedCount,
+        tentativeAssignmentCount: row.tentative_assignments_count || 0,
+        approvedAssignmentCount: approvedCount,
+        chairFinalizedCount: submittedCount,
+        deanApprovedCount: approvedCount,
+        status,
+      };
     });
     res.json({ divisions });
   } catch (error) { res.status(500).json({ error: error.message }); }
@@ -712,23 +727,132 @@ router.get("/chair-workflow", async (req, res) => {
 });
 
 router.get("/assignments", async (req, res) => {
-  const { termCode = "", disciplineCode = "" } = req.query;
+  const { termCode = "", disciplineCode = "", divisions = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
     const params = [termCode];
-    let disciplineFilter = "";
-    if (disciplineCode) { params.push(disciplineCode); disciplineFilter = ` AND a.discipline_code = $2`; }
+    let scopedFilter = "";
+    if (disciplineCode) {
+      params.push(disciplineCode);
+      scopedFilter += ` AND COALESCE(NULLIF(a.discipline_code, ''), s.discipline_code) = $${params.length}`;
+    }
+    const divisionList = String(divisions || "").split("|").map((v) => v.trim()).filter(Boolean);
+    if (divisionList.length) {
+      params.push(divisionList);
+      scopedFilter += ` AND s.division = ANY($${params.length}::text[])`;
+    }
     const result = await query(
       `SELECT a.id, a.assignment_group_id, a.employee_id, a.faculty_name, a.status, a.reason, a.created_at,
+              COALESCE(NULLIF(a.discipline_code, ''), s.discipline_code) AS discipline_code,
               s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.instructional_method, s.display_modality, s.modality, s.meetings
        FROM scope_assignments a
        LEFT JOIN scope_sections s ON s.term_code = a.term_code AND s.assignment_group_id = a.assignment_group_id
-       WHERE a.term_code = $1 AND COALESCE(a.status, 'tentative') <> 'released' ${disciplineFilter}
+       WHERE a.term_code = $1 AND COALESCE(a.status, 'tentative') <> 'released' ${scopedFilter}
        ORDER BY a.created_at DESC`,
       params
     );
     res.json({ assignments: result.rows.map((r) => ({ ...r, meetings: r.meetings || [] })) });
   } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+async function advanceAssignmentStatus({ client, termCode, fromStatuses, toStatus, divisions = [], disciplineCode = "", actorName = "", actorRole = "", eventType = "", notePrefix = "" }) {
+  const params = [termCode, fromStatuses, toStatus, actorName || ""];
+  let scopedFilter = "";
+  if (disciplineCode) {
+    params.push(disciplineCode);
+    scopedFilter += ` AND COALESCE(NULLIF(a.discipline_code, ''), s.discipline_code) = $${params.length}`;
+  }
+  if (divisions.length) {
+    params.push(divisions);
+    scopedFilter += ` AND s.division = ANY($${params.length}::text[])`;
+  }
+  const result = await client.query(
+    `UPDATE scope_assignments a
+     SET status = $3, actor_name = $4, updated_at = NOW()
+     FROM scope_sections s
+     WHERE a.term_code = $1
+       AND s.term_code = a.term_code
+       AND s.assignment_group_id = a.assignment_group_id
+       AND COALESCE(a.status, 'tentative') = ANY($2::text[])
+       ${scopedFilter}
+     RETURNING a.id, a.assignment_group_id, a.employee_id, a.faculty_name,
+               COALESCE(NULLIF(a.discipline_code, ''), s.discipline_code) AS discipline_code,
+               s.division, s.primary_subject_course, s.primary_crn`,
+    params
+  );
+  for (const row of result.rows) {
+    await client.query(
+      `INSERT INTO scope_audit_log
+        (term, event_type, actor_name, actor_role, division, section_key, instructor_name, new_value, note, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'backend')`,
+      [
+        termCode,
+        eventType,
+        actorName || "",
+        actorRole,
+        row.division || "",
+        row.assignment_group_id || "",
+        row.faculty_name || row.employee_id || "",
+        toStatus,
+        `${notePrefix} ${row.primary_subject_course || row.assignment_group_id}${row.primary_crn ? ` (${row.primary_crn})` : ""} for ${row.faculty_name || row.employee_id}.`,
+      ]
+    );
+  }
+  return result.rows;
+}
+
+router.post("/assignments/submit", async (req, res) => {
+  const { termCode = "", disciplineCode = "", divisions = [], actorName = "" } = req.body || {};
+  if (!termCode) return res.status(400).json({ error: "termCode is required." });
+  const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim()).filter(Boolean) : [];
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const rows = await advanceAssignmentStatus({
+      client,
+      termCode,
+      fromStatuses: ["tentative"],
+      toStatus: "chair_submitted",
+      divisions: divisionList,
+      disciplineCode: String(disciplineCode || "").trim(),
+      actorName,
+      actorRole: "chair",
+      eventType: "CHAIR_SUBMITTED",
+      notePrefix: "Submitted",
+    });
+    await client.query("COMMIT");
+    res.json({ success: true, submittedCount: rows.length, message: `${rows.length} assignment(s) submitted to dean review.` });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: error.message });
+  } finally { client.release(); }
+});
+
+router.post("/assignments/approve", async (req, res) => {
+  const { termCode = "", disciplineCode = "", divisions = [], actorName = "" } = req.body || {};
+  if (!termCode) return res.status(400).json({ error: "termCode is required." });
+  const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim()).filter(Boolean) : [];
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const rows = await advanceAssignmentStatus({
+      client,
+      termCode,
+      fromStatuses: ["chair_submitted"],
+      toStatus: "dean_approved",
+      divisions: divisionList,
+      disciplineCode: String(disciplineCode || "").trim(),
+      actorName,
+      actorRole: "dean",
+      eventType: "DEAN_APPROVED",
+      notePrefix: "Approved",
+    });
+    await client.query("COMMIT");
+    res.json({ success: true, approvedCount: rows.length, message: `${rows.length} assignment(s) approved.` });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: error.message });
+  } finally { client.release(); }
 });
 
 router.post("/assignments", async (req, res) => {
@@ -915,22 +1039,33 @@ router.get("/preferences/export", async (req, res) => {
 });
 
 router.get("/decision-logs", async (req, res) => {
-  const { termCode = "", disciplineCode = "" } = req.query;
+  const { termCode = "", disciplineCode = "", divisions = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
     const params = [termCode];
-    let disciplineClause = "";
+    let scopedClause = "";
     if (disciplineCode) {
       params.push(disciplineCode);
-      disciplineClause = ` AND (
-        note ILIKE '%' || $2 || '%'
+      scopedClause += ` AND (
+        note ILIKE '%' || $${params.length} || '%'
         OR section_key IN (
           SELECT assignment_group_id FROM scope_sections
-          WHERE term_code = $1 AND discipline_code = $2
+          WHERE term_code = $1 AND discipline_code = $${params.length}
         )
       )`;
     }
-    const result = await query(`SELECT id, actor_name, event_type, COALESCE(section_key, '') AS section_key, COALESCE(note, '') AS detail, created_at FROM scope_audit_log WHERE term = $1 ${disciplineClause} ORDER BY created_at DESC`, params);
+    const divisionList = String(divisions || "").split("|").map((v) => v.trim()).filter(Boolean);
+    if (divisionList.length) {
+      params.push(divisionList);
+      scopedClause += ` AND (
+        division = ANY($${params.length}::text[])
+        OR section_key IN (
+          SELECT assignment_group_id FROM scope_sections
+          WHERE term_code = $1 AND division = ANY($${params.length}::text[])
+        )
+      )`;
+    }
+    const result = await query(`SELECT id, actor_name, event_type, COALESCE(section_key, '') AS section_key, COALESCE(note, '') AS detail, created_at FROM scope_audit_log WHERE term = $1 ${scopedClause} ORDER BY created_at DESC`, params);
     const withDiscipline = await Promise.all(result.rows.map(async (row) => {
       if (!row.section_key) return { ...row, discipline_code: "" };
       const section = await query(`SELECT discipline_code FROM scope_sections WHERE term_code = $1 AND assignment_group_id = $2 LIMIT 1`, [termCode, row.section_key]);
