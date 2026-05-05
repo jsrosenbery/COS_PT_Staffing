@@ -1175,14 +1175,14 @@ export default function PTFacultyStaffingMVP() {
     if ((role === "chair" || role === "admin" || role === "dean") && activeTerm?.code) {
       loadChairWorkflow();
     }
-  }, [role, activeTerm?.code, selectedDisciplineCode, selectedChairName, selectedDeanName]);
+  }, [role, activeTerm?.code, selectedDisciplineCode, selectedChairName, selectedDeanName, chairAssignments, deanAssignments]);
 
   useEffect(() => {
     if (activeTerm?.code) {
       setSelectedDisciplineCode("ALL");
       loadAvailableSections("ALL");
     }
-  }, [role, activeTerm?.code, selectedChairName, selectedDeanName]);
+  }, [role, activeTerm?.code, selectedChairName, selectedDeanName, chairAssignments, deanAssignments]);
 
 
   const themeVars = darkMode
@@ -1255,7 +1255,7 @@ export default function PTFacultyStaffingMVP() {
           .filter(Boolean)
       )
     ).sort((a, b) => a.localeCompare(b))
-  ), []);
+  ), [chairAssignments, deanAssignments]);
 
   const divisionStatusMap = useMemo(() => {
     const map = new Map();
