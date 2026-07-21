@@ -4,7 +4,20 @@ import cosLogo from "./assets/cos-logo.jpg";
 import AdminOperationsPanel from "./AdminOperationsPanel";
 import { buildInitialPtRoster } from "./adminOpsUtils";
 import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty, appendAuditLog, wipeActivePTRoster } from "./persistenceApi";
-import { API_BASE, apiFetch, clearApiToken, fetchJson, getApiToken, setApiToken } from "./apiClient";
+import {
+  API_BASE,
+  acceptInvite,
+  apiFetch,
+  clearApiToken,
+  fetchCurrentUser,
+  fetchJson,
+  getApiToken,
+  getCurrentUser,
+  inviteUser,
+  login,
+  logout,
+  setApiToken,
+} from "./apiClient";
 
 const initialTerms = [];
 
@@ -878,6 +891,22 @@ export default function PTFacultyStaffingMVP() {
   const [role, setRole] = useState("admin");
   const [apiTokenInput, setApiTokenInput] = useState(() => getApiToken());
   const [apiAccessMessage, setApiAccessMessage] = useState("");
+  const [currentUser, setCurrentUser] = useState(() => getCurrentUser());
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ email: "", full_name: "", role: "faculty", division: "" });
+  const [inviteMessage, setInviteMessage] = useState("");
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [setupInviteToken] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("token") || "";
+  });
+  const [setupFullName, setSetupFullName] = useState("");
+  const [setupPassword, setSetupPassword] = useState("");
+  const [setupMessage, setSetupMessage] = useState("");
+  const [setupBusy, setSetupBusy] = useState(false);
   const [terms, setTerms] = useState(initialTerms);
   const [newTermCode, setNewTermCode] = useState("");
   const [newTermName, setNewTermName] = useState("");
@@ -970,6 +999,84 @@ export default function PTFacultyStaffingMVP() {
     setApiTokenInput("");
     setApiAccessMessage("API access token cleared.");
   }
+
+  async function handleLogin(event) {
+    event.preventDefault();
+    setAuthBusy(true);
+    setAuthMessage("");
+    try {
+      const data = await login(authEmail, authPassword);
+      setCurrentUser(data.user);
+      if (data.user?.role) setRole(data.user.role);
+      setAuthPassword("");
+      setAuthMessage(`Signed in as ${data.user?.full_name || data.user?.email || "user"}.`);
+    } catch (error) {
+      setAuthMessage(error.message || "Could not sign in.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleLogout() {
+    setAuthBusy(true);
+    setAuthMessage("");
+    try {
+      await logout();
+      setCurrentUser(null);
+      setAuthMessage("Signed out.");
+    } catch (error) {
+      setAuthMessage(error.message || "Could not sign out.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function sendAccessInvite(event) {
+    event.preventDefault();
+    setInviteBusy(true);
+    setInviteMessage("");
+    try {
+      const data = await inviteUser(inviteForm);
+      setInviteForm({ email: "", full_name: "", role: "faculty", division: "" });
+      setInviteMessage(data.email?.delivered === false ? `Invitation staged. Console email link: ${data.inviteUrl}` : "Invitation sent.");
+    } catch (error) {
+      setInviteMessage(error.message || "Could not send invitation.");
+    } finally {
+      setInviteBusy(false);
+    }
+  }
+
+  async function handleAcceptInvitation(event) {
+    event.preventDefault();
+    setSetupBusy(true);
+    setSetupMessage("");
+    try {
+      const data = await acceptInvite(setupInviteToken, setupPassword, setupFullName);
+      setCurrentUser(data.user);
+      if (data.user?.role) setRole(data.user.role);
+      setSetupPassword("");
+      setSetupMessage("Account ready. You are signed in.");
+      if (typeof window !== "undefined") {
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch (error) {
+      setSetupMessage(error.message || "Could not set up account.");
+    } finally {
+      setSetupBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!currentUser) return;
+    fetchCurrentUser()
+      .then((user) => {
+        if (user) {
+          setCurrentUser(user);
+          if (user.role) setRole(user.role);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
 
   function normalizeRoleRows(rows = []) {
@@ -2610,6 +2717,52 @@ export default function PTFacultyStaffingMVP() {
                   <option value={activeTerm.code} style={{ color: "#0f172a" }}>{activeTerm.name}</option>
                 )}
               </select>
+              <form
+                onSubmit={handleLogin}
+                style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "8px 10px", borderRadius: 16, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.22)" }}
+              >
+                {currentUser ? (
+                  <>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>
+                      {currentUser.full_name || currentUser.email}
+                    </span>
+                    <button type="button" style={ui.btn} onClick={handleLogout} disabled={authBusy}>
+                      Sign Out
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <input
+                      type="email"
+                      value={authEmail}
+                      onChange={(e) => {
+                        setAuthEmail(e.target.value);
+                        setAuthMessage("");
+                      }}
+                      placeholder="Email"
+                      aria-label="Email"
+                      style={{ ...ui.input, width: 180, padding: "9px 10px", background: "rgba(255,255,255,0.92)", color: "#0f172a" }}
+                    />
+                    <input
+                      type="password"
+                      value={authPassword}
+                      onChange={(e) => {
+                        setAuthPassword(e.target.value);
+                        setAuthMessage("");
+                      }}
+                      placeholder="Password"
+                      aria-label="Password"
+                      style={{ ...ui.input, width: 150, padding: "9px 10px", background: "rgba(255,255,255,0.92)", color: "#0f172a" }}
+                    />
+                    <button type="submit" style={ui.btn} disabled={authBusy}>
+                      Sign In
+                    </button>
+                  </>
+                )}
+                {authMessage ? (
+                  <span style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>{authMessage}</span>
+                ) : null}
+              </form>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "8px 10px", borderRadius: 16, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.22)" }}>
                 <input
                   type="password"
@@ -2646,6 +2799,40 @@ export default function PTFacultyStaffingMVP() {
           <SummaryCard title="Submitted" value={summary.submitted} />
           <SummaryCard title="No Activity" value={summary.noActivity} />
         </div>
+
+        {setupInviteToken && !currentUser ? (
+          <div style={ui.card}>
+            <h2 style={ui.cardTitle}>Set Up Account</h2>
+            <div style={ui.cardDesc}>
+              Enter your name and create a password to activate this S.C.O.P.E. invitation.
+            </div>
+            <form onSubmit={handleAcceptInvitation} style={{ ...ui.row, marginTop: 16, alignItems: "center" }}>
+              <input
+                style={{ ...ui.input, maxWidth: 260 }}
+                value={setupFullName}
+                onChange={(e) => setSetupFullName(e.target.value)}
+                placeholder="Full name"
+              />
+              <input
+                style={{ ...ui.input, maxWidth: 260 }}
+                value={setupPassword}
+                onChange={(e) => setSetupPassword(e.target.value)}
+                placeholder="Password, 10+ characters"
+                type="password"
+                minLength={10}
+                required
+              />
+              <button type="submit" style={ui.btnPrimary} disabled={setupBusy}>
+                {setupBusy ? "Activating..." : "Activate Account"}
+              </button>
+            </form>
+            {setupMessage ? (
+              <div style={{ marginTop: 10, fontSize: 13, color: setupMessage.startsWith("Account") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+                {setupMessage}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {role === "admin" ? (
         <div className="cos-summary-card" style={ui.card}>
@@ -3146,6 +3333,63 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </div>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+        </div>
+        ) : null}
+
+        {role === "admin" ? (
+        <div style={ui.card}>
+          <div style={ui.between}>
+            <div>
+              <h2 style={ui.cardTitle}>User Access Invitations</h2>
+              <div style={ui.cardDesc}>
+                Create account setup links for chairs, deans, faculty, and schedulers.
+              </div>
+            </div>
+          </div>
+          <form onSubmit={sendAccessInvite} style={{ ...ui.row, marginTop: 16, alignItems: "center" }}>
+            <input
+              style={{ ...ui.input, maxWidth: 240 }}
+              value={inviteForm.email}
+              onChange={(e) => setInviteForm((prev) => ({ ...prev, email: e.target.value }))}
+              placeholder="user@cos.edu"
+              type="email"
+              required
+            />
+            <input
+              style={{ ...ui.input, maxWidth: 220 }}
+              value={inviteForm.full_name}
+              onChange={(e) => setInviteForm((prev) => ({ ...prev, full_name: e.target.value }))}
+              placeholder="Full name"
+            />
+            <select
+              style={{ ...ui.input, maxWidth: 180 }}
+              value={inviteForm.role}
+              onChange={(e) => setInviteForm((prev) => ({ ...prev, role: e.target.value }))}
+            >
+              <option value="faculty">Part-Time Faculty</option>
+              <option value="chair">Division Chair</option>
+              <option value="dean">Dean</option>
+              <option value="admin">Scheduler / Admin</option>
+            </select>
+            <select
+              style={{ ...ui.input, maxWidth: 240 }}
+              value={inviteForm.division}
+              onChange={(e) => setInviteForm((prev) => ({ ...prev, division: e.target.value }))}
+            >
+              <option value="">Division optional</option>
+              {uploadDivisionOptions.map((division) => (
+                <option key={division} value={division}>{division}</option>
+              ))}
+            </select>
+            <button type="submit" style={ui.btnPrimary} disabled={inviteBusy}>
+              {inviteBusy ? "Sending..." : "Send Invite"}
+            </button>
+          </form>
+          {inviteMessage ? (
+            <div style={{ marginTop: 10, fontSize: 13, color: inviteMessage.startsWith("Invitation") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+              {inviteMessage}
             </div>
           ) : null}
         </div>

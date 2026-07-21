@@ -20,6 +20,47 @@ CREATE TABLE IF NOT EXISTS scope_roles (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS scope_users (
+  id SERIAL PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  full_name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT 'faculty',
+  division TEXT NOT NULL DEFAULT '',
+  active_status TEXT NOT NULL DEFAULT 'invited',
+  password_hash TEXT,
+  password_salt TEXT,
+  password_set_at TIMESTAMPTZ,
+  last_login_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (role IN ('admin', 'chair', 'dean', 'faculty')),
+  CHECK (active_status IN ('invited', 'active', 'disabled'))
+);
+
+CREATE TABLE IF NOT EXISTS scope_user_invites (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES scope_users(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  full_name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT 'faculty',
+  division TEXT NOT NULL DEFAULT '',
+  invite_token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  accepted_at TIMESTAMPTZ,
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (role IN ('admin', 'chair', 'dean', 'faculty'))
+);
+
+CREATE TABLE IF NOT EXISTS scope_user_sessions (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES scope_users(id) ON DELETE CASCADE,
+  session_token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS scope_pt_faculty (
   id SERIAL PRIMARY KEY,
   employee_id TEXT NOT NULL DEFAULT '',
@@ -145,6 +186,11 @@ ALTER TABLE scope_pt_faculty
 ADD COLUMN IF NOT EXISTS seniority_value TEXT DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_scope_roles_active ON scope_roles (active_status);
+CREATE INDEX IF NOT EXISTS idx_scope_users_active ON scope_users (active_status);
+CREATE INDEX IF NOT EXISTS idx_scope_user_invites_email ON scope_user_invites (email);
+CREATE INDEX IF NOT EXISTS idx_scope_user_invites_expiry ON scope_user_invites (expires_at);
+CREATE INDEX IF NOT EXISTS idx_scope_user_sessions_user ON scope_user_sessions (user_id);
+CREATE INDEX IF NOT EXISTS idx_scope_user_sessions_expiry ON scope_user_sessions (expires_at);
 CREATE INDEX IF NOT EXISTS idx_scope_pt_faculty_lookup ON scope_pt_faculty (division, discipline, active_status);
 CREATE INDEX IF NOT EXISTS idx_scope_sections_term_division ON scope_sections (term_code, division);
 CREATE INDEX IF NOT EXISTS idx_scope_preferences_term_faculty ON scope_preferences (term_code, faculty_id);

@@ -5,6 +5,8 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { query } from "./db.js";
+import { authenticateRequest, publicAuthPaths } from "./auth.js";
+import authRoutes from "./routes/auth.js";
 import persistenceRoutes from "./routes/persistence.js";
 import workflowRoutes from "./routes/workflow.js";
 
@@ -21,7 +23,7 @@ const CORS_ORIGIN = (process.env.CORS_ORIGIN || "").trim();
 const authConfigured = Boolean(API_TOKEN) || AUTH_DISABLED;
 
 if (!authConfigured) {
-  console.warn("API_TOKEN is not set. Protected API routes will return 503 until it is configured.");
+  console.warn("API_TOKEN is not set. Configure it for initial admin/bootstrap access before user accounts exist.");
 }
 
 const corsOrigins = CORS_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean);
@@ -30,17 +32,20 @@ if (corsOrigins.length || AUTH_DISABLED) {
 }
 app.use(express.json({ limit: "10mb" }));
 
-app.use((req, res, next) => {
-  if (req.method === "OPTIONS" || req.path === "/api/health" || AUTH_DISABLED) return next();
-
-  if (!API_TOKEN) {
-    return res.status(503).json({ error: "API_TOKEN is not configured on the backend." });
+app.use(async (req, res, next) => {
+  if (req.method === "OPTIONS" || req.path === "/api/health" || publicAuthPaths.has(req.path) || AUTH_DISABLED) {
+    return next();
   }
 
-  const auth = req.get("authorization") || "";
-  const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  const apiKey = req.get("x-api-token") || "";
-  if (bearer === API_TOKEN || apiKey === API_TOKEN) return next();
+  try {
+    const auth = await authenticateRequest(req);
+    if (auth) {
+      req.auth = auth;
+      return next();
+    }
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Authentication failed." });
+  }
 
   return res.status(401).json({ error: "Unauthorized" });
 });
@@ -65,6 +70,7 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
+app.use("/api/auth", authRoutes);
 app.use("/api", persistenceRoutes);
 app.use("/api", workflowRoutes);
 
