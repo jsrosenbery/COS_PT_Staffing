@@ -21,6 +21,32 @@ function compactKey(value) {
   return normUpper(value).replace(/[^A-Z0-9]/g, "");
 }
 
+function stableHash(value) {
+  const input = String(value || "");
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function stableSectionSignature(row = {}) {
+  const raw = row.raw_row && typeof row.raw_row === "object" ? row.raw_row : {};
+  return [
+    row.primary_crn,
+    row.primary_subject_course,
+    row.title,
+    row.division,
+    row.campus,
+    row.subject_code,
+    row.course_number,
+    row.discipline_code,
+    JSON.stringify(row.meetings || []),
+    findValue(raw, ["Section", "SECTION", "SECTION_NUMB", "Reference Number", "REFERENCE_NUMBER"]),
+  ].map(normalize).join("|");
+}
+
 function findValue(row, candidates) {
   const entries = Object.entries(row || {});
   for (const candidate of candidates) {
@@ -315,14 +341,15 @@ function buildInstructionalBundles(rows) {
     }
 
     const bundleRows = Array.from(bundleMap.values());
-    const ids = bundleRows.map((r) => normalize(r.primary_crn)).filter(Boolean).sort().join("|") || Math.random().toString(36).slice(2, 8);
+    const ids = bundleRows.map((r) => normalize(r.primary_crn)).filter(Boolean).sort().join("|")
+      || `no-crn:${stableHash(bundleRows.map(stableSectionSignature).sort().join("||"))}`;
     finalBundles.push(mergeBundleRows(bundleRows, `bundle:${ids}`));
   }
 
   // de-duplicate final bundles by CRN signature
   const unique = new Map();
   for (const bundle of finalBundles) {
-    const sig = (bundle.all_crns || []).slice().sort().join("|");
+    const sig = (bundle.all_crns || []).slice().sort().join("|") || stableSectionSignature(bundle);
     if (!unique.has(sig)) unique.set(sig, bundle);
   }
 

@@ -4,7 +4,7 @@ import cosLogo from "./assets/cos-logo.jpg";
 import AdminOperationsPanel from "./AdminOperationsPanel";
 import { buildInitialPtRoster } from "./adminOpsUtils";
 import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty, appendAuditLog, wipeActivePTRoster } from "./persistenceApi";
-import { API_BASE, apiFetch, fetchJson } from "./apiClient";
+import { API_BASE, apiFetch, clearApiToken, fetchJson, getApiToken, setApiToken } from "./apiClient";
 
 const initialTerms = [];
 
@@ -267,7 +267,7 @@ function formatMeetings(meetings) {
       const dayPart = meeting.days || "TBA";
       const timePart = [meeting.start_time, meeting.end_time].filter(Boolean).join(" - ") || "Time TBA";
       const roomPart = [meeting.building, meeting.room].filter(Boolean).join(" ");
-      return [dayPart, timePart, roomPart].filter(Boolean).join(" • ");
+      return [dayPart, timePart, roomPart].filter(Boolean).join(" - ");
     })
     .join("; ");
 }
@@ -876,6 +876,8 @@ const ui = {
 
 export default function PTFacultyStaffingMVP() {
   const [role, setRole] = useState("admin");
+  const [apiTokenInput, setApiTokenInput] = useState(() => getApiToken());
+  const [apiAccessMessage, setApiAccessMessage] = useState("");
   const [terms, setTerms] = useState(initialTerms);
   const [newTermCode, setNewTermCode] = useState("");
   const [newTermName, setNewTermName] = useState("");
@@ -956,6 +958,18 @@ export default function PTFacultyStaffingMVP() {
   const [showOnlyPreferenceQueue, setShowOnlyPreferenceQueue] = useState(false);
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
+  const apiTokenConfigured = Boolean(apiTokenInput.trim());
+
+  function saveApiAccessToken() {
+    setApiToken(apiTokenInput);
+    setApiAccessMessage(apiTokenInput.trim() ? "API access token saved for this browser session." : "API access token cleared.");
+  }
+
+  function clearApiAccessToken() {
+    clearApiToken();
+    setApiTokenInput("");
+    setApiAccessMessage("API access token cleared.");
+  }
 
 
   function normalizeRoleRows(rows = []) {
@@ -2590,12 +2604,36 @@ export default function PTFacultyStaffingMVP() {
               >
                 {terms.length ? terms.map((term) => (
                   <option key={term.code} value={term.code} style={{ color: "#0f172a" }}>
-                    {term.name}{term.active ? " • Active" : ""}
+                    {term.name}{term.active ? " - Active" : ""}
                   </option>
                 )) : (
                   <option value={activeTerm.code} style={{ color: "#0f172a" }}>{activeTerm.name}</option>
                 )}
               </select>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "8px 10px", borderRadius: 16, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.22)" }}>
+                <input
+                  type="password"
+                  value={apiTokenInput}
+                  onChange={(e) => {
+                    setApiTokenInput(e.target.value);
+                    setApiAccessMessage("");
+                  }}
+                  placeholder="API access token"
+                  aria-label="API access token"
+                  style={{ ...ui.input, width: 190, padding: "9px 10px", background: "rgba(255,255,255,0.92)", color: "#0f172a" }}
+                />
+                <button type="button" style={ui.btn} onClick={saveApiAccessToken}>
+                  {apiTokenConfigured ? "Update Token" : "Save Token"}
+                </button>
+                {apiTokenConfigured ? (
+                  <button type="button" style={ui.btn} onClick={clearApiAccessToken}>
+                    Clear
+                  </button>
+                ) : null}
+                {apiAccessMessage ? (
+                  <span style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>{apiAccessMessage}</span>
+                ) : null}
+              </div>
             </div>
           </div>
         </div>
@@ -3252,7 +3290,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
               {facultySeniorityRows.length ? (
                 facultySeniorityRows.map((row) => (
                   <span key={`${row.disciplineCode}-${row.rank}`} style={ui.chip}>
-                    {row.disciplineCode} • Rank {row.rank}
+                    {row.disciplineCode} - Rank {row.rank}
                   </span>
                 ))
               ) : (
@@ -3463,12 +3501,12 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     <div key={section.assignment_group_id} style={{ ...ui.sectionCard, borderColor: section.currentAssignment ? "#bbf7d0" : "var(--border-color)", background: section.currentAssignment ? "rgba(220, 252, 231, 0.28)" : "var(--bg-card)" }}>
                       <div style={{ ...ui.between, alignItems: "flex-start" }}>
                         <div>
-                          <div style={{ fontWeight: 800 }}>{section.primary_subject_course} • {section.primary_crn}</div>
+                          <div style={{ fontWeight: 800 }}>{section.primary_subject_course} - {section.primary_crn}</div>
                           <div style={{ marginTop: 4 }}>{section.title || "Untitled"}</div>
                           <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
-                            {formatMeetings(section.meetings)}{hasLinkedSections(section) ? ` • ${linkedSectionCount(section)} linked parts move together` : ""}
-                            {section.campus ? ` • ${section.campus}` : ""}
-                            {section.discipline_code ? ` • ${section.discipline_code}` : ""}
+                            {formatMeetings(section.meetings)}{hasLinkedSections(section) ? ` - ${linkedSectionCount(section)} linked parts move together` : ""}
+                            {section.campus ? ` - ${section.campus}` : ""}
+                            {section.discipline_code ? ` - ${section.discipline_code}` : ""}
                           </div>
                         </div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -3516,7 +3554,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                 <div>
                                   <div style={{ fontWeight: 700 }}>{row.faculty_name}</div>
                                   <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
-                                    Seniority #{row.seniority_rank || "—"} • Preference #{row.preference_rank || "—"}
+                                    Seniority #{row.seniority_rank || "—"} - Preference #{row.preference_rank || "—"}
                                   </div>
                                   <div style={{ marginTop: 6 }}>
                                     <span style={workflowStatePillStyle(row.availabilitySummary?.matches ? "assigned" : "bypass")}>
@@ -3594,7 +3632,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <div key={assignment.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: "var(--bg-soft)" }}>
                         <div style={{ ...ui.between, alignItems: "flex-start" }}>
                           <div>
-                            <div style={{ fontWeight: 700 }}>{assignment.primary_subject_course} • {assignment.primary_crn}</div>
+                            <div style={{ fontWeight: 700 }}>{assignment.primary_subject_course} - {assignment.primary_crn}</div>
                             {hasLinkedSections(assignment) ? <div style={{ marginTop: 6 }}><span style={workflowStatePillStyle("advanced")}>Linked Sections</span></div> : null}
                             <div style={{ marginTop: 4 }}>{assignment.faculty_name || assignment.employee_id}</div>
                             <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
@@ -3671,7 +3709,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </div>
                         <div style={{ marginTop: 6, fontSize: 13 }}>{entry.detail}</div>
                         <div style={{ marginTop: 6, color: "var(--text-subtle)", fontSize: 12 }}>
-                          {entry.discipline_code || "All disciplines"} • {new Date(entry.created_at).toLocaleString()}
+                          {entry.discipline_code || "All disciplines"} - {new Date(entry.created_at).toLocaleString()}
                         </div>
                       </div>
                     )) : (
@@ -3974,13 +4012,13 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       >
                         <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                           <div style={{ fontWeight: 700 }}>
-                            #{index + 1} {item.primary_subject_course} • {item.primary_crn}
+                            #{index + 1} {item.primary_subject_course} - {item.primary_crn}
                           </div>
                           <button style={ui.btn} onClick={() => removePreference(item.assignment_group_id)}>Remove</button>
                         </div>
                         <div style={{ marginTop: 6 }}>{item.title || ""}</div>
                         <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
-                          {formatMeetings(item.meetings)} • {item.campus || ""} • {sectionMethodLabel(item)} • {sectionModalityLabel(item)}
+                          {formatMeetings(item.meetings)} - {item.campus || ""} - {sectionMethodLabel(item)} - {sectionModalityLabel(item)}
                         </div>
                         <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
                           <button disabled={index === 0} style={ui.btn} onClick={() => movePreference(index, index - 1)}>Move Up</button>
