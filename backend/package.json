@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
+    "test": "node --test",
     "seed:logins": "node scripts/seed-login-users.js"
   },
   "dependencies": {
