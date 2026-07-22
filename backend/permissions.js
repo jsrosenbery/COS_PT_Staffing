@@ -1,17 +1,21 @@
 const elevatedRoles = new Set(["admin", "chair", "dean"]);
 
+export function normalizeRole(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 export function isAdmin(req) {
-  return req.auth?.authType === "api-token" || req.auth?.user?.role === "admin";
+  return req.auth?.authType === "api-token" || normalizeRole(req.auth?.user?.role) === "admin";
 }
 
 export function hasAnyRole(req, roles = []) {
   if (isAdmin(req)) return true;
-  const role = req.auth?.user?.role || req.auth?.role || "";
-  return roles.includes(role);
+  const role = normalizeRole(req.auth?.user?.role || req.auth?.role);
+  return roles.map(normalizeRole).includes(role);
 }
 
 export function currentRole(req) {
-  return req.auth?.user?.role || req.auth?.role || "";
+  return normalizeRole(req.auth?.user?.role || req.auth?.role);
 }
 
 export function allowedDivisions(req) {
@@ -27,16 +31,16 @@ export function requireRoles(...roles) {
 }
 
 export function requireElevatedRole(req, res, next) {
-  if (isAdmin(req) || elevatedRoles.has(req.auth?.user?.role)) return next();
+  if (isAdmin(req) || elevatedRoles.has(currentRole(req))) return next();
   return res.status(403).json({ error: "Chair, dean, or admin access is required." });
 }
 
 export function requirePreferenceOwnerOrElevated(req, res, next) {
-  if (isAdmin(req) || elevatedRoles.has(req.auth?.user?.role)) return next();
+  if (isAdmin(req) || elevatedRoles.has(currentRole(req))) return next();
   const user = req.auth?.user;
   const facultyId = String(req.query?.facultyId || req.body?.facultyId || "").trim();
   const employeeId = String(req.body?.employeeId || "").trim();
-  if (user?.role === "faculty" && user.employee_id && (facultyId === user.employee_id || employeeId === user.employee_id)) {
+  if (normalizeRole(user?.role) === "faculty" && user.employee_id && (facultyId === user.employee_id || employeeId === user.employee_id)) {
     return next();
   }
   return res.status(403).json({ error: "Faculty users can only manage their own preferences." });
@@ -87,9 +91,9 @@ export function requireScopedRead(req, res, next) {
 }
 
 export function enforceFacultySelf(req, res, next) {
-  if (isAdmin(req) || elevatedRoles.has(req.auth?.user?.role)) return next();
+  if (isAdmin(req) || elevatedRoles.has(currentRole(req))) return next();
   const user = req.auth?.user;
-  if (user?.role !== "faculty" || !user.employee_id) {
+  if (normalizeRole(user?.role) !== "faculty" || !user.employee_id) {
     return res.status(403).json({ error: "Faculty account ownership could not be verified." });
   }
   req.query.facultyId = user.employee_id;

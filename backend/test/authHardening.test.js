@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
+  REQUEST_ID_MAX_LENGTH,
+  correlationId,
+  isPublicApiRequest,
   publicTokenUrlsEnabled,
   rateLimiter,
   resetRateLimiters,
@@ -155,4 +158,55 @@ test("production startup does not execute schema migrations", () => {
   const server = read("../server.js");
   assert.doesNotMatch(server, /schema\.sql|runMigrations|ensureSchema/);
   assert.match(server, /app\.listen/);
+});
+
+function applyCorrelationId(headerValue) {
+  const req = {
+    headers: headerValue === undefined ? {} : { "x-request-id": headerValue },
+    get(name) {
+      return this.headers[name];
+    },
+  };
+  const response = mockRes();
+  let nextCalled = false;
+  correlationId(req, response, () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+  assert.equal(response.headers["X-Request-ID"], req.correlationId);
+  return req.correlationId;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+test("request IDs accept a conservative valid caller identifier", () => {
+  assert.equal(applyCorrelationId("request-ABC_123:worker.9"), "request-ABC_123:worker.9");
+});
+
+test("missing request IDs receive a server UUID", () => {
+  assert.match(applyCorrelationId(undefined), UUID_PATTERN);
+});
+
+test("overlong request IDs receive a server UUID", () => {
+  assert.match(applyCorrelationId("a".repeat(REQUEST_ID_MAX_LENGTH + 1)), UUID_PATTERN);
+});
+
+test("newline and log-injection request IDs receive a server UUID", () => {
+  assert.match(applyCorrelationId("request-123\nforged-log-line"), UUID_PATTERN);
+});
+
+test("request IDs with unsupported characters receive a server UUID", () => {
+  assert.match(applyCorrelationId("request id/with spaces"), UUID_PATTERN);
+});
+
+test("only the minimal terms read is public", () => {
+  const publicAuthPaths = new Set(["/api/auth/login"]);
+  assert.equal(isPublicApiRequest({ method: "GET", path: "/api/terms" }, { publicAuthPaths }), true);
+  assert.equal(isPublicApiRequest({ method: "POST", path: "/api/terms" }, { publicAuthPaths }), false);
+  assert.equal(isPublicApiRequest({ method: "GET", path: "/api/windows" }, { publicAuthPaths }), false);
+  assert.equal(isPublicApiRequest({ method: "POST", path: "/api/auth/login" }, { publicAuthPaths }), true);
+
+  const workflow = read("../routes/workflow.js");
+  const termsRoute = workflow.match(/router\.get\("\/terms"[\s\S]*?\n}\);/)?.[0] || "";
+  assert.match(termsRoute, /SELECT term_code, term_name, is_active FROM scope_terms/);
+  assert.doesNotMatch(termsRoute, /SELECT id,/);
+  assert.doesNotMatch(termsRoute, /scope_staffing_windows|scope_pt_faculty|scope_sections|division/);
 });

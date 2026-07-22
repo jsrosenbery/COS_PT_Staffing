@@ -1,12 +1,13 @@
 import crypto from "crypto";
+import { validRequestId } from "./security.js";
 
 function text(value) {
   return String(value ?? "").trim();
 }
 
 export function requestId(req) {
-  const existing = text(req?.get?.("x-request-id") || req?.headers?.["x-request-id"]);
-  return existing || crypto.randomUUID();
+  const effective = req?.correlationId;
+  return validRequestId(effective) ? effective : crypto.randomUUID();
 }
 
 export function auditActor(req = {}) {
@@ -22,7 +23,7 @@ export function auditActor(req = {}) {
 
 export async function writeAuditEvent(client, req, event = {}) {
   const actor = auditActor(req);
-  const correlationId = text(event.requestId) || requestId(req);
+  const correlationId = requestId(req);
   const result = await client.query(
     `INSERT INTO scope_audit_log
       (event_type, actor_user_id, actor_email, actor_name, actor_role, actor_session_type,

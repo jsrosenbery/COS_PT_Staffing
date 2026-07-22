@@ -9,6 +9,8 @@ const DEFAULT_LIMITS = Object.freeze({
 });
 
 const limitStores = new Map();
+export const REQUEST_ID_MAX_LENGTH = 128;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 
 function envFlag(name, fallback = false) {
   const raw = process.env[name];
@@ -82,11 +84,28 @@ export function securityHeaders(_req, res, next) {
   next();
 }
 
+export function validRequestId(value) {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= REQUEST_ID_MAX_LENGTH
+    && REQUEST_ID_PATTERN.test(value);
+}
+
+export function effectiveRequestId(value) {
+  return validRequestId(value) ? value : crypto.randomUUID();
+}
+
 export function correlationId(req, res, next) {
-  const existing = text(req.get?.("x-request-id") || req.headers?.["x-request-id"]);
-  req.correlationId = existing || crypto.randomUUID();
+  const existing = req.get?.("x-request-id") || req.headers?.["x-request-id"];
+  req.correlationId = effectiveRequestId(existing);
   res.setHeader("X-Request-ID", req.correlationId);
   next();
+}
+
+export function isPublicApiRequest(req, { authDisabled = false, publicAuthPaths = new Set() } = {}) {
+  if (authDisabled || req.method === "OPTIONS") return true;
+  if (req.path === "/api/health" || publicAuthPaths.has(req.path)) return true;
+  return req.method === "GET" && req.path === "/api/terms";
 }
 
 export function publicError(res, status, code, message, correlationId) {

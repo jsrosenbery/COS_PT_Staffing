@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
   allowedDivisions,
+  currentRole,
   enforceFacultySelf,
   requireDivisionScope,
   requireScopedRead,
@@ -50,6 +51,12 @@ test("chairs and deans with multiple divisions can access only those divisions",
 
   assert.deepEqual(allowedDivisions(request), ["science", "business"]);
   assert.deepEqual(scopeFilterForReq(request, ["Business", "Math"]), ["business"]);
+});
+
+test("role and division authorization comparisons are normalized", () => {
+  const request = req({ role: " Chair ", division: " Science | BUSINESS " });
+  assert.equal(currentRole(request), "chair");
+  assert.deepEqual(allowedDivisions(request), ["science", "business"]);
 });
 
 test("account with no valid division scope cannot read all divisions", () => {
