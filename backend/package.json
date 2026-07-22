@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "seed:logins": "node scripts/seed-login-users.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
