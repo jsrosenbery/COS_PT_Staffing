@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS scope_roles (
 
 CREATE TABLE IF NOT EXISTS scope_users (
   id SERIAL PRIMARY KEY,
+  employee_id TEXT NOT NULL DEFAULT '',
   email TEXT NOT NULL UNIQUE,
   full_name TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT 'faculty',
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS scope_users (
 CREATE TABLE IF NOT EXISTS scope_user_invites (
   id SERIAL PRIMARY KEY,
   user_id INTEGER REFERENCES scope_users(id) ON DELETE CASCADE,
+  employee_id TEXT NOT NULL DEFAULT '',
   email TEXT NOT NULL,
   full_name TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT 'faculty',
@@ -50,6 +52,32 @@ CREATE TABLE IF NOT EXISTS scope_user_invites (
   created_by TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK (role IN ('admin', 'chair', 'dean', 'faculty'))
+);
+
+CREATE TABLE IF NOT EXISTS scope_account_requests (
+  id SERIAL PRIMARY KEY,
+  employee_id TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL,
+  full_name TEXT NOT NULL DEFAULT '',
+  requested_role TEXT NOT NULL DEFAULT 'faculty',
+  division TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  reviewed_by TEXT NOT NULL DEFAULT '',
+  reviewed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (requested_role IN ('admin', 'chair', 'dean', 'faculty')),
+  CHECK (status IN ('pending', 'approved', 'rejected'))
+);
+
+CREATE TABLE IF NOT EXISTS scope_password_resets (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES scope_users(id) ON DELETE CASCADE,
+  reset_token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS scope_user_sessions (
@@ -185,10 +213,21 @@ ADD COLUMN IF NOT EXISTS seniority_rank TEXT DEFAULT '';
 ALTER TABLE scope_pt_faculty
 ADD COLUMN IF NOT EXISTS seniority_value TEXT DEFAULT '';
 
+ALTER TABLE scope_users
+ADD COLUMN IF NOT EXISTS employee_id TEXT DEFAULT '';
+
+ALTER TABLE scope_user_invites
+ADD COLUMN IF NOT EXISTS employee_id TEXT DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_scope_roles_active ON scope_roles (active_status);
 CREATE INDEX IF NOT EXISTS idx_scope_users_active ON scope_users (active_status);
+CREATE INDEX IF NOT EXISTS idx_scope_users_employee_id ON scope_users (employee_id);
 CREATE INDEX IF NOT EXISTS idx_scope_user_invites_email ON scope_user_invites (email);
 CREATE INDEX IF NOT EXISTS idx_scope_user_invites_expiry ON scope_user_invites (expires_at);
+CREATE INDEX IF NOT EXISTS idx_scope_account_requests_status ON scope_account_requests (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_scope_account_requests_email ON scope_account_requests (email);
+CREATE INDEX IF NOT EXISTS idx_scope_password_resets_user ON scope_password_resets (user_id);
+CREATE INDEX IF NOT EXISTS idx_scope_password_resets_expiry ON scope_password_resets (expires_at);
 CREATE INDEX IF NOT EXISTS idx_scope_user_sessions_user ON scope_user_sessions (user_id);
 CREATE INDEX IF NOT EXISTS idx_scope_user_sessions_expiry ON scope_user_sessions (expires_at);
 CREATE INDEX IF NOT EXISTS idx_scope_pt_faculty_lookup ON scope_pt_faculty (division, discipline, active_status);

@@ -8,14 +8,20 @@ import {
   API_BASE,
   acceptInvite,
   apiFetch,
+  approveAccountRequest,
   clearApiToken,
+  completePasswordReset,
   fetchCurrentUser,
   fetchJson,
   getApiToken,
   getCurrentUser,
   inviteUser,
+  loadAccountRequests,
   login,
   logout,
+  rejectAccountRequest,
+  requestAccount,
+  requestPasswordReset,
   setApiToken,
 } from "./apiClient";
 
@@ -888,7 +894,7 @@ const ui = {
 };
 
 export default function PTFacultyStaffingMVP() {
-  const [role, setRole] = useState("admin");
+  const [role, setRole] = useState(() => getCurrentUser()?.role || "admin");
   const [apiTokenInput, setApiTokenInput] = useState(() => getApiToken());
   const [apiAccessMessage, setApiAccessMessage] = useState("");
   const [currentUser, setCurrentUser] = useState(() => getCurrentUser());
@@ -896,17 +902,33 @@ export default function PTFacultyStaffingMVP() {
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
-  const [inviteForm, setInviteForm] = useState({ email: "", full_name: "", role: "faculty", division: "" });
+  const [inviteForm, setInviteForm] = useState({ email: "", full_name: "", employee_id: "", role: "faculty", division: "" });
   const [inviteMessage, setInviteMessage] = useState("");
   const [inviteBusy, setInviteBusy] = useState(false);
+  const [accountRequests, setAccountRequests] = useState([]);
+  const [accountRequestsMessage, setAccountRequestsMessage] = useState("");
+  const [accountRequestsBusy, setAccountRequestsBusy] = useState(false);
+  const [accessRequestForm, setAccessRequestForm] = useState({ email: "", full_name: "", employee_id: "", role: "faculty", division: "", note: "" });
+  const [accessRequestMessage, setAccessRequestMessage] = useState("");
+  const [accessRequestBusy, setAccessRequestBusy] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetMessage, setResetMessage] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
   const [setupInviteToken] = useState(() => {
     if (typeof window === "undefined") return "";
-    return new URLSearchParams(window.location.search).get("token") || "";
+    return window.location.pathname === "/accept-invite" ? new URLSearchParams(window.location.search).get("token") || "" : "";
+  });
+  const [resetToken] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return window.location.pathname === "/reset-password" ? new URLSearchParams(window.location.search).get("token") || "" : "";
   });
   const [setupFullName, setSetupFullName] = useState("");
   const [setupPassword, setSetupPassword] = useState("");
   const [setupMessage, setSetupMessage] = useState("");
   const [setupBusy, setSetupBusy] = useState(false);
+  const [newResetPassword, setNewResetPassword] = useState("");
+  const [newResetMessage, setNewResetMessage] = useState("");
+  const [newResetBusy, setNewResetBusy] = useState(false);
   const [terms, setTerms] = useState(initialTerms);
   const [newTermCode, setNewTermCode] = useState("");
   const [newTermName, setNewTermName] = useState("");
@@ -988,6 +1010,14 @@ export default function PTFacultyStaffingMVP() {
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
   const apiTokenConfigured = Boolean(apiTokenInput.trim());
+  const roleOptions = currentUser && currentUser.role !== "admin"
+    ? [{ value: currentUser.role, label: currentUser.role === "chair" ? "Division Chair" : currentUser.role === "dean" ? "Dean" : "Part-Time Faculty" }]
+    : [
+      { value: "admin", label: "Scheduler / Admin" },
+      { value: "chair", label: "Division Chair" },
+      { value: "dean", label: "Dean" },
+      { value: "faculty", label: "Part-Time Faculty" },
+    ];
 
   function saveApiAccessToken() {
     setApiToken(apiTokenInput);
@@ -1037,12 +1067,95 @@ export default function PTFacultyStaffingMVP() {
     setInviteMessage("");
     try {
       const data = await inviteUser(inviteForm);
-      setInviteForm({ email: "", full_name: "", role: "faculty", division: "" });
+      setInviteForm({ email: "", full_name: "", employee_id: "", role: "faculty", division: "" });
       setInviteMessage(data.email?.delivered === false ? `Invitation staged. Console email link: ${data.inviteUrl}` : "Invitation sent.");
     } catch (error) {
       setInviteMessage(error.message || "Could not send invitation.");
     } finally {
       setInviteBusy(false);
+    }
+  }
+
+  async function submitAccessRequest(event) {
+    event.preventDefault();
+    setAccessRequestBusy(true);
+    setAccessRequestMessage("");
+    try {
+      await requestAccount({
+        email: accessRequestForm.email,
+        full_name: accessRequestForm.full_name,
+        employee_id: accessRequestForm.employee_id,
+        requested_role: accessRequestForm.role,
+        division: accessRequestForm.division,
+        note: accessRequestForm.note,
+      });
+      setAccessRequestForm({ email: "", full_name: "", employee_id: "", role: "faculty", division: "", note: "" });
+      setAccessRequestMessage("Account request submitted for review.");
+    } catch (error) {
+      setAccessRequestMessage(error.message || "Could not submit account request.");
+    } finally {
+      setAccessRequestBusy(false);
+    }
+  }
+
+  async function sendPasswordResetRequest(event) {
+    event.preventDefault();
+    setResetBusy(true);
+    setResetMessage("");
+    try {
+      const data = await requestPasswordReset(resetEmail);
+      setResetMessage(data.message || "If an active account exists, a reset link will be sent.");
+    } catch (error) {
+      setResetMessage(error.message || "Could not request password reset.");
+    } finally {
+      setResetBusy(false);
+    }
+  }
+
+  async function handleCompletePasswordReset(event) {
+    event.preventDefault();
+    setNewResetBusy(true);
+    setNewResetMessage("");
+    try {
+      const data = await completePasswordReset(resetToken, newResetPassword);
+      setCurrentUser(data.user);
+      if (data.user?.role) setRole(data.user.role);
+      setNewResetPassword("");
+      setNewResetMessage("Password reset. You are signed in.");
+      if (typeof window !== "undefined") {
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch (error) {
+      setNewResetMessage(error.message || "Could not reset password.");
+    } finally {
+      setNewResetBusy(false);
+    }
+  }
+
+  async function refreshAccountRequests() {
+    setAccountRequestsBusy(true);
+    setAccountRequestsMessage("");
+    try {
+      const data = await loadAccountRequests("pending");
+      setAccountRequests(data.requests || []);
+    } catch (error) {
+      setAccountRequestsMessage(error.message || "Could not load account requests.");
+    } finally {
+      setAccountRequestsBusy(false);
+    }
+  }
+
+  async function reviewAccountRequest(id, action) {
+    setAccountRequestsBusy(true);
+    setAccountRequestsMessage("");
+    try {
+      const data = action === "approve" ? await approveAccountRequest(id) : await rejectAccountRequest(id);
+      setAccountRequests((prev) => prev.filter((request) => request.id !== id));
+      setAccountRequestsMessage(action === "approve" && data.email?.delivered === false ? `Approved. Console invite link: ${data.inviteUrl}` : `Request ${action}d.`);
+    } catch (error) {
+      setAccountRequestsMessage(error.message || `Could not ${action} request.`);
+    } finally {
+      setAccountRequestsBusy(false);
     }
   }
 
@@ -1077,6 +1190,10 @@ export default function PTFacultyStaffingMVP() {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (role === "admin") refreshAccountRequests();
+  }, [role]);
 
 
   function normalizeRoleRows(rows = []) {
@@ -2699,10 +2816,11 @@ export default function PTFacultyStaffingMVP() {
                 value={role}
                 onChange={(e) => { setRole(e.target.value); setSelectedDisciplineCode("ALL"); }}
               >
-                <option value="admin" style={{ color: "#0f172a" }}>Scheduler / Admin</option>
-                <option value="chair" style={{ color: "#0f172a" }}>Division Chair</option>
-                <option value="dean" style={{ color: "#0f172a" }}>Dean</option>
-                <option value="faculty" style={{ color: "#0f172a" }}>Part-Time Faculty</option>
+                {roleOptions.map((option) => (
+                  <option key={option.value} value={option.value} style={{ color: "#0f172a" }}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
               <select
                 style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)", minWidth: 220 }}
@@ -2756,6 +2874,9 @@ export default function PTFacultyStaffingMVP() {
                     />
                     <button type="submit" style={ui.btn} disabled={authBusy}>
                       Sign In
+                    </button>
+                    <button type="button" style={ui.btn} onClick={() => setResetEmail(authEmail)}>
+                      Forgot
                     </button>
                   </>
                 )}
@@ -2831,6 +2952,129 @@ export default function PTFacultyStaffingMVP() {
                 {setupMessage}
               </div>
             ) : null}
+          </div>
+        ) : null}
+
+        {resetToken && !currentUser ? (
+          <div style={ui.card}>
+            <h2 style={ui.cardTitle}>Reset Password</h2>
+            <div style={ui.cardDesc}>
+              Create a new password for your S.C.O.P.E. account.
+            </div>
+            <form onSubmit={handleCompletePasswordReset} style={{ ...ui.row, marginTop: 16, alignItems: "center" }}>
+              <input
+                style={{ ...ui.input, maxWidth: 260 }}
+                value={newResetPassword}
+                onChange={(e) => setNewResetPassword(e.target.value)}
+                placeholder="Password, 10+ characters"
+                type="password"
+                minLength={10}
+                required
+              />
+              <button type="submit" style={ui.btnPrimary} disabled={newResetBusy}>
+                {newResetBusy ? "Resetting..." : "Reset Password"}
+              </button>
+            </form>
+            {newResetMessage ? (
+              <div style={{ marginTop: 10, fontSize: 13, color: newResetMessage.startsWith("Password") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+                {newResetMessage}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!currentUser && !setupInviteToken && !resetToken ? (
+          <div className="cos-panel-grid" style={{ ...ui.panelGrid, gridTemplateColumns: "minmax(0, 1.3fr) minmax(320px, 0.7fr)" }}>
+            <div style={ui.card}>
+              <h2 style={ui.cardTitle}>Request Account Access</h2>
+              <div style={ui.cardDesc}>
+                Submit your details for scheduler review. Approved requests receive an account setup email.
+              </div>
+              <form onSubmit={submitAccessRequest} style={{ display: "grid", gap: 10, marginTop: 16 }}>
+                <div style={ui.row}>
+                  <input
+                    style={{ ...ui.input, maxWidth: 260 }}
+                    value={accessRequestForm.full_name}
+                    onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, full_name: e.target.value }))}
+                    placeholder="Full name"
+                    required
+                  />
+                  <input
+                    style={{ ...ui.input, maxWidth: 260 }}
+                    value={accessRequestForm.email}
+                    onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, email: e.target.value }))}
+                    placeholder="user@cos.edu"
+                    type="email"
+                    required
+                  />
+                  <input
+                    style={{ ...ui.input, maxWidth: 160 }}
+                    value={accessRequestForm.employee_id}
+                    onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, employee_id: e.target.value }))}
+                    placeholder="Employee ID"
+                  />
+                </div>
+                <div style={ui.row}>
+                  <select
+                    style={{ ...ui.input, maxWidth: 220 }}
+                    value={accessRequestForm.role}
+                    onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, role: e.target.value }))}
+                  >
+                    <option value="faculty">Part-Time Faculty</option>
+                    <option value="chair">Division Chair</option>
+                    <option value="dean">Dean</option>
+                  </select>
+                  <select
+                    style={{ ...ui.input, maxWidth: 260 }}
+                    value={accessRequestForm.division}
+                    onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, division: e.target.value }))}
+                  >
+                    <option value="">Division optional</option>
+                    {uploadDivisionOptions.map((division) => (
+                      <option key={division} value={division}>{division}</option>
+                    ))}
+                  </select>
+                  <input
+                    style={{ ...ui.input, maxWidth: 360 }}
+                    value={accessRequestForm.note}
+                    onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, note: e.target.value }))}
+                    placeholder="Optional note"
+                  />
+                  <button type="submit" style={ui.btnPrimary} disabled={accessRequestBusy}>
+                    {accessRequestBusy ? "Submitting..." : "Request Access"}
+                  </button>
+                </div>
+              </form>
+              {accessRequestMessage ? (
+                <div style={{ marginTop: 10, fontSize: 13, color: accessRequestMessage.startsWith("Account") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+                  {accessRequestMessage}
+                </div>
+              ) : null}
+            </div>
+            <div style={ui.card}>
+              <h2 style={ui.cardTitle}>Password Help</h2>
+              <div style={ui.cardDesc}>
+                Send a reset link to the email on your active account.
+              </div>
+              <form onSubmit={sendPasswordResetRequest} style={{ ...ui.row, marginTop: 16 }}>
+                <input
+                  style={{ ...ui.input, maxWidth: 260 }}
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  placeholder="user@cos.edu"
+                  type="email"
+                  required
+                />
+                <button type="submit" style={ui.btnPrimary} disabled={resetBusy}>
+                  {resetBusy ? "Sending..." : "Send Reset"}
+                </button>
+              </form>
+              {resetMessage ? (
+                <div style={{ marginTop: 10, fontSize: 13, color: resetMessage.startsWith("If") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+                  {resetMessage}
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -3363,6 +3607,12 @@ OH,ORNAMENTAL_HORTICULTURE`}
               onChange={(e) => setInviteForm((prev) => ({ ...prev, full_name: e.target.value }))}
               placeholder="Full name"
             />
+            <input
+              style={{ ...ui.input, maxWidth: 160 }}
+              value={inviteForm.employee_id}
+              onChange={(e) => setInviteForm((prev) => ({ ...prev, employee_id: e.target.value }))}
+              placeholder="Employee ID"
+            />
             <select
               style={{ ...ui.input, maxWidth: 180 }}
               value={inviteForm.role}
@@ -3392,6 +3642,49 @@ OH,ORNAMENTAL_HORTICULTURE`}
               {inviteMessage}
             </div>
           ) : null}
+          <div style={{ marginTop: 22, borderTop: "1px solid var(--border-soft)", paddingTop: 16 }}>
+            <div style={ui.between}>
+              <div>
+                <h3 style={{ ...ui.cardTitle, fontSize: 16 }}>Pending Account Requests</h3>
+                <div style={ui.cardDesc}>Approve verified users into the invite flow, or reject unknown requests.</div>
+              </div>
+              <button type="button" style={ui.btn} onClick={refreshAccountRequests} disabled={accountRequestsBusy}>
+                Refresh
+              </button>
+            </div>
+            {accountRequestsMessage ? (
+              <div style={{ marginTop: 10, fontSize: 13, color: accountRequestsMessage.includes("Could not") ? "#b91c1c" : "var(--text-muted)", fontWeight: 700 }}>
+                {accountRequestsMessage}
+              </div>
+            ) : null}
+            <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+              {accountRequests.length ? accountRequests.map((request) => (
+                <div key={request.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 12, padding: 12, background: "var(--bg-soft)" }}>
+                  <div style={ui.between}>
+                    <div>
+                      <div style={{ fontWeight: 900 }}>{request.full_name || request.email}</div>
+                      <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                        {request.email} {request.employee_id ? `| ID ${request.employee_id}` : ""} | {request.requested_role} {request.division ? `| ${request.division}` : ""}
+                      </div>
+                      {request.note ? <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>{request.note}</div> : null}
+                    </div>
+                    <div style={ui.row}>
+                      <button type="button" style={ui.btnPrimary} onClick={() => reviewAccountRequest(request.id, "approve")} disabled={accountRequestsBusy}>
+                        Approve
+                      </button>
+                      <button type="button" style={ui.btn} onClick={() => reviewAccountRequest(request.id, "reject")} disabled={accountRequestsBusy}>
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )) : (
+                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                  {accountRequestsBusy ? "Loading requests..." : "No pending account requests."}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
         ) : null}
 

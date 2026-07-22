@@ -128,6 +128,44 @@ export async function inviteUser(payload) {
   });
 }
 
+export async function requestAccount(payload) {
+  return fetchJson("/auth/request-account", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function loadAccountRequests(status = "pending") {
+  return fetchJson(`/auth/account-requests?status=${encodeURIComponent(status)}`);
+}
+
+export async function approveAccountRequest(id) {
+  return fetchJson(`/auth/account-requests/${encodeURIComponent(id)}/approve`, { method: "POST" });
+}
+
+export async function rejectAccountRequest(id) {
+  return fetchJson(`/auth/account-requests/${encodeURIComponent(id)}/reject`, { method: "POST" });
+}
+
+export async function requestPasswordReset(email) {
+  return fetchJson("/auth/password-reset/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function completePasswordReset(token, password) {
+  const data = await fetchJson("/auth/password-reset/complete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, password }),
+  });
+  setSession(data.session, data.user);
+  return data;
+}
+
 export async function acceptInvite(token, password, fullName = "") {
   const data = await fetchJson("/auth/accept-invite", {
     method: "POST",

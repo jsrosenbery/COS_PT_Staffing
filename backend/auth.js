@@ -5,11 +5,15 @@ import { query } from "./db.js";
 const scrypt = promisify(crypto.scrypt);
 const SESSION_DAYS = Number(process.env.SESSION_DAYS || 14);
 const INVITE_DAYS = Number(process.env.INVITE_DAYS || 7);
+const RESET_HOURS = Number(process.env.RESET_HOURS || 2);
 const API_TOKEN = (process.env.API_TOKEN || "").trim();
 
 export const publicAuthPaths = new Set([
   "/api/auth/login",
   "/api/auth/accept-invite",
+  "/api/auth/request-account",
+  "/api/auth/password-reset/request",
+  "/api/auth/password-reset/complete",
 ]);
 
 export function createRawToken(byteLength = 32) {
@@ -37,6 +41,7 @@ export function sanitizeUser(user) {
   if (!user) return null;
   return {
     id: user.id,
+    employee_id: user.employee_id,
     email: user.email,
     full_name: user.full_name,
     role: user.role,
@@ -61,6 +66,10 @@ export async function issueSession(userId) {
 
 export function inviteExpiresAt() {
   return new Date(Date.now() + INVITE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
+export function resetExpiresAt() {
+  return new Date(Date.now() + RESET_HOURS * 60 * 60 * 1000).toISOString();
 }
 
 export async function authenticateRequest(req) {

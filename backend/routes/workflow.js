@@ -2,6 +2,7 @@ import express from "express";
 import multer from "multer";
 import Papa from "papaparse";
 import { pool, query } from "../db.js";
+import { requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles } from "../permissions.js";
 
 const router = express.Router();
 const upload = multer({
@@ -379,7 +380,7 @@ router.get("/terms", async (_req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.post("/terms", async (req, res) => {
+router.post("/terms", requireRoles("admin"), async (req, res) => {
   const { termCode = "", termName = "", isActive = false } = req.body || {};
   if (!termCode.trim() || !termName.trim()) return res.status(400).json({ error: "termCode and termName are required." });
   const client = await pool.connect();
@@ -408,7 +409,7 @@ router.post("/terms", async (req, res) => {
   }
 });
 
-router.post("/terms/activate", async (req, res) => {
+router.post("/terms/activate", requireRoles("admin"), async (req, res) => {
   const { termCode = "" } = req.body || {};
   if (!termCode.trim()) return res.status(400).json({ error: "termCode is required." });
   const client = await pool.connect();
@@ -457,7 +458,7 @@ router.get("/subject-mapping/:termCode/status", async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.post("/upload/subject-mapping", upload.single("file"), async (req, res) => {
+router.post("/upload/subject-mapping", requireRoles("admin"), upload.single("file"), async (req, res) => {
   const file = req.file;
   const { termCode = "" } = req.body || {};
   if (!file) return res.status(400).json({ error: "A CSV file is required." });
@@ -474,10 +475,15 @@ router.post("/upload/subject-mapping", upload.single("file"), async (req, res) =
     await client.query("BEGIN");
     for (const row of valid) {
       await client.query(
+        `DELETE FROM scope_subject_mappings
+         WHERE scope = 'global'
+           AND term_code IS NULL
+           AND subject_code = $1`,
+        [row.subject_code]
+      );
+      await client.query(
         `INSERT INTO scope_subject_mappings (scope, term_code, subject_code, discipline_code, updated_at)
-         VALUES ('global', NULL, $1, $2, NOW())
-         ON CONFLICT (scope, term_code, subject_code)
-         DO UPDATE SET discipline_code = EXCLUDED.discipline_code, updated_at = NOW()`,
+         VALUES ('global', NULL, $1, $2, NOW())`,
         [row.subject_code, row.discipline_code]
       );
     }
@@ -491,7 +497,7 @@ router.post("/upload/subject-mapping", upload.single("file"), async (req, res) =
   } finally { client.release(); }
 });
 
-router.post("/upload/schedule/preview", upload.single("file"), async (req, res) => {
+router.post("/upload/schedule/preview", requireElevatedRole, upload.single("file"), async (req, res) => {
   const file = req.file;
   const termCode = normalize(req.body?.termCode);
   const divisionName = canonicalDivisionName(req.body?.divisionName);
@@ -520,7 +526,7 @@ router.post("/upload/schedule/preview", upload.single("file"), async (req, res) 
   } catch (error) { res.status(500).json({ ok: false, error: error.message, errors: [error.message] }); }
 });
 
-router.post("/upload/schedule", upload.single("file"), async (req, res) => {
+router.post("/upload/schedule", requireElevatedRole, upload.single("file"), async (req, res) => {
   const file = req.file;
   const termCode = normalize(req.body?.termCode);
   const divisionName = canonicalDivisionName(req.body?.divisionName);
@@ -828,7 +834,7 @@ async function advanceAssignmentStatus({ client, termCode, fromStatuses, toStatu
   return result.rows;
 }
 
-router.post("/assignments/submit", async (req, res) => {
+router.post("/assignments/submit", requireRoles("chair"), async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = [], actorName = "" } = req.body || {};
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim()).filter(Boolean) : [];
@@ -855,7 +861,7 @@ router.post("/assignments/submit", async (req, res) => {
   } finally { client.release(); }
 });
 
-router.post("/assignments/approve", async (req, res) => {
+router.post("/assignments/approve", requireRoles("dean"), async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = [], actorName = "" } = req.body || {};
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim()).filter(Boolean) : [];
@@ -882,7 +888,7 @@ router.post("/assignments/approve", async (req, res) => {
   } finally { client.release(); }
 });
 
-router.post("/assignments", async (req, res) => {
+router.post("/assignments", requireElevatedRole, async (req, res) => {
   const { termCode = "", disciplineCode = "", assignmentGroupId = "", employeeId = "", actorName = "", reason = "" } = req.body || {};
   if (!termCode || !assignmentGroupId || !employeeId) return res.status(400).json({ error: "termCode, assignmentGroupId, and employeeId are required." });
   const client = await pool.connect();
@@ -906,7 +912,7 @@ router.post("/assignments", async (req, res) => {
   } finally { client.release(); }
 });
 
-router.delete("/assignments/:id", async (req, res) => {
+router.delete("/assignments/:id", requireElevatedRole, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -924,7 +930,7 @@ router.delete("/assignments/:id", async (req, res) => {
   } finally { client.release(); }
 });
 
-router.put("/assignments/:id/reassign", async (req, res) => {
+router.put("/assignments/:id/reassign", requireElevatedRole, async (req, res) => {
   const { employeeId = "", actorName = "", reason = "" } = req.body || {};
   if (!employeeId || !reason.trim()) return res.status(400).json({ error: "employeeId and reason are required." });
   const client = await pool.connect();
@@ -946,7 +952,7 @@ router.put("/assignments/:id/reassign", async (req, res) => {
   } finally { client.release(); }
 });
 
-router.get("/preferences", async (req, res) => {
+router.get("/preferences", requirePreferenceOwnerOrElevated, async (req, res) => {
   const { termCode = "", facultyId = "" } = req.query;
   if (!termCode || !facultyId) return res.status(400).json({ error: "termCode and facultyId are required." });
   try {
@@ -979,7 +985,7 @@ router.get("/preferences", async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.post("/preferences", async (req, res) => {
+router.post("/preferences", requirePreferenceOwnerOrElevated, async (req, res) => {
   const { termCode = "", facultyId = "", employeeId = "", facultyName = "", preferences = [], availability = {} } = req.body || {};
   if (!termCode || !facultyId) return res.status(400).json({ error: "termCode and facultyId are required." });
   const availabilityDays = Array.isArray(availability.days) ? availability.days.map((value) => String(value || "").trim()).filter(Boolean) : [];
@@ -1017,7 +1023,7 @@ router.post("/preferences", async (req, res) => {
 });
 
 
-router.delete("/preferences", async (req, res) => {
+router.delete("/preferences", requireElevatedRole, async (req, res) => {
   const { termCode = "", division = "" } = req.query;
   if (!termCode || !division) return res.status(400).json({ error: "termCode and division are required." });
   const client = await pool.connect();
@@ -1103,7 +1109,7 @@ router.get("/decision-logs", async (req, res) => {
 });
 
 
-router.post("/preferences/wipe", async (req,res)=>{
+router.post("/preferences/wipe", requireElevatedRole, async (req,res)=>{
  const {termCode,division}=req.body||{};
  if(!termCode||!division) return res.status(400).json({error:"termCode and division required"});
  try{

@@ -1,5 +1,6 @@
 import express from "express";
 import { pool, query } from "../db.js";
+import { requireElevatedRole, requireRoles } from "../permissions.js";
 
 const router = express.Router();
 
@@ -17,7 +18,7 @@ router.get("/roles", async (_req, res) => {
   }
 });
 
-router.post("/roles", async (req, res) => {
+router.post("/roles", requireRoles("admin"), async (req, res) => {
   if (!Array.isArray(req.body)) {
     return res.status(400).json({ error: "Expected an array of role rows." });
   }
@@ -73,7 +74,7 @@ router.get("/pt-faculty", async (req, res) => {
   }
 });
 
-router.post("/pt-faculty", async (req, res) => {
+router.post("/pt-faculty", requireRoles("admin"), async (req, res) => {
   if (!Array.isArray(req.body)) {
     return res.status(400).json({ error: "Expected an array of PT faculty rows." });
   }
@@ -136,7 +137,7 @@ router.post("/pt-faculty", async (req, res) => {
   }
 });
 
-router.delete("/pt-faculty", async (_req, res) => {
+router.delete("/pt-faculty", requireRoles("admin"), async (_req, res) => {
   try {
     const result = await query(
       `UPDATE scope_pt_faculty
@@ -163,7 +164,7 @@ router.get("/windows", async (_req, res) => {
   }
 });
 
-router.post("/windows", async (req, res) => {
+router.post("/windows", requireElevatedRole, async (req, res) => {
   const row = req.body || {};
   try {
     const result = await query(
@@ -184,7 +185,7 @@ router.post("/windows", async (req, res) => {
   }
 });
 
-router.get("/audit", async (req, res) => {
+router.get("/audit", requireElevatedRole, async (req, res) => {
   const { q = "", eventType = "", division = "", sortBy = "created_at", sortDir = "desc" } = req.query;
   const allowedSortFields = new Set(["created_at", "event_type", "division", "term", "actor_name", "instructor_name"]);
   const safeSortBy = allowedSortFields.has(sortBy) ? sortBy : "created_at";
