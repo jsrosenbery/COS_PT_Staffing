@@ -45,7 +45,7 @@ function mockRes() {
   };
 }
 
-test("brute-force throttling returns a stable 429 response", () => {
+test("brute-force throttling returns a stable 429 response", async () => {
   resetRateLimiters();
   const limiter = rateLimiter("login", { windowMs: 60_000, max: 2 });
   const req = mockReq({ email: "user@cos.edu" });
@@ -53,14 +53,14 @@ test("brute-force throttling returns a stable 429 response", () => {
   for (let i = 0; i < 2; i += 1) {
     const res = mockRes();
     let nextCalled = false;
-    limiter(req, res, () => { nextCalled = true; });
+    await limiter(req, res, () => { nextCalled = true; });
     assert.equal(nextCalled, true);
     assert.equal(res.statusCode, 200);
   }
 
   const blocked = mockRes();
   let nextCalled = false;
-  limiter(req, blocked, () => { nextCalled = true; });
+  await limiter(req, blocked, () => { nextCalled = true; });
 
   assert.equal(nextCalled, false);
   assert.equal(blocked.statusCode, 429);
@@ -77,6 +77,7 @@ test("production configuration fails closed for unsafe auth settings", () => {
     EMAIL_PROVIDER: "console",
     AUTH_DISABLED: "false",
     API_TOKEN_AUTH_ENABLED: "false",
+    RATE_LIMIT_STORE: "postgres",
   };
 
   assert.equal(validateProductionConfig({ ...base }).ok, true);
@@ -84,6 +85,7 @@ test("production configuration fails closed for unsafe auth settings", () => {
   assert.match(validateProductionConfig({ ...base, AUTH_DISABLED: "true" }).errors.join(" "), /AUTH_DISABLED/);
   assert.match(validateProductionConfig({ ...base, CORS_ORIGIN: "" }).errors.join(" "), /CORS_ORIGIN/);
   assert.match(validateProductionConfig({ ...base, DATABASE_URL: "" }).errors.join(" "), /DATABASE_URL/);
+  assert.match(validateProductionConfig({ ...base, RATE_LIMIT_STORE: "memory" }).errors.join(" "), /RATE_LIMIT_STORE/);
   assert.match(validateProductionConfig({ ...base, API_TOKEN_AUTH_ENABLED: "true", API_TOKEN: "short" }).errors.join(" "), /API_TOKEN/);
   assert.match(validateProductionConfig({ ...base, EMAIL_PROVIDER: "sendgrid", SENDGRID_API_KEY: "", EMAIL_FROM: "" }).errors.join(" "), /SENDGRID_API_KEY/);
 });

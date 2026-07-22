@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import pg from "pg";
 import { runMigrations } from "../migrations.js";
+import { PostgresRateLimitStore } from "../rateLimit.js";
 
 const { Pool } = pg;
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -34,20 +35,37 @@ const silentLogger = { info() {} };
 integrationTest("applies all ordered migrations to an empty PostgreSQL database", async () => {
   await withEmptyDatabase(async (pool) => {
     const result = await runMigrations({ pool, logger: silentLogger });
-    assert.deepEqual(result.applied, ["0001", "0002"]);
+    assert.deepEqual(result.applied, ["0001", "0002", "0003"]);
 
     const tables = await pool.query(`
       SELECT to_regclass('scope_users') AS users,
-             to_regclass('scope_assignments') AS assignments
+             to_regclass('scope_assignments') AS assignments,
+             to_regclass('scope_rate_limits') AS rate_limits
     `);
     assert.equal(tables.rows[0].users, "scope_users");
     assert.equal(tables.rows[0].assignments, "scope_assignments");
+    assert.equal(tables.rows[0].rate_limits, "scope_rate_limits");
 
-    const history = await pool.query("SELECT * FROM scope_schema_migrations");
-    assert.equal(history.rowCount, 2);
+    const history = await pool.query("SELECT * FROM scope_schema_migrations ORDER BY migration_identifier");
+    assert.equal(history.rowCount, 3);
     assert.equal(history.rows[0].migration_filename, "0001_baseline.sql");
     assert.equal(history.rows[1].migration_filename, "0002_security_integrity_constraints.sql");
+    assert.equal(history.rows[2].migration_filename, "0003_shared_auth_rate_limits.sql");
     assert.ok(history.rows.every((row) => row.applied_at));
+  });
+});
+
+integrationTest("PostgreSQL rate-limit counters are shared across store instances", async () => {
+  await withEmptyDatabase(async (pool) => {
+    await runMigrations({ pool, logger: silentLogger });
+    const firstInstance = new PostgresRateLimitStore({ query: pool.query.bind(pool) });
+    const secondInstance = new PostgresRateLimitStore({ query: pool.query.bind(pool) });
+
+    assert.equal((await firstInstance.consume("login", "a".repeat(64), 60_000)).count, 1);
+    assert.equal((await secondInstance.consume("login", "a".repeat(64), 60_000)).count, 2);
+
+    const stored = await pool.query("SELECT limiter_name, key_hash, request_count FROM scope_rate_limits");
+    assert.deepEqual(stored.rows, [{ limiter_name: "login", key_hash: "a".repeat(64), request_count: 2 }]);
   });
 });
 
@@ -57,9 +75,9 @@ integrationTest("skips migrations that were already applied successfully", async
     const secondRun = await runMigrations({ pool, logger: silentLogger });
 
     assert.deepEqual(secondRun.applied, []);
-    assert.deepEqual(secondRun.skipped, ["0001", "0002"]);
+    assert.deepEqual(secondRun.skipped, ["0001", "0002", "0003"]);
     const history = await pool.query("SELECT COUNT(*)::int AS count FROM scope_schema_migrations");
-    assert.equal(history.rows[0].count, 2);
+    assert.equal(history.rows[0].count, 3);
   });
 });
 
