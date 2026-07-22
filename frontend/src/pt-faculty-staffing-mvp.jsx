@@ -236,6 +236,10 @@ function canonicalDivisionName(value) {
   return aliases[key] || raw;
 }
 
+function metricValue(value, fallback = 0) {
+  return value ?? fallback;
+}
+
 function buildUnmappedSubjectsCsv(rows) {
   const uniqueRows = Array.from(
     new Map((rows || []).map((row) => [row.subject_code, row])).values()
@@ -3546,11 +3550,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <TinyStat label="Source Rows" value={uploadReport.summary.sourceTotalRows ?? uploadReport.summary.totalRows} />
                       <TinyStat label="Kept Rows" value={uploadReport.summary.keptRowsForDivision ?? uploadReport.summary.totalRows} />
                       <TinyStat label="Ignored Rows" value={uploadReport.summary.ignoredRowsFromOtherDivisions || 0} />
-                      <TinyStat label="Unique CRNs" value={uploadReport.summary.totalCrns} />
-                      <TinyStat label="Groups" value={uploadReport.summary.assignmentGroups} />
-                      <TinyStat label="Mapped" value={uploadReport.summary.mappedAssignmentGroups} />
-                      <TinyStat label="Unmapped" value={uploadReport.summary.unmappedAssignmentGroups} />
-                      <TinyStat label="Cross-Listed" value={uploadReport.summary.crossListedGroups} />
+                      <TinyStat label="Unique CRNs" value={metricValue(uploadReport.summary.totalCrns)} />
+                      <TinyStat label="Groups" value={metricValue(uploadReport.summary.assignmentGroups, uploadReport.summary.importedSectionBundles ?? uploadReport.summary.divisionRows ?? uploadReport.importedCount)} />
+                      <TinyStat label="Mapped" value={metricValue(uploadReport.summary.mappedAssignmentGroups)} />
+                      <TinyStat label="Unmapped" value={metricValue(uploadReport.summary.unmappedAssignmentGroups)} />
+                      <TinyStat label="Cross-Listed" value={metricValue(uploadReport.summary.crossListedGroups)} />
                     </div>
                   ) : null}
                 </div>

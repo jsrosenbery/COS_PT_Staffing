@@ -357,6 +357,41 @@ function buildInstructionalBundles(rows) {
   return Array.from(unique.values());
 }
 
+function buildUploadSummary({ rows = [], sections = [], inDivision = [], ignoredRowsFromOtherDivisions = 0 }) {
+  const uniqueCrns = new Set();
+  for (const section of inDivision) {
+    for (const crn of section.all_crns || []) {
+      if (normalize(crn)) uniqueCrns.add(normalize(crn));
+    }
+    if (normalize(section.primary_crn) && !(section.all_crns || []).length) {
+      normalize(section.primary_crn).split("/").map(normalize).filter(Boolean).forEach((crn) => uniqueCrns.add(crn));
+    }
+  }
+
+  const mappedAssignmentGroups = inDivision.filter((section) => Boolean(section.discipline_code)).length;
+  const unmappedAssignmentGroups = inDivision.length - mappedAssignmentGroups;
+  const crossListedGroups = inDivision.filter((section) =>
+    Boolean(section.is_true_linked) ||
+    ["cross_listed", "mixed_bundle"].includes(section.bundle_type) ||
+    (section.linked_sections || []).some((linked) => normalize(linked.cross_list))
+  ).length;
+
+  return {
+    totalRows: rows.length,
+    sourceTotalRows: rows.length,
+    keptRowsForDivision: Math.max(rows.length - ignoredRowsFromOtherDivisions, 0),
+    divisionRows: inDivision.length,
+    ignoredRowsFromOtherDivisions,
+    importedSectionBundles: inDivision.length,
+    assignmentGroups: inDivision.length,
+    totalBundles: sections.length,
+    totalCrns: uniqueCrns.size,
+    mappedAssignmentGroups,
+    unmappedAssignmentGroups,
+    crossListedGroups,
+  };
+}
+
 async function getProtectedWork(termCode, division) {
   const sections = await query(`SELECT assignment_group_id FROM scope_sections WHERE term_code = $1 AND division = $2`, [termCode, division]);
   const sectionIds = sections.rows.map((r) => r.assignment_group_id);
@@ -514,13 +549,14 @@ router.post("/upload/schedule/preview", requireElevatedRole, upload.single("file
     const ignoredRowsFromOtherDivisions = rows.filter((row) => canonicalDivisionName(findValue(row, ["DIVISION", "Division", "division"]) || divisionName) !== canonicalDivisionName(divisionName)).length;
     const unmappedSubjects = Array.from(new Set(inDivision.filter((s) => !s.discipline_code && s.subject_code).map((s) => s.subject_code))).sort();
     const protectedWork = await getProtectedWork(termCode, divisionName);
+    const summary = buildUploadSummary({ rows, sections, inDivision, ignoredRowsFromOtherDivisions });
     res.json({
       ok: true,
       divisionName,
       errors: [],
       warnings: unmappedSubjects.length ? [`${unmappedSubjects.length} subject code(s) are unmapped.`] : [],
       unmappedSubjects,
-      summary: { totalRows: rows.length, divisionRows: inDivision.length, ignoredRowsFromOtherDivisions },
+      summary,
       impact: { openSections: inDivision.length, facultyPreferences: protectedWork.preferences, tentativeAssignments: protectedWork.tentativeAssignments, decisionLogs: protectedWork.decisionLogs },
     });
   } catch (error) { res.status(500).json({ ok: false, error: error.message, errors: [error.message] }); }
@@ -553,6 +589,7 @@ router.post("/upload/schedule", requireElevatedRole, upload.single("file"), asyn
     }
     const ignoredRowsFromOtherDivisions = rows.filter((row) => canonicalDivisionName(findValue(row, ["DIVISION", "Division", "division"]) || divisionName) !== canonicalDivisionName(divisionName)).length;
     const unmappedSubjects = Array.from(new Set(inDivision.filter((s) => !s.discipline_code && s.subject_code).map((s) => s.subject_code))).sort();
+    const summary = buildUploadSummary({ rows, sections, inDivision, ignoredRowsFromOtherDivisions });
 
     await client.query("BEGIN");
     const existing = await client.query(`SELECT assignment_group_id FROM scope_sections WHERE term_code = $1 AND division = $2`, [termCode, divisionName]);
@@ -606,7 +643,7 @@ router.post("/upload/schedule", requireElevatedRole, upload.single("file"), asyn
       divisionName,
       warnings: unmappedSubjects.length ? [`${unmappedSubjects.length} subject code(s) are unmapped.`] : [],
       unmappedSubjects,
-      summary: { totalRows: rows.length, divisionRows: inDivision.length, ignoredRowsFromOtherDivisions },
+      summary,
     });
   } catch (error) {
     await client.query("ROLLBACK");
