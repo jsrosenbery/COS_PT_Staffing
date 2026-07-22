@@ -121,14 +121,20 @@ CREATE TABLE IF NOT EXISTS scope_staffing_windows (
 CREATE TABLE IF NOT EXISTS scope_audit_log (
   id SERIAL PRIMARY KEY,
   event_type TEXT NOT NULL DEFAULT '',
+  actor_user_id INTEGER,
+  actor_email TEXT NOT NULL DEFAULT '',
   actor_name TEXT NOT NULL DEFAULT '',
   actor_role TEXT NOT NULL DEFAULT '',
+  actor_session_type TEXT NOT NULL DEFAULT '',
   division TEXT NOT NULL DEFAULT '',
   term TEXT NOT NULL DEFAULT '',
   section_key TEXT NOT NULL DEFAULT '',
   instructor_name TEXT NOT NULL DEFAULT '',
   old_value TEXT,
   new_value TEXT,
+  reason_code TEXT NOT NULL DEFAULT '',
+  explanation TEXT NOT NULL DEFAULT '',
+  request_id TEXT NOT NULL DEFAULT '',
   note TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -245,6 +251,7 @@ CREATE TABLE IF NOT EXISTS scope_assignments (
   justification TEXT NOT NULL DEFAULT '',
   recommendation_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
   decision_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -278,6 +285,7 @@ CREATE TABLE IF NOT EXISTS scope_chair_decisions (
   decided_by_email TEXT NOT NULL DEFAULT '',
   decided_by_name TEXT NOT NULL DEFAULT '',
   decided_by_role TEXT NOT NULL DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 1,
   decided_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -307,6 +315,30 @@ ADD COLUMN IF NOT EXISTS recommendation_snapshot JSONB DEFAULT '{}'::jsonb;
 
 ALTER TABLE scope_assignments
 ADD COLUMN IF NOT EXISTS decision_snapshot JSONB DEFAULT '{}'::jsonb;
+
+ALTER TABLE scope_assignments
+ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;
+
+ALTER TABLE scope_chair_decisions
+ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS actor_user_id INTEGER;
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS actor_email TEXT DEFAULT '';
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS actor_session_type TEXT DEFAULT '';
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS reason_code TEXT DEFAULT '';
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS explanation TEXT DEFAULT '';
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS request_id TEXT DEFAULT '';
 
 ALTER TABLE scope_preference_submissions
 ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'submitted';
