@@ -587,14 +587,22 @@ function workflowStatePillStyle(kind) {
 function assignmentStatusLabel(status) {
   const key = normalize(status || "tentative").toLowerCase();
   if (key === "chair_submitted") return "Submitted";
+  if (key === "chair_finalized") return "Chair finalized";
   if (key === "dean_approved") return "Dean approved";
+  if (key === "bypassed") return "Bypassed";
+  if (key === "released") return "Released";
+  if (key === "returned_for_revision") return "Returned";
   return "Tentative";
 }
 
 function assignmentStatusKind(status) {
   const key = normalize(status || "tentative").toLowerCase();
   if (key === "chair_submitted") return "top";
+  if (key === "chair_finalized") return "top";
   if (key === "dean_approved") return "assigned";
+  if (key === "bypassed") return "bypass";
+  if (key === "released") return "filled";
+  if (key === "returned_for_revision") return "conflict";
   return "advanced";
 }
 
@@ -990,6 +998,8 @@ export default function PTFacultyStaffingMVP() {
   const [chairWorkflowRows, setChairWorkflowRows] = useState([]);
   const [chairPreferenceRows, setChairPreferenceRows] = useState([]);
   const [tentativeAssignments, setTentativeAssignments] = useState([]);
+  const [allocationAnalysis, setAllocationAnalysis] = useState(null);
+  const [contractExceptionReasons, setContractExceptionReasons] = useState([]);
   const [decisionLogs, setDecisionLogs] = useState([]);
   const [chairMessage, setChairMessage] = useState("");
   const [loadingChairWorkflow, setLoadingChairWorkflow] = useState(false);
@@ -1921,6 +1931,23 @@ export default function PTFacultyStaffingMVP() {
     return { assigned, ready, blocked, reassignmentPool, total: sectionQueue.length };
   }, [sectionQueue]);
 
+  const allocationSectionById = useMemo(() => {
+    const map = new Map();
+    (allocationAnalysis?.sections || []).forEach((section) => map.set(section.assignmentGroupId, section));
+    return map;
+  }, [allocationAnalysis]);
+
+  const highestRemainingPreferenceByFaculty = useMemo(() => {
+    const map = new Map();
+    (allocationAnalysis?.faculty || []).forEach((facultyRow) => {
+      const remaining = (facultyRow.rankedPreferences || [])
+        .filter((pref) => ["NOT_YET_REACHED", "ALREADY_ASSIGNED_IN_THIS_PASS", "LOAD_LIMIT_REACHED"].includes(pref.reasonCode))
+        .sort((a, b) => (finiteNumberOrNull(a.preferenceRank) ?? 999999) - (finiteNumberOrNull(b.preferenceRank) ?? 999999));
+      if (remaining[0]) map.set(facultyRow.employeeId, remaining[0].assignmentGroupId);
+    });
+    return map;
+  }, [allocationAnalysis]);
+
   const assignmentStatusCounts = useMemo(() => {
     return tentativeAssignments.reduce((counts, assignment) => {
       const status = normalize(assignment.status || "tentative").toLowerCase();
@@ -2156,15 +2183,17 @@ export default function PTFacultyStaffingMVP() {
         [];
       if (scopedDivisions.length) workflowParams.set("divisions", scopedDivisions.join("|"));
 
-      const [workflowResponse, assignmentsResponse, logsResponse] = await Promise.all([
+      const [workflowResponse, assignmentsResponse, logsResponse, analysisResponse] = await Promise.all([
         apiFetch(`${API_BASE}/chair-workflow?${workflowParams.toString()}`),
         apiFetch(`${API_BASE}/assignments?${workflowParams.toString()}`),
         apiFetch(`${API_BASE}/decision-logs?${workflowParams.toString()}`),
+        apiFetch(`${API_BASE}/allocation-analysis?${workflowParams.toString()}`),
       ]);
 
       const workflowData = await workflowResponse.json();
       const assignmentsData = await assignmentsResponse.json();
       const logsData = await logsResponse.json();
+      const analysisData = await analysisResponse.json();
 
       if (!workflowResponse.ok) {
         setChairMessage(workflowData.error || "Could not load workflow.");
@@ -2190,6 +2219,11 @@ export default function PTFacultyStaffingMVP() {
         setDecisionLogs([]);
         return;
       }
+      if (!analysisResponse.ok) {
+        setChairMessage(analysisData.error || "Could not load allocation analysis.");
+        setAllocationAnalysis(null);
+        setContractExceptionReasons([]);
+      }
 
       let exportedPreferences = [];
       try {
@@ -2205,6 +2239,8 @@ export default function PTFacultyStaffingMVP() {
       setChairWorkflowRows(Array.isArray(workflowData.rows) ? workflowData.rows : []);
       setChairPreferenceRows(exportedPreferences);
       setTentativeAssignments(Array.isArray(assignmentsData.assignments) ? assignmentsData.assignments : []);
+      setAllocationAnalysis(analysisData.analysis || null);
+      setContractExceptionReasons(Array.isArray(analysisData.exceptionReasons) ? analysisData.exceptionReasons : []);
       setDecisionLogs(Array.isArray(logsData.logs) ? logsData.logs : []);
       loadDivisionStatuses();
     } catch (error) {
@@ -2212,6 +2248,8 @@ export default function PTFacultyStaffingMVP() {
       setChairWorkflowRows([]);
       setChairPreferenceRows([]);
       setTentativeAssignments([]);
+      setAllocationAnalysis(null);
+      setContractExceptionReasons([]);
       setDecisionLogs([]);
     } finally {
       setLoadingChairWorkflow(false);
@@ -2221,39 +2259,50 @@ export default function PTFacultyStaffingMVP() {
   async function assignSectionToInstructor(row, topEmployeeId, requiresRationale = false) {
     if (!row?.assignment_group_id || !row?.employee_id || !activeTerm?.code) return;
     const isBypass = Boolean(requiresRationale && topEmployeeId && topEmployeeId !== row.employee_id);
-    let reason = "";
+    let exceptionReasonCode = "";
+    let exceptionExplanation = "";
     if (isBypass) {
-      reason = window.prompt("Bypassing the current top candidate requires a rationale. Enter a brief explanation:", "") || "";
-      if (!reason.trim()) {
-        setChairMessage("A rationale is required when bypassing the top candidate.");
+      const activeReasons = contractExceptionReasons.filter((reason) => (reason.active_status || "active") === "active");
+      const reasonOptions = activeReasons.map((reason, index) => `${index + 1}. ${reason.code} - ${reason.label}`).join("\n");
+      const selectedReason = window.prompt(`Choose the contractual exception reason number:\n\n${reasonOptions}`, "1") || "";
+      const selectedIndex = Number(selectedReason) - 1;
+      const reason = activeReasons[selectedIndex];
+      if (!reason) {
+        setChairMessage("A recognized contractual exception reason is required when bypassing the recommended candidate.");
+        return;
+      }
+      exceptionReasonCode = reason.code;
+      exceptionExplanation = window.prompt("Enter the written explanation for this non-seniority selection:", "") || "";
+      if (!exceptionExplanation.trim()) {
+        setChairMessage("A written explanation is required when bypassing the recommended candidate.");
         return;
       }
     }
 
     setChairMessage("");
     try {
-      const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
-      const response = await apiFetch(`${API_BASE}/assignments`, {
+      const response = await apiFetch(`${API_BASE}/chair-decisions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           termCode: activeTerm.code,
+          division: row.division,
           disciplineCode: row.discipline_code,
           assignmentGroupId: row.assignment_group_id,
-          employeeId: row.employee_id,
-          actorName,
-          reason: reason.trim() || undefined,
+          selectedEmployeeId: row.employee_id,
+          exceptionReasonCode,
+          exceptionExplanation: exceptionExplanation.trim(),
         }),
       });
       const data = await response.json();
       if (!response.ok) {
-        setChairMessage(data.error || "Could not save tentative assignment.");
+        setChairMessage(data.error || "Could not record chair decision.");
         return;
       }
-      setChairMessage(data.message || "Tentative assignment saved.");
+      setChairMessage(isBypass ? "Chair exception decision recorded." : "Recommended candidate selected.");
       await loadChairWorkflow();
     } catch (error) {
-      setChairMessage(error.message || "Could not save tentative assignment.");
+      setChairMessage(error.message || "Could not record chair decision.");
     }
   }
 
@@ -4219,7 +4268,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           <span style={methodPillStyle(sectionMethodLabel(section))}>{sectionMethodLabel(section)}</span>
                           <span style={modalityPillStyle(sectionModalityLabel(section))}>{sectionModalityLabel(section)}</span>
                           {section.currentAssignment ? (
-                            <span style={workflowStatePillStyle(assignmentStatusKind(section.currentAssignment.status))}>{assignmentStatusLabel(section.currentAssignment.status)}</span>
+                            <span style={workflowStatePillStyle(assignmentStatusKind(section.currentAssignment.decision_status || section.currentAssignment.status))}>{assignmentStatusLabel(section.currentAssignment.decision_status || section.currentAssignment.status)}</span>
                           ) : topCandidate ? (
                             <span style={workflowStatePillStyle("top")}>Next in line ready</span>
                           ) : (
@@ -4241,7 +4290,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         <div style={{ marginTop: 8, color: "var(--text-muted)", fontSize: 13 }}>{stateSummary.detail}</div>
                         {section.currentAssignment ? (
                           <div style={{ marginTop: 8, color: "#166534", fontWeight: 700, fontSize: 13 }}>
-                            {assignmentStatusLabel(section.currentAssignment.status)} assignment: {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
+                            {assignmentStatusLabel(section.currentAssignment.decision_status || section.currentAssignment.status)} assignment: {section.currentAssignment.faculty_name || section.currentAssignment.employee_id}.
                           </div>
                         ) : null}
                       </div>
@@ -4249,8 +4298,15 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                         {section.candidates.slice(0, 5).map((row) => {
                           const isTop = topCandidate?.employee_id === row.employee_id;
+                          const allocationSection = allocationSectionById.get(section.assignment_group_id);
+                          const backendRecommendedEmployeeId =
+                            allocationSection?.highestSeniorityCurrentlyEligibleCandidate?.employeeId ||
+                            allocationAnalysis?.recommendedNextAssignmentSequence?.find((item) => item.assignmentGroupId === section.assignment_group_id)?.employeeId ||
+                            "";
+                          const isBackendRecommended = backendRecommendedEmployeeId === row.employee_id;
+                          const isHighestRemainingPreference = highestRemainingPreferenceByFaculty.get(row.employee_id) === section.assignment_group_id;
                           const sectionHasSavedPreference = finiteNumberOrNull(section.bestPreferenceRank) !== null;
-                          const requiresPreferenceRationale = sectionHasSavedPreference && !isTop;
+                          const requiresPreferenceRationale = sectionHasSavedPreference && !isBackendRecommended;
                           const currentAssignment = currentAssignmentByGroup.get(section.assignment_group_id) || section.currentAssignment || null;
                           const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
                           const reasonSummary = candidateReasonSummary(section, row, topCandidate, currentAssignment);
@@ -4266,6 +4322,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                     <span style={workflowStatePillStyle(row.availabilitySummary?.matches ? "assigned" : "bypass")}>
                                       {row.availabilitySummary?.label || "No availability selected"}
                                     </span>
+                                    {isHighestRemainingPreference ? (
+                                      <span style={{ ...workflowStatePillStyle("top"), marginLeft: 6 }}>
+                                        Highest remaining preference
+                                      </span>
+                                    ) : null}
                                   </div>
                                   {isCurrentAssignee ? (
                                     <div style={{ marginTop: 6, color: "#166534", fontSize: 12, fontWeight: 700 }}>
@@ -4292,7 +4353,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                     {isCurrentAssignee || row.has_tentative_assignment ? <span style={workflowStatePillStyle("assigned")}>{isCurrentAssignee ? "Current assignee" : "Assigned"}</span> : null}
                                     {!isCurrentAssignee && !row.has_tentative_assignment && row.section_assigned_to_other ? <span style={workflowStatePillStyle("filled")}>Section filled</span> : null}
                                     {!isCurrentAssignee && !row.has_tentative_assignment && row.has_assignment_conflict ? <span style={workflowStatePillStyle("conflict")}>Time conflict</span> : null}
-                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isTop ? <span style={workflowStatePillStyle("top")}>Top candidate</span> : null}
+                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isBackendRecommended ? <span style={workflowStatePillStyle("top")}>Backend recommendation</span> : null}
                                     {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && requiresPreferenceRationale ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
                                     {section.currentAssignment && !isCurrentAssignee && !row.has_assignment_conflict ? <span style={workflowStatePillStyle("bypass")}>Reassign requires rationale</span> : null}
                                   </div>
@@ -4307,7 +4368,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                   ) : row.section_assigned_to_other ? (
                                     <button style={ui.btn} disabled>Filled</button>
                                   ) : (
-                                    <button style={isTop || !requiresPreferenceRationale ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, topCandidate?.employee_id, requiresPreferenceRationale)}>
+                                    <button style={isBackendRecommended || !requiresPreferenceRationale ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, backendRecommendedEmployeeId, requiresPreferenceRationale)}>
                                       {requiresPreferenceRationale ? "Assign with Rationale" : "Assign"}
                                     </button>
                                   )}
@@ -4345,7 +4406,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                               {formatMeetings(assignment.meetings)}
                             </div>
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                              <span style={workflowStatePillStyle(assignmentStatusKind(assignment.status))}>{assignmentStatusLabel(assignment.status)}</span>
+                              <span style={workflowStatePillStyle(assignmentStatusKind(assignment.decision_status || assignment.status))}>{assignmentStatusLabel(assignment.decision_status || assignment.status)}</span>
                               <span style={methodPillStyle(sectionMethodLabel(assignment))}>{sectionMethodLabel(assignment)}</span>
                               <span style={modalityPillStyle(sectionModalityLabel(assignment))}>{sectionModalityLabel(assignment)}</span>
                             </div>

@@ -3,6 +3,7 @@ import multer from "multer";
 import Papa from "papaparse";
 import { pool, query } from "../db.js";
 import { analyzeAllocation } from "../domain/allocationAnalysis.js";
+import { defaultContractExceptionReasons, validateChairDecision } from "../domain/chairDecision.js";
 import { isAdmin, requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles } from "../permissions.js";
 import { sendDisseminationEmail } from "../emailService.js";
 
@@ -394,6 +395,119 @@ function buildUploadSummary({ rows = [], sections = [], inDivision = [], ignored
   };
 }
 
+function parseScopeList(value) {
+  return String(value || "")
+    .split(/[|,;]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function getContractExceptionReasons(db = { query }) {
+  try {
+    const result = await db.query(
+      `SELECT code, label, description, requires_explanation, active_status, display_order
+       FROM scope_contract_exception_reasons
+       WHERE COALESCE(active_status, 'active') = 'active'
+       ORDER BY display_order, label`
+    );
+    return result.rows.length ? result.rows : defaultContractExceptionReasons;
+  } catch (_error) {
+    return defaultContractExceptionReasons;
+  }
+}
+
+async function buildAllocationAnalysisFromDb(db, {
+  termCode,
+  division = "",
+  divisions = [],
+  disciplineCode = "",
+  oneAssignmentPerPass = true,
+  maxAssignments = "",
+  maxLoad = "",
+}) {
+  const requestedDivisions = divisions.length ? divisions : parseScopeList(division);
+  const params = [termCode];
+  let sectionWhere = `WHERE s.term_code = $1 AND COALESCE((s.raw_row->>'staff_eligible')::boolean, true) = true`;
+  if (disciplineCode) {
+    params.push(String(disciplineCode).trim());
+    sectionWhere += ` AND s.discipline_code = $${params.length}`;
+  }
+  if (requestedDivisions.length) {
+    params.push(requestedDivisions.map((value) => value.toLowerCase()));
+    sectionWhere += ` AND LOWER(s.division) = ANY($${params.length}::text[])`;
+  }
+
+  const sectionsResult = await db.query(
+    `SELECT s.term_code, s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus,
+            s.subject_code, s.course_number, s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings, s.raw_row
+     FROM scope_sections s
+     ${sectionWhere}
+     ORDER BY s.division, s.discipline_code, s.primary_subject_course, s.primary_crn`,
+    params
+  );
+  const sections = sectionsResult.rows.map((row) => ({ ...row, meetings: row.meetings || [] }));
+  const sectionIds = sections.map((row) => row.assignment_group_id).filter(Boolean);
+  const scopedDivisions = Array.from(new Set(sections.map((row) => row.division).filter(Boolean)));
+
+  const [facultyResult, preferenceResult, assignmentResult, reasonRows] = await Promise.all([
+    scopedDivisions.length
+      ? db.query(
+          `SELECT employee_id, first_name, last_name, email, division, discipline,
+                  COALESCE(NULLIF(seniority_rank, ''), seniority_value, '') AS seniority_rank,
+                  COALESCE(NULLIF(seniority_value, ''), seniority_rank, '') AS seniority_value,
+                  qualified_disciplines, active_status
+           FROM scope_pt_faculty
+           WHERE COALESCE(active_status, 'active') = 'active'
+             AND LOWER(division) = ANY($1::text[])
+           ORDER BY division, discipline, seniority_rank, last_name, first_name`,
+          [scopedDivisions.map((value) => value.toLowerCase())]
+        )
+      : Promise.resolve({ rows: [] }),
+    sectionIds.length
+      ? db.query(
+          `SELECT p.term_code, p.faculty_id, p.employee_id, p.faculty_name, p.assignment_group_id, p.discipline_code, p.preference_rank, p.created_at, p.updated_at
+           FROM scope_preferences p
+           WHERE p.term_code = $1
+             AND p.assignment_group_id = ANY($2::text[])
+           ORDER BY p.faculty_name, p.preference_rank, p.assignment_group_id`,
+          [termCode, sectionIds]
+        )
+      : Promise.resolve({ rows: [] }),
+    sectionIds.length
+      ? db.query(
+          `SELECT a.id, a.term_code, a.discipline_code, a.assignment_group_id, a.employee_id, a.faculty_name, a.status,
+                  a.reason, a.reason_code, a.justification, a.actor_name, a.created_at, a.updated_at
+           FROM scope_assignments a
+           WHERE a.term_code = $1
+             AND a.assignment_group_id = ANY($2::text[])
+             AND COALESCE(a.status, 'tentative') NOT IN ('released', 'deleted', 'void', 'returned_for_revision')
+           ORDER BY a.created_at, a.id`,
+          [termCode, sectionIds]
+        )
+      : Promise.resolve({ rows: [] }),
+    getContractExceptionReasons(db),
+  ]);
+
+  return {
+    analysis: analyzeAllocation({
+      termCode,
+      division: requestedDivisions.join("|"),
+      disciplineCode,
+      sections,
+      faculty: facultyResult.rows,
+      preferences: preferenceResult.rows,
+      assignments: assignmentResult.rows,
+      recognizedContractualExceptions: reasonRows.map((row) => row.code),
+      loadLimits: {
+        oneAssignmentPerPass: Boolean(oneAssignmentPerPass),
+        maxAssignments: maxAssignments ? Number(maxAssignments) : undefined,
+        maxLoad: maxLoad ? Number(maxLoad) : undefined,
+      },
+    }),
+    exceptionReasons: reasonRows,
+  };
+}
+
 async function getProtectedWork(termCode, division) {
   const sections = await query(`SELECT assignment_group_id FROM scope_sections WHERE term_code = $1 AND division = $2`, [termCode, division]);
   const sectionIds = sections.rows.map((r) => r.assignment_group_id);
@@ -738,10 +852,7 @@ router.get("/allocation-analysis", requireElevatedRole, requireDivisionScope, as
     maxAssignments = "",
     maxLoad = "",
   } = req.query;
-  const requestedDivisions = String(divisions || division || "")
-    .split(/[|,;]/)
-    .map((value) => value.trim())
-    .filter(Boolean);
+  const requestedDivisions = parseScopeList(divisions || division);
 
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   if (!isAdmin(req) && !requestedDivisions.length) {
@@ -749,85 +860,184 @@ router.get("/allocation-analysis", requireElevatedRole, requireDivisionScope, as
   }
 
   try {
-    const params = [termCode];
-    let sectionWhere = `WHERE s.term_code = $1 AND COALESCE((s.raw_row->>'staff_eligible')::boolean, true) = true`;
-    if (disciplineCode) {
-      params.push(String(disciplineCode).trim());
-      sectionWhere += ` AND s.discipline_code = $${params.length}`;
-    }
-    if (requestedDivisions.length) {
-      params.push(requestedDivisions.map((value) => value.toLowerCase()));
-      sectionWhere += ` AND LOWER(s.division) = ANY($${params.length}::text[])`;
-    }
-
-    const sectionsResult = await query(
-      `SELECT s.term_code, s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus,
-              s.subject_code, s.course_number, s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings, s.raw_row
-       FROM scope_sections s
-       ${sectionWhere}
-       ORDER BY s.division, s.discipline_code, s.primary_subject_course, s.primary_crn`,
-      params
-    );
-    const sections = sectionsResult.rows.map((row) => ({ ...row, meetings: row.meetings || [] }));
-    const sectionIds = sections.map((row) => row.assignment_group_id).filter(Boolean);
-    const scopedDivisions = Array.from(new Set(sections.map((row) => row.division).filter(Boolean)));
-
-    const [facultyResult, preferenceResult, assignmentResult] = await Promise.all([
-      scopedDivisions.length
-        ? query(
-            `SELECT employee_id, first_name, last_name, email, division, discipline,
-                    COALESCE(NULLIF(seniority_rank, ''), seniority_value, '') AS seniority_rank,
-                    COALESCE(NULLIF(seniority_value, ''), seniority_rank, '') AS seniority_value,
-                    qualified_disciplines, active_status
-             FROM scope_pt_faculty
-             WHERE COALESCE(active_status, 'active') = 'active'
-               AND LOWER(division) = ANY($1::text[])
-             ORDER BY division, discipline, seniority_rank, last_name, first_name`,
-            [scopedDivisions.map((value) => value.toLowerCase())]
-          )
-        : Promise.resolve({ rows: [] }),
-      sectionIds.length
-        ? query(
-            `SELECT p.term_code, p.faculty_id, p.employee_id, p.faculty_name, p.assignment_group_id, p.discipline_code, p.preference_rank, p.created_at, p.updated_at
-             FROM scope_preferences p
-             WHERE p.term_code = $1
-               AND p.assignment_group_id = ANY($2::text[])
-             ORDER BY p.faculty_name, p.preference_rank, p.assignment_group_id`,
-            [termCode, sectionIds]
-          )
-        : Promise.resolve({ rows: [] }),
-      sectionIds.length
-        ? query(
-            `SELECT a.id, a.term_code, a.discipline_code, a.assignment_group_id, a.employee_id, a.faculty_name, a.status,
-                    a.reason, a.actor_name, a.created_at, a.updated_at
-             FROM scope_assignments a
-             WHERE a.term_code = $1
-               AND a.assignment_group_id = ANY($2::text[])
-               AND COALESCE(a.status, 'tentative') <> 'released'
-             ORDER BY a.created_at, a.id`,
-            [termCode, sectionIds]
-          )
-        : Promise.resolve({ rows: [] }),
-    ]);
-
-    const analysis = analyzeAllocation({
+    const { analysis, exceptionReasons } = await buildAllocationAnalysisFromDb({ query }, {
       termCode,
       division: requestedDivisions.join("|"),
+      divisions: requestedDivisions,
       disciplineCode,
-      sections,
-      faculty: facultyResult.rows,
-      preferences: preferenceResult.rows,
-      assignments: assignmentResult.rows,
-      loadLimits: {
-        oneAssignmentPerPass: String(oneAssignmentPerPass).toLowerCase() !== "false" && String(oneAssignmentPerPass) !== "0",
-        maxAssignments: maxAssignments ? Number(maxAssignments) : undefined,
-        maxLoad: maxLoad ? Number(maxLoad) : undefined,
-      },
+      oneAssignmentPerPass: String(oneAssignmentPerPass).toLowerCase() !== "false" && String(oneAssignmentPerPass) !== "0",
+      maxAssignments,
+      maxLoad,
     });
 
-    res.json({ analysis });
+    res.json({ analysis, exceptionReasons });
   } catch (error) {
     res.status(500).json({ error: error.message || "Could not build allocation analysis." });
+  }
+});
+
+router.get("/contract-exception-reasons", requireElevatedRole, async (_req, res) => {
+  try {
+    res.json({ reasons: await getContractExceptionReasons({ query }) });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not load contractual exception reasons." });
+  }
+});
+
+router.post("/chair-decisions", requireRoles("chair"), requireDivisionScope, async (req, res) => {
+  const {
+    termCode = "",
+    division = "",
+    disciplineCode = "",
+    assignmentGroupId = "",
+    selectedEmployeeId = "",
+    exceptionReasonCode = "",
+    exceptionExplanation = "",
+  } = req.body || {};
+  if (!termCode || !division || !assignmentGroupId || !selectedEmployeeId) {
+    return res.status(400).json({ error: "termCode, division, assignmentGroupId, and selectedEmployeeId are required." });
+  }
+
+  const actor = req.auth?.user || {};
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const lockedSection = await client.query(
+      `SELECT assignment_group_id, division, discipline_code
+       FROM scope_sections
+       WHERE term_code = $1 AND assignment_group_id = $2 AND division = $3
+       FOR UPDATE`,
+      [termCode, assignmentGroupId, division]
+    );
+    if (!lockedSection.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Staffing unit was not found in this division." });
+    }
+
+    const existingAssignment = await client.query(
+      `SELECT id
+       FROM scope_assignments
+       WHERE term_code = $1
+         AND assignment_group_id = $2
+         AND COALESCE(status, 'tentative') NOT IN ('released', 'deleted', 'void', 'returned_for_revision')
+       FOR UPDATE`,
+      [termCode, assignmentGroupId]
+    );
+    if (existingAssignment.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "This staffing unit already has an active chair decision or assignment." });
+    }
+
+    const { analysis, exceptionReasons } = await buildAllocationAnalysisFromDb(client, {
+      termCode,
+      division,
+      divisions: [division],
+      disciplineCode: disciplineCode || lockedSection.rows[0].discipline_code || "",
+    });
+    const decision = validateChairDecision({
+      analysis,
+      assignmentGroupId,
+      selectedEmployeeId,
+      exceptionReasonCode,
+      exceptionExplanation,
+      exceptionReasons,
+    });
+    if (!decision.ok) {
+      await client.query("ROLLBACK");
+      return res.status(decision.status || 400).json({ error: decision.error });
+    }
+
+    const selectedFacultyName = decision.selectedCandidate.facultyName || selectedEmployeeId;
+    const reasonCode = decision.exceptionReason?.code || "";
+    const justification = decision.exceptionExplanation || "";
+    const decisionResult = await client.query(
+      `INSERT INTO scope_chair_decisions
+        (term_code, division, discipline_code, assignment_group_id, recommended_employee_id, selected_employee_id, selected_faculty_name,
+         decision_status, exception_reason_code, exception_explanation, recommendation_snapshot, decision_snapshot,
+         decided_by_user_id, decided_by_email, decided_by_name, decided_by_role, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13,$14,$15,$16,NOW())
+       RETURNING id, decided_at`,
+      [
+        termCode,
+        division,
+        disciplineCode || lockedSection.rows[0].discipline_code || "",
+        assignmentGroupId,
+        decision.recommendedCandidate.employeeId,
+        selectedEmployeeId,
+        selectedFacultyName,
+        decision.decisionStatus,
+        reasonCode,
+        justification,
+        JSON.stringify(decision.recommendationSnapshot),
+        JSON.stringify(decision.decisionSnapshot),
+        actor.id || null,
+        actor.email || "",
+        actor.full_name || actor.email || "",
+        actor.role || "",
+      ]
+    );
+
+    const assignmentResult = await client.query(
+      `INSERT INTO scope_assignments
+        (term_code, discipline_code, assignment_group_id, employee_id, faculty_name, status, actor_name, reason,
+         reason_code, justification, recommendation_snapshot, decision_snapshot, updated_at)
+       VALUES ($1,$2,$3,$4,$5,'tentative',$6,$7,$8,$9,$10::jsonb,$11::jsonb,NOW())
+       RETURNING id`,
+      [
+        termCode,
+        disciplineCode || lockedSection.rows[0].discipline_code || "",
+        assignmentGroupId,
+        selectedEmployeeId,
+        selectedFacultyName,
+        actor.full_name || actor.email || "",
+        justification,
+        reasonCode,
+        justification,
+        JSON.stringify(decision.recommendationSnapshot),
+        JSON.stringify(decision.decisionSnapshot),
+      ]
+    );
+
+    await client.query(
+      `INSERT INTO scope_audit_log
+        (event_type, actor_name, actor_role, division, term, section_key, instructor_name, new_value, note, source)
+       VALUES ('CHAIR_DECISION_RECORDED',$1,$2,$3,$4,$5,$6,$7,$8,'backend')`,
+      [
+        actor.full_name || actor.email || "",
+        actor.role || "",
+        division,
+        termCode,
+        assignmentGroupId,
+        selectedFacultyName,
+        decision.decisionStatus,
+        decision.isRecommended
+          ? `Selected recommended candidate ${selectedFacultyName}.`
+          : `Selected ${selectedFacultyName} with exception ${reasonCode}.`,
+      ]
+    );
+
+    await client.query("COMMIT");
+    res.status(201).json({
+      success: true,
+      decision: {
+        id: decisionResult.rows[0]?.id,
+        decided_at: decisionResult.rows[0]?.decided_at,
+        assignment_id: assignmentResult.rows[0]?.id,
+        status: decision.decisionStatus,
+        recommended_employee_id: decision.recommendedCandidate.employeeId,
+        selected_employee_id: selectedEmployeeId,
+        recommendation_snapshot: decision.recommendationSnapshot,
+        decision_snapshot: decision.decisionSnapshot,
+      },
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "This staffing unit already has an active chair decision or assignment." });
+    }
+    res.status(500).json({ error: error.message || "Could not record chair decision." });
+  } finally {
+    client.release();
   }
 });
 
@@ -917,11 +1127,20 @@ router.get("/assignments", async (req, res) => {
       scopedFilter += ` AND s.division = ANY($${params.length}::text[])`;
     }
     const result = await query(
-      `SELECT a.id, a.assignment_group_id, a.employee_id, a.faculty_name, a.status, a.reason, a.created_at,
+      `SELECT a.id, a.assignment_group_id, a.employee_id, a.faculty_name, a.status, a.reason, a.reason_code, a.justification,
+              a.recommendation_snapshot, a.decision_snapshot, d.decision_status, d.exception_reason_code, d.exception_explanation, d.decided_at,
+              a.created_at,
               COALESCE(NULLIF(a.discipline_code, ''), s.discipline_code) AS discipline_code,
               s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.instructional_method, s.display_modality, s.modality, s.meetings
        FROM scope_assignments a
        LEFT JOIN scope_sections s ON s.term_code = a.term_code AND s.assignment_group_id = a.assignment_group_id
+       LEFT JOIN LATERAL (
+         SELECT decision_status, exception_reason_code, exception_explanation, decided_at
+         FROM scope_chair_decisions d
+         WHERE d.term_code = a.term_code AND d.assignment_group_id = a.assignment_group_id
+         ORDER BY d.decided_at DESC, d.id DESC
+         LIMIT 1
+       ) d ON TRUE
        WHERE a.term_code = $1 AND COALESCE(a.status, 'tentative') <> 'released' ${scopedFilter}
        ORDER BY a.created_at DESC`,
       params
