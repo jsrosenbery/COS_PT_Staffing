@@ -5,6 +5,7 @@ import { pool, query } from "../db.js";
 import { analyzeAllocation } from "../domain/allocationAnalysis.js";
 import { defaultContractExceptionReasons, validateChairDecision } from "../domain/chairDecision.js";
 import { buildDecisionExplanation, decisionExplanationRows } from "../domain/decisionExplanation.js";
+import { canSavePreferenceVersion, preferenceSubmissionStatuses, preferenceWindowTimezone, validatePreferenceRanks } from "../domain/preferenceSubmissionPolicy.js";
 import { isAdmin, requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles } from "../permissions.js";
 import { sendDisseminationEmail } from "../emailService.js";
 
@@ -417,6 +418,147 @@ async function getContractExceptionReasons(db = { query }) {
   }
 }
 
+async function getActivePreferenceWindow(db, termCode, division) {
+  const result = await db.query(
+    `SELECT id, term, division, opened_at, closes_at, status
+     FROM scope_staffing_windows
+     WHERE term = $1
+       AND LOWER(division) = LOWER($2)
+     ORDER BY opened_at DESC, id DESC
+     LIMIT 1`,
+    [termCode, division || ""]
+  );
+  return result.rows[0] || null;
+}
+
+async function createPreferenceSubmissionVersion(client, {
+  termCode,
+  facultyId,
+  employeeId,
+  facultyName,
+  preferences,
+  availabilityDays,
+  availabilityTimeBlocks,
+  status,
+  source,
+  auditReason,
+  actor,
+}) {
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`preference:${termCode}:${facultyId}`]);
+  const facultyResult = await client.query(
+    `SELECT division, discipline
+     FROM scope_pt_faculty
+     WHERE employee_id = $1
+     ORDER BY COALESCE(active_status, 'active') = 'active' DESC
+     LIMIT 1`,
+    [employeeId || facultyId]
+  );
+  const facultyRosterRow = facultyResult.rows[0] || {};
+  await client.query(
+    `SELECT id
+     FROM scope_preference_submissions
+     WHERE term_code = $1 AND faculty_id = $2
+     FOR UPDATE`,
+    [termCode, facultyId]
+  );
+  const versionResult = await client.query(
+    `SELECT COALESCE(MAX(version_number), 0) + 1 AS next_version
+     FROM scope_preference_submissions
+     WHERE term_code = $1 AND faculty_id = $2`,
+    [termCode, facultyId]
+  );
+  const versionNumber = versionResult.rows[0]?.next_version || 1;
+  if (status === preferenceSubmissionStatuses.SUBMITTED || status === preferenceSubmissionStatuses.CORRECTED) {
+    await client.query(
+      `UPDATE scope_preference_submissions
+       SET status = 'superseded', superseded_at = NOW()
+       WHERE term_code = $1
+         AND faculty_id = $2
+         AND status IN ('submitted', 'corrected')`,
+      [termCode, facultyId]
+    );
+  }
+  const submissionResult = await client.query(
+    `INSERT INTO scope_preference_submissions
+      (term_code, faculty_id, employee_id, faculty_name, division, discipline_code, status, version_number,
+       submission_snapshot, source, audit_reason, submitted_by_user_id, submitted_by_email, submitted_by_name,
+       submitted_by_role, submitted_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,CASE WHEN $7 = 'draft' THEN NULL ELSE NOW() END)
+     RETURNING id, version_number, submitted_at`,
+    [
+      termCode,
+      facultyId,
+      employeeId,
+      facultyName,
+      facultyRosterRow.division || "",
+      facultyRosterRow.discipline || "",
+      status,
+      versionNumber,
+      JSON.stringify({ preferences, availability: { days: availabilityDays, timeBlocks: availabilityTimeBlocks } }),
+      source || "web",
+      auditReason || "",
+      actor.id || null,
+      actor.email || "",
+      actor.full_name || actor.email || "",
+      actor.role || "",
+    ]
+  );
+  const submissionId = submissionResult.rows[0]?.id;
+  for (const pref of preferences) {
+    await client.query(
+      `INSERT INTO scope_preference_submission_items
+        (submission_id, term_code, faculty_id, employee_id, faculty_name, assignment_group_id, discipline_code, preference_rank, item_snapshot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
+      [
+        submissionId,
+        termCode,
+        facultyId,
+        employeeId,
+        facultyName,
+        pref.assignment_group_id,
+        pref.discipline_code || "",
+        pref.preference_rank || 1,
+        JSON.stringify(pref),
+      ]
+    );
+  }
+  return { ...submissionResult.rows[0], division: facultyRosterRow.division || "", discipline: facultyRosterRow.discipline || "" };
+}
+
+async function freezeLatestSubmittedVersions(client, { termCode, division, actor, auditReason = "Preference window closed; latest valid submitted versions frozen." }) {
+  await client.query(
+    `UPDATE scope_preference_submissions
+     SET status = 'superseded', superseded_at = NOW()
+     WHERE term_code = $1
+       AND LOWER(division) = LOWER($2)
+       AND status = 'frozen'`,
+    [termCode, division]
+  );
+  const result = await client.query(
+    `WITH ranked AS (
+       SELECT id, faculty_id, ROW_NUMBER() OVER (PARTITION BY faculty_id ORDER BY submitted_at DESC, version_number DESC, id DESC) AS rn
+       FROM scope_preference_submissions
+       WHERE term_code = $1
+         AND LOWER(division) = LOWER($2)
+         AND status IN ('submitted', 'corrected')
+     )
+     UPDATE scope_preference_submissions s
+     SET status = CASE WHEN ranked.rn = 1 THEN 'frozen' ELSE 'superseded' END,
+         frozen_at = CASE WHEN ranked.rn = 1 THEN NOW() ELSE frozen_at END,
+         superseded_at = CASE WHEN ranked.rn = 1 THEN superseded_at ELSE NOW() END
+     FROM ranked
+     WHERE s.id = ranked.id
+     RETURNING s.id, s.faculty_id, s.status`,
+    [termCode, division]
+  );
+  await client.query(
+    `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, division, term, note, source)
+     VALUES ('PREFERENCE_WINDOW_FROZEN',$1,$2,$3,$4,$5,'backend')`,
+    [actor?.full_name || actor?.email || "", actor?.role || "", division, termCode, auditReason]
+  );
+  return result.rows;
+}
+
 async function buildAllocationAnalysisFromDb(db, {
   termCode,
   division = "",
@@ -466,11 +608,13 @@ async function buildAllocationAnalysisFromDb(db, {
       : Promise.resolve({ rows: [] }),
     sectionIds.length
       ? db.query(
-          `SELECT p.term_code, p.faculty_id, p.employee_id, p.faculty_name, p.assignment_group_id, p.discipline_code, p.preference_rank, p.created_at, p.updated_at
-           FROM scope_preferences p
-           WHERE p.term_code = $1
-             AND p.assignment_group_id = ANY($2::text[])
-           ORDER BY p.faculty_name, p.preference_rank, p.assignment_group_id`,
+          `SELECT i.term_code, i.faculty_id, i.employee_id, i.faculty_name, i.assignment_group_id, i.discipline_code, i.preference_rank, i.created_at, i.created_at AS updated_at
+           FROM scope_preference_submission_items i
+           JOIN scope_preference_submissions s ON s.id = i.submission_id
+           WHERE i.term_code = $1
+             AND i.assignment_group_id = ANY($2::text[])
+             AND s.status = 'frozen'
+           ORDER BY i.faculty_name, i.preference_rank, i.assignment_group_id`,
           [termCode, sectionIds]
         )
       : Promise.resolve({ rows: [] }),
@@ -927,6 +1071,76 @@ router.get("/division-statuses", async (req, res) => {
     });
     res.json({ divisions });
   } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.post("/windows/freeze", requireElevatedRole, requireDivisionScope, async (req, res) => {
+  const { termCode = "", division = "", auditReason = "" } = req.body || {};
+  if (!termCode || !division) return res.status(400).json({ error: "termCode and division are required." });
+  const actor = req.auth?.user || {};
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const windowResult = await client.query(
+      `SELECT id, term, division, opened_at, closes_at, status
+       FROM scope_staffing_windows
+       WHERE term = $1 AND LOWER(division) = LOWER($2)
+       ORDER BY opened_at DESC, id DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [termCode, division]
+    );
+    if (!windowResult.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Preference window not found." });
+    }
+    await client.query(
+      `UPDATE scope_staffing_windows
+       SET status = 'closed', closes_at = COALESCE(closes_at, NOW()), updated_at = NOW()
+       WHERE id = $1`,
+      [windowResult.rows[0].id]
+    );
+    const frozen = await freezeLatestSubmittedVersions(client, {
+      termCode,
+      division,
+      actor,
+      auditReason: auditReason || "Preference window closed; latest submitted versions frozen.",
+    });
+    await client.query("COMMIT");
+    res.json({ success: true, frozenCount: frozen.filter((row) => row.status === "frozen").length, windowTimezone: preferenceWindowTimezone });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: error.message || "Could not freeze preference window." });
+  } finally {
+    client.release();
+  }
+});
+
+router.post("/windows/reopen", requireRoles("admin"), requireDivisionScope, async (req, res) => {
+  const { termCode = "", division = "", closesAt = null, auditReason = "" } = req.body || {};
+  if (!termCode || !division || !String(auditReason || "").trim()) return res.status(400).json({ error: "termCode, division, and auditReason are required." });
+  const actor = req.auth?.user || {};
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `INSERT INTO scope_staffing_windows (term, division, sender_email, closes_at, status, updated_at)
+       VALUES ($1,$2,$3,$4,'reopened',NOW())
+       RETURNING id, term, division, opened_at, closes_at, status`,
+      [termCode, division, actor.email || "", closesAt || null]
+    );
+    await client.query(
+      `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, division, term, note, source)
+       VALUES ('PREFERENCE_WINDOW_REOPENED',$1,$2,$3,$4,$5,'backend')`,
+      [actor.full_name || actor.email || "", actor.role || "", division, termCode, auditReason]
+    );
+    await client.query("COMMIT");
+    res.json({ success: true, window: result.rows[0], windowTimezone: preferenceWindowTimezone });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: error.message || "Could not reopen preference window." });
+  } finally {
+    client.release();
+  }
 });
 
 router.get("/allocation-analysis", requireElevatedRole, requireDivisionScope, async (req, res) => {
@@ -1547,11 +1761,20 @@ router.get("/preferences", requirePreferenceOwnerOrElevated, async (req, res) =>
 });
 
 router.post("/preferences", requirePreferenceOwnerOrElevated, async (req, res) => {
-  const { termCode = "", facultyId = "", employeeId = "", facultyName = "", preferences = [], availability = {} } = req.body || {};
+  const { termCode = "", facultyId = "", employeeId = "", facultyName = "", preferences = [], availability = {}, action = "submit", auditReason = "", source = "web" } = req.body || {};
   if (!termCode || !facultyId) return res.status(400).json({ error: "termCode and facultyId are required." });
+  if (!Array.isArray(preferences)) return res.status(400).json({ error: "preferences must be an array." });
+  const rankErrors = validatePreferenceRanks(preferences);
+  if (rankErrors.length) return res.status(400).json({ error: "Preference ranks are invalid.", details: rankErrors });
   const availabilityDays = Array.isArray(availability.days) ? availability.days.map((value) => String(value || "").trim()).filter(Boolean) : [];
   const availabilityTimeBlocks = Array.isArray(availability.timeBlocks) ? availability.timeBlocks.map((value) => String(value || "").trim()).filter(Boolean) : [];
   const actor = req.auth?.user || {};
+  const normalizedAction = String(action || "submit").trim().toLowerCase();
+  const targetStatus = normalizedAction === "draft" || normalizedAction === "save_draft"
+    ? preferenceSubmissionStatuses.DRAFT
+    : normalizedAction === "admin_correct" || normalizedAction === "reopen_correct"
+      ? preferenceSubmissionStatuses.CORRECTED
+      : preferenceSubmissionStatuses.SUBMITTED;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -1564,27 +1787,45 @@ router.post("/preferences", requirePreferenceOwnerOrElevated, async (req, res) =
       [employeeId || facultyId]
     );
     const facultyRosterRow = facultyResult.rows[0] || {};
-    const submissionResult = await client.query(
-      `INSERT INTO scope_preference_submissions
-        (term_code, faculty_id, employee_id, faculty_name, division, discipline_code, submission_snapshot,
-         submitted_by_user_id, submitted_by_email, submitted_by_name, submitted_by_role)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11)
-       RETURNING id, submitted_at`,
-      [
-        termCode,
-        facultyId,
-        employeeId,
-        facultyName,
-        facultyRosterRow.division || "",
-        facultyRosterRow.discipline || "",
-        JSON.stringify({ preferences, availability: { days: availabilityDays, timeBlocks: availabilityTimeBlocks } }),
-        actor.id || null,
-        actor.email || "",
-        actor.full_name || actor.email || "",
-        actor.role || "",
-      ]
+    const windowResult = await client.query(
+      `SELECT id, term, division, opened_at, closes_at, status
+       FROM scope_staffing_windows
+       WHERE term = $1
+         AND LOWER(division) = LOWER($2)
+       ORDER BY opened_at DESC, id DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [termCode, facultyRosterRow.division || ""]
     );
-    const submissionId = submissionResult.rows[0]?.id;
+    const activeWindow = windowResult.rows[0] || null;
+    const policy = canSavePreferenceVersion({
+      action: normalizedAction,
+      windowRow: activeWindow,
+      now: new Date(),
+      actorRole: actor.role || "faculty",
+    });
+    if (!policy.ok) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: policy.error, window: policy.state });
+    }
+    if (policy.requiresAuditReason && !String(auditReason || "").trim()) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: "An audit reason is required for administrator correction after closure." });
+    }
+    const submissionResult = await createPreferenceSubmissionVersion(client, {
+      termCode,
+      facultyId,
+      employeeId,
+      facultyName,
+      preferences,
+      availabilityDays,
+      availabilityTimeBlocks,
+      status: targetStatus,
+      source,
+      auditReason,
+      actor,
+    });
+    const submissionId = submissionResult.id;
     await client.query(`DELETE FROM scope_preferences WHERE term_code = $1 AND faculty_id = $2`, [termCode, facultyId]);
     for (const pref of preferences) {
       await client.query(
@@ -1592,22 +1833,6 @@ router.post("/preferences", requirePreferenceOwnerOrElevated, async (req, res) =
           (term_code, faculty_id, employee_id, faculty_name, assignment_group_id, discipline_code, preference_rank, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
         [termCode, facultyId, employeeId, facultyName, pref.assignment_group_id, pref.discipline_code || "", pref.preference_rank || 1]
-      );
-      await client.query(
-        `INSERT INTO scope_preference_submission_items
-          (submission_id, term_code, faculty_id, employee_id, faculty_name, assignment_group_id, discipline_code, preference_rank, item_snapshot)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
-        [
-          submissionId,
-          termCode,
-          facultyId,
-          employeeId,
-          facultyName,
-          pref.assignment_group_id,
-          pref.discipline_code || "",
-          pref.preference_rank || 1,
-          JSON.stringify(pref),
-        ]
       );
     }
     await client.query(
@@ -1622,8 +1847,30 @@ router.post("/preferences", requirePreferenceOwnerOrElevated, async (req, res) =
          updated_at = NOW()`,
       [termCode, facultyId, employeeId, facultyName, JSON.stringify(availabilityDays), JSON.stringify(availabilityTimeBlocks)]
     );
+    await client.query(
+      `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, division, term, instructor_name, new_value, note, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'backend')`,
+      [
+        targetStatus === preferenceSubmissionStatuses.DRAFT ? "PREFERENCE_DRAFT_SAVED" : "PREFERENCE_VERSION_SUBMITTED",
+        actor.full_name || actor.email || "",
+        actor.role || "",
+        facultyRosterRow.division || "",
+        termCode,
+        facultyName,
+        String(submissionId || ""),
+        targetStatus === preferenceSubmissionStatuses.CORRECTED ? `Admin correction: ${auditReason}` : `Preference ${targetStatus} version ${submissionResult.version_number}.`,
+      ]
+    );
     await client.query("COMMIT");
-    res.json({ success: true, savedCount: preferences.length, submissionId, submittedAt: submissionResult.rows[0]?.submitted_at });
+    res.json({
+      success: true,
+      savedCount: preferences.length,
+      submissionId,
+      versionNumber: submissionResult.version_number,
+      status: targetStatus,
+      submittedAt: submissionResult.submitted_at,
+      windowTimezone: preferenceWindowTimezone,
+    });
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: error.message });
