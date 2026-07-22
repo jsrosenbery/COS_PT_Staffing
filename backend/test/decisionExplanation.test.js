@@ -131,7 +131,7 @@ test("CSV export rows omit extra employee profile data", () => {
 });
 
 test("schema contains immutable preference submission tables", () => {
-  const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
+  const schema = fs.readFileSync(new URL("../migrations/0001_baseline.sql", import.meta.url), "utf8");
 
   assert.match(schema, /CREATE TABLE IF NOT EXISTS scope_preference_submissions/);
   assert.match(schema, /CREATE TABLE IF NOT EXISTS scope_preference_submission_items/);

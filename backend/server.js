@@ -1,9 +1,6 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import { query } from "./db.js";
 import { authenticateRequest, cleanupExpiredAuthRecords, publicAuthPaths } from "./auth.js";
 import { assertProductionConfig, correlationId, logError, publicError, securityHeaders } from "./security.js";
@@ -13,9 +10,6 @@ import workflowRoutes from "./routes/workflow.js";
 
 dotenv.config();
 assertProductionConfig();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -60,17 +54,6 @@ app.use(async (req, res, next) => {
   return publicError(res, 401, "UNAUTHORIZED", "Unauthorized", req.correlationId);
 });
 
-async function ensureSchema() {
-  const schemaPath = path.join(__dirname, "schema.sql");
-  if (!fs.existsSync(schemaPath)) return;
-
-  const sql = fs.readFileSync(schemaPath, "utf8").trim();
-  if (!sql) return;
-
-  await query(sql);
-  console.log("Schema ready.");
-}
-
 app.get("/api/health", async (_req, res) => {
   try {
     await query("SELECT 1");
@@ -85,13 +68,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api", persistenceRoutes);
 app.use("/api", workflowRoutes);
 
-ensureSchema().then(() => {
+cleanupExpiredAuthRecords().catch((error) => console.error("[auth-cleanup]", error));
+setInterval(() => {
   cleanupExpiredAuthRecords().catch((error) => console.error("[auth-cleanup]", error));
-  setInterval(() => {
-    cleanupExpiredAuthRecords().catch((error) => console.error("[auth-cleanup]", error));
-  }, 60 * 60 * 1000).unref?.();
-  app.listen(PORT, () => console.log(`S.C.O.P.E. backend listening on port ${PORT}`));
-}).catch((error) => {
-  console.error("[startup]", error);
-  process.exit(1);
-});
+}, 60 * 60 * 1000).unref?.();
+app.listen(PORT, () => console.log(`S.C.O.P.E. backend listening on port ${PORT}`));

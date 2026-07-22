@@ -106,7 +106,7 @@ test("faculty user cannot make chair decisions", () => {
 });
 
 test("schema records durable decision state for page reloads", () => {
-  const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
+  const schema = fs.readFileSync(new URL("../migrations/0001_baseline.sql", import.meta.url), "utf8");
 
   assert.match(schema, /CREATE TABLE IF NOT EXISTS scope_chair_decisions/);
   assert.match(schema, /recommendation_snapshot JSONB/);
@@ -114,7 +114,7 @@ test("schema records durable decision state for page reloads", () => {
 });
 
 test("schema and route guard simultaneous conflicting awards", () => {
-  const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
+  const schema = fs.readFileSync(new URL("../migrations/0001_baseline.sql", import.meta.url), "utf8");
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
 
   assert.match(schema, /CREATE UNIQUE INDEX IF NOT EXISTS idx_scope_assignments_one_active_section/);

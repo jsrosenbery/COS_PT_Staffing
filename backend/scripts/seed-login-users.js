@@ -1,15 +1,6 @@
-import dotenv from "dotenv";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+import "dotenv/config";
 import { createRawToken, hashPassword } from "../auth.js";
 import { pool, query } from "../db.js";
-
-dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const backendRoot = path.resolve(__dirname, "..");
 
 const demoUsers = [
   {
@@ -52,12 +43,6 @@ function buildUsers() {
     });
   }
   return users;
-}
-
-async function ensureSchema() {
-  const schemaPath = path.join(backendRoot, "schema.sql");
-  const sql = fs.readFileSync(schemaPath, "utf8").trim();
-  if (sql) await query(sql);
 }
 
 async function upsertUser(user) {
@@ -116,7 +101,6 @@ async function main() {
     console.warn("ADMIN_EMAIL was not set, so no admin user was created.");
   }
 
-  await ensureSchema();
   const results = [];
   for (const user of users) {
     results.push(await upsertUser(user));
