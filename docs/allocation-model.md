@@ -33,6 +33,8 @@
    - Each faculty member may select zero, one, or many eligible sections.
    - A submitted preference list is ranked `1..n`.
    - Historical submitted rows should remain reconstructable after later edits.
+   - Window closure is evaluated with backend server time and documented for College of the Sequoias in the `America/Los_Angeles` timezone.
+   - Drafts and submitted versions are distinct; draft-only work is not frozen for allocation unless an explicit local policy enables that behavior.
 
 4. **Allocation Analysis**
    - After the window closes, each eligible section receives a candidate queue.

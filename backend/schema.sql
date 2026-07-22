@@ -121,14 +121,20 @@ CREATE TABLE IF NOT EXISTS scope_staffing_windows (
 CREATE TABLE IF NOT EXISTS scope_audit_log (
   id SERIAL PRIMARY KEY,
   event_type TEXT NOT NULL DEFAULT '',
+  actor_user_id INTEGER,
+  actor_email TEXT NOT NULL DEFAULT '',
   actor_name TEXT NOT NULL DEFAULT '',
   actor_role TEXT NOT NULL DEFAULT '',
+  actor_session_type TEXT NOT NULL DEFAULT '',
   division TEXT NOT NULL DEFAULT '',
   term TEXT NOT NULL DEFAULT '',
   section_key TEXT NOT NULL DEFAULT '',
   instructor_name TEXT NOT NULL DEFAULT '',
   old_value TEXT,
   new_value TEXT,
+  reason_code TEXT NOT NULL DEFAULT '',
+  explanation TEXT NOT NULL DEFAULT '',
+  request_id TEXT NOT NULL DEFAULT '',
   note TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -201,13 +207,20 @@ CREATE TABLE IF NOT EXISTS scope_preference_submissions (
   faculty_name TEXT NOT NULL DEFAULT '',
   division TEXT NOT NULL DEFAULT '',
   discipline_code TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'submitted',
+  version_number INTEGER NOT NULL DEFAULT 1,
   submission_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  source TEXT NOT NULL DEFAULT 'web',
+  audit_reason TEXT NOT NULL DEFAULT '',
   submitted_by_user_id INTEGER,
   submitted_by_email TEXT NOT NULL DEFAULT '',
   submitted_by_name TEXT NOT NULL DEFAULT '',
   submitted_by_role TEXT NOT NULL DEFAULT '',
-  submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  submitted_at TIMESTAMPTZ,
+  frozen_at TIMESTAMPTZ,
+  superseded_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (status IN ('draft', 'submitted', 'frozen', 'superseded', 'corrected'))
 );
 
 CREATE TABLE IF NOT EXISTS scope_preference_submission_items (
@@ -238,6 +251,7 @@ CREATE TABLE IF NOT EXISTS scope_assignments (
   justification TEXT NOT NULL DEFAULT '',
   recommendation_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
   decision_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  version INTEGER NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -271,6 +285,7 @@ CREATE TABLE IF NOT EXISTS scope_chair_decisions (
   decided_by_email TEXT NOT NULL DEFAULT '',
   decided_by_name TEXT NOT NULL DEFAULT '',
   decided_by_role TEXT NOT NULL DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 1,
   decided_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -301,6 +316,48 @@ ADD COLUMN IF NOT EXISTS recommendation_snapshot JSONB DEFAULT '{}'::jsonb;
 ALTER TABLE scope_assignments
 ADD COLUMN IF NOT EXISTS decision_snapshot JSONB DEFAULT '{}'::jsonb;
 
+ALTER TABLE scope_assignments
+ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;
+
+ALTER TABLE scope_chair_decisions
+ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS actor_user_id INTEGER;
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS actor_email TEXT DEFAULT '';
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS actor_session_type TEXT DEFAULT '';
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS reason_code TEXT DEFAULT '';
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS explanation TEXT DEFAULT '';
+
+ALTER TABLE scope_audit_log
+ADD COLUMN IF NOT EXISTS request_id TEXT DEFAULT '';
+
+ALTER TABLE scope_preference_submissions
+ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'submitted';
+
+ALTER TABLE scope_preference_submissions
+ADD COLUMN IF NOT EXISTS version_number INTEGER DEFAULT 1;
+
+ALTER TABLE scope_preference_submissions
+ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'web';
+
+ALTER TABLE scope_preference_submissions
+ADD COLUMN IF NOT EXISTS audit_reason TEXT DEFAULT '';
+
+ALTER TABLE scope_preference_submissions
+ADD COLUMN IF NOT EXISTS frozen_at TIMESTAMPTZ;
+
+ALTER TABLE scope_preference_submissions
+ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_scope_roles_active ON scope_roles (active_status);
 CREATE INDEX IF NOT EXISTS idx_scope_users_active ON scope_users (active_status);
 CREATE INDEX IF NOT EXISTS idx_scope_users_employee_id ON scope_users (employee_id);
@@ -318,6 +375,10 @@ CREATE INDEX IF NOT EXISTS idx_scope_preferences_term_faculty ON scope_preferenc
 CREATE INDEX IF NOT EXISTS idx_scope_preferences_term_section ON scope_preferences (term_code, assignment_group_id);
 CREATE INDEX IF NOT EXISTS idx_scope_preference_submissions_term_faculty ON scope_preference_submissions (term_code, faculty_id, submitted_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scope_preference_submission_items_submission ON scope_preference_submission_items (submission_id, preference_rank);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scope_preference_submission_rank_unique ON scope_preference_submission_items (submission_id, preference_rank);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scope_preference_submission_section_unique ON scope_preference_submission_items (submission_id, assignment_group_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scope_preference_one_frozen ON scope_preference_submissions (term_code, faculty_id)
+WHERE status = 'frozen';
 CREATE INDEX IF NOT EXISTS idx_scope_faculty_availability_term_faculty ON scope_faculty_availability (term_code, faculty_id);
 CREATE INDEX IF NOT EXISTS idx_scope_assignments_term_section ON scope_assignments (term_code, assignment_group_id);
 CREATE INDEX IF NOT EXISTS idx_scope_audit_term_section ON scope_audit_log (term, section_key);

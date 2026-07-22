@@ -45,13 +45,6 @@ export const loadAuditLog = async ({
   return fetchJson(`/audit${suffix}`);
 };
 
-export const appendAuditLog = async (payload) =>
-  fetchJson("/audit", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
 export const wipeActivePTRoster = async () =>
   fetchJson("/pt-faculty", {
     method: "DELETE",

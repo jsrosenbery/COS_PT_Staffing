@@ -3,9 +3,10 @@ import Papa from "papaparse";
 import cosLogo from "./assets/cos-logo.jpg";
 import AdminOperationsPanel from "./AdminOperationsPanel";
 import { buildInitialPtRoster } from "./adminOpsUtils";
-import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty, appendAuditLog, wipeActivePTRoster } from "./persistenceApi";
+import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty, wipeActivePTRoster } from "./persistenceApi";
 import {
   API_BASE,
+  API_TOKEN_AUTH_ENABLED,
   acceptInvite,
   apiFetch,
   approveAccountRequest,
@@ -1031,7 +1032,7 @@ export default function PTFacultyStaffingMVP() {
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
   const apiTokenConfigured = Boolean(apiTokenInput.trim());
-  const savedApiTokenConfigured = Boolean(getApiToken());
+  const savedApiTokenConfigured = API_TOKEN_AUTH_ENABLED && Boolean(getApiToken());
   const canShowWorkspace = Boolean(currentUser || savedApiTokenConfigured);
   const canUseAdminTools = role === "admin" && (currentUser?.role === "admin" || savedApiTokenConfigured);
   const canUseElevatedTools = canUseAdminTools || ["chair", "dean"].includes(currentUser?.role || "");
@@ -1047,6 +1048,7 @@ export default function PTFacultyStaffingMVP() {
       : [{ value: "faculty", label: "Part-Time Faculty" }];
 
   function saveApiAccessToken() {
+    if (!API_TOKEN_AUTH_ENABLED) return;
     setApiToken(apiTokenInput);
     setApiAccessMessage(apiTokenInput.trim() ? "API access token saved for this browser session." : "API access token cleared.");
     if (apiTokenInput.trim()) setRole("admin");
@@ -1097,7 +1099,7 @@ export default function PTFacultyStaffingMVP() {
     try {
       const data = await inviteUser(inviteForm);
       setInviteForm({ email: "", full_name: "", employee_id: "", role: "faculty", division: "" });
-      setInviteMessage(data.email?.delivered === false ? `Invitation staged. Console email link: ${data.inviteUrl}` : "Invitation sent.");
+      setInviteMessage(data.email?.delivered === false && data.inviteUrl ? `Invitation staged. Console email link: ${data.inviteUrl}` : "Invitation sent.");
     } catch (error) {
       setInviteMessage(error.message || "Could not send invitation.");
     } finally {
@@ -1226,7 +1228,7 @@ export default function PTFacultyStaffingMVP() {
     try {
       const data = action === "approve" ? await approveAccountRequest(id) : await rejectAccountRequest(id);
       setAccountRequests((prev) => prev.filter((request) => request.id !== id));
-      setAccountRequestsMessage(action === "approve" && data.email?.delivered === false ? `Approved. Console invite link: ${data.inviteUrl}` : `Request ${action}d.`);
+      setAccountRequestsMessage(action === "approve" && data.email?.delivered === false && data.inviteUrl ? `Approved. Console invite link: ${data.inviteUrl}` : `Request ${action}d.`);
     } catch (error) {
       setAccountRequestsMessage(error.message || `Could not ${action} request.`);
     } finally {
@@ -1381,27 +1383,9 @@ export default function PTFacultyStaffingMVP() {
 
 
   async function writeAudit(eventType, note, extras = {}) {
-    try {
-      await appendAuditLog({
-        event_type: eventType,
-        actor_name:
-          role === "admin" ? "Scheduler / Admin" :
-          role === "dean" ? selectedDeanName || "Dean" :
-          role === "chair" ? selectedChairName || "Division Chair" :
-          selectedFaculty ? facultyName(selectedFaculty) : "System",
-        actor_role: role,
-        division: extras.division || "",
-        term: extras.term || activeTerm?.code || "",
-        section_key: extras.section_key || "",
-        instructor_name: extras.instructor_name || "",
-        old_value: extras.old_value || null,
-        new_value: extras.new_value || null,
-        note: note || "",
-        source: extras.source || "ui",
-      });
-    } catch (error) {
-      console.warn("Could not write audit log", error);
-    }
+    void eventType;
+    void note;
+    void extras;
   }
 
   async function wipePreferencesForDivision() {
@@ -2258,6 +2242,7 @@ export default function PTFacultyStaffingMVP() {
 
   async function assignSectionToInstructor(row, topEmployeeId, requiresRationale = false) {
     if (!row?.assignment_group_id || !row?.employee_id || !activeTerm?.code) return;
+    const expectedRecommendedEmployeeId = topEmployeeId || "";
     const isBypass = Boolean(requiresRationale && topEmployeeId && topEmployeeId !== row.employee_id);
     let exceptionReasonCode = "";
     let exceptionExplanation = "";
@@ -2292,6 +2277,7 @@ export default function PTFacultyStaffingMVP() {
           selectedEmployeeId: row.employee_id,
           exceptionReasonCode,
           exceptionExplanation: exceptionExplanation.trim(),
+          expectedRecommendedEmployeeId,
         }),
       });
       const data = await response.json();
@@ -2313,11 +2299,12 @@ export default function PTFacultyStaffingMVP() {
 
     setChairMessage("");
     try {
-      const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
-      const response = await apiFetch(`${API_BASE}/assignments/${assignment.id}`, {
+      const params = new URLSearchParams();
+      if (assignment.version) params.set("expectedVersion", assignment.version);
+      const response = await apiFetch(`${API_BASE}/assignments/${assignment.id}${params.toString() ? `?${params.toString()}` : ""}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actorName }),
+        body: JSON.stringify({ expectedVersion: assignment.version || null }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -2345,14 +2332,13 @@ export default function PTFacultyStaffingMVP() {
 
     setChairMessage("");
     try {
-      const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
       const response = await apiFetch(`${API_BASE}/assignments/${assignment.id}/reassign`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           employeeId: candidateRow.employee_id,
-          actorName,
           reason: reason.trim(),
+          expectedVersion: assignment.version || null,
         }),
       });
       const data = await response.json();
@@ -2386,7 +2372,6 @@ export default function PTFacultyStaffingMVP() {
           termCode: activeTerm.code,
           disciplineCode: selectedDisciplineCode !== "ALL" ? selectedDisciplineCode : "",
           divisions: scopedDivisions,
-          actorName: selectedChairName || "Division Chair",
         }),
       });
       const data = await response.json();
@@ -2420,7 +2405,6 @@ export default function PTFacultyStaffingMVP() {
           termCode: activeTerm.code,
           disciplineCode: selectedDisciplineCode !== "ALL" ? selectedDisciplineCode : "",
           divisions: scopedDivisions,
-          actorName: selectedDeanName || "Dean",
         }),
       });
       const data = await response.json();
@@ -2510,7 +2494,7 @@ export default function PTFacultyStaffingMVP() {
     setPreferencesMessage("");
   }
 
-  async function savePreferences() {
+  async function savePreferences(action = "submit") {
     if (!selectedFaculty) return;
     setSavingPreferences(true);
     setPreferencesMessage("");
@@ -2523,6 +2507,7 @@ export default function PTFacultyStaffingMVP() {
           facultyId: selectedFaculty.employeeId,
           employeeId: selectedFaculty.employeeId,
           facultyName: facultyName(selectedFaculty),
+          action,
           preferences: facultyPreferences.map((item, index) => ({
             assignment_group_id: item.assignment_group_id,
             discipline_code: item.discipline_code,
@@ -2536,7 +2521,9 @@ export default function PTFacultyStaffingMVP() {
         setPreferencesMessage(data.error || "Could not save preferences.");
         return;
       }
-      setPreferencesMessage(`Saved ${data.savedCount || 0} preference(s).`);
+      setPreferencesMessage(action === "draft"
+        ? `Draft saved with ${data.savedCount || 0} preference(s).`
+        : `Submitted ${data.savedCount || 0} preference(s), version ${data.versionNumber || ""}.`);
       await writeAudit("preferences_saved", `Saved ${data.savedCount || 0} faculty preference row(s).`, {
         division: "",
         term: activeTerm.code,
@@ -2940,7 +2927,7 @@ export default function PTFacultyStaffingMVP() {
                 <span>Dark View</span>
                 <input type="checkbox" checked={darkMode} onChange={(e) => setDarkMode(e.target.checked)} />
               </label>
-              {canShowWorkspace ? (
+              {canShowWorkspace && API_TOKEN_AUTH_ENABLED ? (
                 <>
                   <select
                     style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)" }}
@@ -4798,8 +4785,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                  <button style={ui.btnPrimary} onClick={savePreferences} disabled={savingPreferences}>
-                    {savingPreferences ? "Saving..." : "Save Preferences"}
+                  <button style={ui.btn} onClick={() => savePreferences("draft")} disabled={savingPreferences}>
+                    {savingPreferences ? "Saving..." : "Save Draft"}
+                  </button>
+                  <button style={ui.btnPrimary} onClick={() => savePreferences("submit")} disabled={savingPreferences}>
+                    {savingPreferences ? "Submitting..." : "Submit Preferences"}
                   </button>
                   <button style={ui.btn} onClick={() => {
                     setFacultyPreferences([]);

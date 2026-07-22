@@ -7,6 +7,7 @@ const SESSION_DAYS = Number(process.env.SESSION_DAYS || 14);
 const INVITE_DAYS = Number(process.env.INVITE_DAYS || 7);
 const RESET_HOURS = Number(process.env.RESET_HOURS || 2);
 const API_TOKEN = (process.env.API_TOKEN || "").trim();
+const API_TOKEN_AUTH_ENABLED = String(process.env.API_TOKEN_AUTH_ENABLED ?? (process.env.NODE_ENV === "production" ? "false" : "true")).toLowerCase() === "true";
 
 export const publicAuthPaths = new Set([
   "/api/auth/login",
@@ -64,6 +65,23 @@ export async function issueSession(userId) {
   return { token, expires_at: expires.toISOString() };
 }
 
+export async function revokeOtherSessions(userId, activeToken) {
+  await query(
+    `UPDATE scope_user_sessions
+     SET revoked_at = NOW()
+     WHERE user_id = $1
+       AND revoked_at IS NULL
+       AND session_token_hash <> $2`,
+    [userId, hashToken(activeToken)]
+  );
+}
+
+export async function cleanupExpiredAuthRecords() {
+  await query("DELETE FROM scope_user_sessions WHERE expires_at <= NOW() OR revoked_at IS NOT NULL");
+  await query("DELETE FROM scope_password_resets WHERE expires_at <= NOW() OR used_at IS NOT NULL");
+  await query("DELETE FROM scope_user_invites WHERE expires_at <= NOW() OR accepted_at IS NOT NULL");
+}
+
 export function inviteExpiresAt() {
   return new Date(Date.now() + INVITE_DAYS * 24 * 60 * 60 * 1000).toISOString();
 }
@@ -77,7 +95,7 @@ export async function authenticateRequest(req) {
   const bearer = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   const apiKey = req.get("x-api-token") || "";
 
-  if (API_TOKEN && (bearer === API_TOKEN || apiKey === API_TOKEN)) {
+  if (API_TOKEN_AUTH_ENABLED && API_TOKEN && (bearer === API_TOKEN || apiKey === API_TOKEN)) {
     return { authType: "api-token", role: "admin" };
   }
 
