@@ -2,7 +2,8 @@ import express from "express";
 import multer from "multer";
 import Papa from "papaparse";
 import { pool, query } from "../db.js";
-import { requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles } from "../permissions.js";
+import { analyzeAllocation } from "../domain/allocationAnalysis.js";
+import { isAdmin, requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles } from "../permissions.js";
 import { sendDisseminationEmail } from "../emailService.js";
 
 const router = express.Router();
@@ -725,6 +726,109 @@ router.get("/division-statuses", async (req, res) => {
     });
     res.json({ divisions });
   } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.get("/allocation-analysis", requireElevatedRole, requireDivisionScope, async (req, res) => {
+  const {
+    termCode = "",
+    disciplineCode = "",
+    division = "",
+    divisions = "",
+    oneAssignmentPerPass = "true",
+    maxAssignments = "",
+    maxLoad = "",
+  } = req.query;
+  const requestedDivisions = String(divisions || division || "")
+    .split(/[|,;]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (!termCode) return res.status(400).json({ error: "termCode is required." });
+  if (!isAdmin(req) && !requestedDivisions.length) {
+    return res.status(400).json({ error: "division or divisions is required for scoped allocation analysis." });
+  }
+
+  try {
+    const params = [termCode];
+    let sectionWhere = `WHERE s.term_code = $1 AND COALESCE((s.raw_row->>'staff_eligible')::boolean, true) = true`;
+    if (disciplineCode) {
+      params.push(String(disciplineCode).trim());
+      sectionWhere += ` AND s.discipline_code = $${params.length}`;
+    }
+    if (requestedDivisions.length) {
+      params.push(requestedDivisions.map((value) => value.toLowerCase()));
+      sectionWhere += ` AND LOWER(s.division) = ANY($${params.length}::text[])`;
+    }
+
+    const sectionsResult = await query(
+      `SELECT s.term_code, s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus,
+              s.subject_code, s.course_number, s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings, s.raw_row
+       FROM scope_sections s
+       ${sectionWhere}
+       ORDER BY s.division, s.discipline_code, s.primary_subject_course, s.primary_crn`,
+      params
+    );
+    const sections = sectionsResult.rows.map((row) => ({ ...row, meetings: row.meetings || [] }));
+    const sectionIds = sections.map((row) => row.assignment_group_id).filter(Boolean);
+    const scopedDivisions = Array.from(new Set(sections.map((row) => row.division).filter(Boolean)));
+
+    const [facultyResult, preferenceResult, assignmentResult] = await Promise.all([
+      scopedDivisions.length
+        ? query(
+            `SELECT employee_id, first_name, last_name, email, division, discipline,
+                    COALESCE(NULLIF(seniority_rank, ''), seniority_value, '') AS seniority_rank,
+                    COALESCE(NULLIF(seniority_value, ''), seniority_rank, '') AS seniority_value,
+                    qualified_disciplines, active_status
+             FROM scope_pt_faculty
+             WHERE COALESCE(active_status, 'active') = 'active'
+               AND LOWER(division) = ANY($1::text[])
+             ORDER BY division, discipline, seniority_rank, last_name, first_name`,
+            [scopedDivisions.map((value) => value.toLowerCase())]
+          )
+        : Promise.resolve({ rows: [] }),
+      sectionIds.length
+        ? query(
+            `SELECT p.term_code, p.faculty_id, p.employee_id, p.faculty_name, p.assignment_group_id, p.discipline_code, p.preference_rank, p.created_at, p.updated_at
+             FROM scope_preferences p
+             WHERE p.term_code = $1
+               AND p.assignment_group_id = ANY($2::text[])
+             ORDER BY p.faculty_name, p.preference_rank, p.assignment_group_id`,
+            [termCode, sectionIds]
+          )
+        : Promise.resolve({ rows: [] }),
+      sectionIds.length
+        ? query(
+            `SELECT a.id, a.term_code, a.discipline_code, a.assignment_group_id, a.employee_id, a.faculty_name, a.status,
+                    a.reason, a.actor_name, a.created_at, a.updated_at
+             FROM scope_assignments a
+             WHERE a.term_code = $1
+               AND a.assignment_group_id = ANY($2::text[])
+               AND COALESCE(a.status, 'tentative') <> 'released'
+             ORDER BY a.created_at, a.id`,
+            [termCode, sectionIds]
+          )
+        : Promise.resolve({ rows: [] }),
+    ]);
+
+    const analysis = analyzeAllocation({
+      termCode,
+      division: requestedDivisions.join("|"),
+      disciplineCode,
+      sections,
+      faculty: facultyResult.rows,
+      preferences: preferenceResult.rows,
+      assignments: assignmentResult.rows,
+      loadLimits: {
+        oneAssignmentPerPass: String(oneAssignmentPerPass).toLowerCase() !== "false" && String(oneAssignmentPerPass) !== "0",
+        maxAssignments: maxAssignments ? Number(maxAssignments) : undefined,
+        maxLoad: maxLoad ? Number(maxLoad) : undefined,
+      },
+    });
+
+    res.json({ analysis });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not build allocation analysis." });
+  }
 });
 
 router.get("/chair-workflow", async (req, res) => {
