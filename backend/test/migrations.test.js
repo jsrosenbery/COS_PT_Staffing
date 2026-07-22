@@ -31,10 +31,10 @@ async function withEmptyDatabase(run) {
 
 const silentLogger = { info() {} };
 
-integrationTest("applies the baseline migration to an empty PostgreSQL database", async () => {
+integrationTest("applies all ordered migrations to an empty PostgreSQL database", async () => {
   await withEmptyDatabase(async (pool) => {
     const result = await runMigrations({ pool, logger: silentLogger });
-    assert.deepEqual(result.applied, ["0001"]);
+    assert.deepEqual(result.applied, ["0001", "0002"]);
 
     const tables = await pool.query(`
       SELECT to_regclass('scope_users') AS users,
@@ -44,9 +44,10 @@ integrationTest("applies the baseline migration to an empty PostgreSQL database"
     assert.equal(tables.rows[0].assignments, "scope_assignments");
 
     const history = await pool.query("SELECT * FROM scope_schema_migrations");
-    assert.equal(history.rowCount, 1);
+    assert.equal(history.rowCount, 2);
     assert.equal(history.rows[0].migration_filename, "0001_baseline.sql");
-    assert.ok(history.rows[0].applied_at);
+    assert.equal(history.rows[1].migration_filename, "0002_security_integrity_constraints.sql");
+    assert.ok(history.rows.every((row) => row.applied_at));
   });
 });
 
@@ -56,9 +57,9 @@ integrationTest("skips migrations that were already applied successfully", async
     const secondRun = await runMigrations({ pool, logger: silentLogger });
 
     assert.deepEqual(secondRun.applied, []);
-    assert.deepEqual(secondRun.skipped, ["0001"]);
+    assert.deepEqual(secondRun.skipped, ["0001", "0002"]);
     const history = await pool.query("SELECT COUNT(*)::int AS count FROM scope_schema_migrations");
-    assert.equal(history.rows[0].count, 1);
+    assert.equal(history.rows[0].count, 2);
   });
 });
 

@@ -758,7 +758,7 @@ async function getProtectedWork(termCode, division) {
 
 router.get("/terms", async (_req, res) => {
   try {
-    const result = await query(`SELECT id, term_code, term_name, is_active FROM scope_terms ORDER BY is_active DESC, term_name ASC`);
+    const result = await query(`SELECT term_code, term_name, is_active FROM scope_terms ORDER BY is_active DESC, term_name ASC`);
     res.json({ terms: result.rows });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
@@ -1598,7 +1598,7 @@ async function advanceAssignmentStatus({ client, req, termCode, fromStatuses, to
   }
   if (divisions.length) {
     params.push(divisions);
-    scopedFilter += ` AND s.division = ANY($${params.length}::text[])`;
+    scopedFilter += ` AND LOWER(s.division) = ANY($${params.length}::text[])`;
   }
   const result = await client.query(
     `UPDATE scope_assignments a
@@ -1632,7 +1632,7 @@ async function advanceAssignmentStatus({ client, req, termCode, fromStatuses, to
 router.post("/assignments/submit", requireRoles("chair"), requireDivisionScope, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = [] } = req.body || {};
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
-  const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim()).filter(Boolean) : [];
+  const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean) : [];
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -1660,7 +1660,7 @@ router.post("/assignments/submit", requireRoles("chair"), requireDivisionScope, 
 router.post("/assignments/approve", requireRoles("dean"), requireDivisionScope, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = [] } = req.body || {};
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
-  const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim()).filter(Boolean) : [];
+  const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean) : [];
   const client = await pool.connect();
   try {
     await client.query("BEGIN");

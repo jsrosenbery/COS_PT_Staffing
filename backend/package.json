@@ -9,6 +9,8 @@
     "migrate": "node scripts/migrate.js",
     "migrate:status": "node scripts/migrate.js --status",
     "db:setup": "npm run migrate",
+    "db:integrity-report": "node scripts/data-integrity-report.js",
+    "db:integrity-precheck": "node scripts/data-integrity-report.js --strict",
     "seed:logins": "node scripts/seed-login-users.js"
   },
   "dependencies": {

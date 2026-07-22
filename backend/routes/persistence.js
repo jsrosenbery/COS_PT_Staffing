@@ -44,12 +44,12 @@ router.post("/roles", requireRoles("admin"), async (req, res) => {
           (employee_id, first_name, last_name, email, role, division, active_status, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
         [
-          row.employee_id || "",
+          String(row.employee_id || "").trim(),
           row.first_name || "",
           row.last_name || "",
           row.email || "",
-          row.role || "",
-          row.division || "",
+          String(row.role || "").trim().toLowerCase(),
+          String(row.division || "").trim(),
           row.active_status || "active",
         ]
       );
@@ -125,11 +125,11 @@ router.post("/pt-faculty", requireRoles("admin"), async (req, res) => {
            active_status = 'active',
            updated_at = NOW()`,
         [
-          row.employee_id || "",
+          String(row.employee_id || "").trim(),
           row.first_name || "",
           row.last_name || "",
           row.email || "",
-          row.division || "",
+          String(row.division || "").trim(),
           row.discipline || "",
           rank,
           rank,

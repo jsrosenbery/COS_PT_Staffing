@@ -3,7 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { query } from "./db.js";
 import { authenticateRequest, cleanupExpiredAuthRecords, publicAuthPaths } from "./auth.js";
-import { assertProductionConfig, correlationId, logError, publicError, securityHeaders } from "./security.js";
+import { assertProductionConfig, correlationId, isPublicApiRequest, logError, publicError, securityHeaders } from "./security.js";
 import authRoutes from "./routes/auth.js";
 import persistenceRoutes from "./routes/persistence.js";
 import workflowRoutes from "./routes/workflow.js";
@@ -32,11 +32,7 @@ app.use(correlationId);
 app.use(securityHeaders);
 
 app.use(async (req, res, next) => {
-  if (req.method === "OPTIONS" || req.path === "/api/health" || publicAuthPaths.has(req.path) || AUTH_DISABLED) {
-    return next();
-  }
-
-  if (req.method === "GET" && req.path === "/api/terms") {
+  if (isPublicApiRequest(req, { authDisabled: AUTH_DISABLED, publicAuthPaths })) {
     return next();
   }
 

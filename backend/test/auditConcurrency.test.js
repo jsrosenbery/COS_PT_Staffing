@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { auditActor, requestId } from "../audit.js";
+import { auditActor, requestId, writeAuditEvent } from "../audit.js";
 
 function read(path) {
   return fs.readFileSync(new URL(path, import.meta.url), "utf8");
@@ -35,9 +35,28 @@ test("audit actor metadata is derived from authentication, not request body", ()
 });
 
 test("audit request id uses caller correlation id when present", () => {
-  const req = { get: (name) => (name === "x-request-id" ? "req-123" : "") };
+  const req = { correlationId: "req-123" };
 
   assert.equal(requestId(req), "req-123");
+});
+
+test("audit records ignore unvalidated request identifiers", async () => {
+  let parameters;
+  const client = {
+    async query(_sql, values) {
+      parameters = values;
+      return { rows: [{ id: 1, request_id: values[14] }] };
+    },
+  };
+  const req = { correlationId: "validated-request-7", auth: { authType: "session", user: {} } };
+
+  const result = await writeAuditEvent(client, req, {
+    eventType: "TEST_EVENT",
+    requestId: "forged\nlog-entry",
+  });
+
+  assert.equal(parameters[14], "validated-request-7");
+  assert.equal(result.request_id, "validated-request-7");
 });
 
 test("generic client-controlled audit write endpoint is removed", () => {

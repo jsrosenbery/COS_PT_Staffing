@@ -34,7 +34,7 @@ function normalizeEmail(email) {
 }
 
 function requireAdmin(req, res) {
-  if (req.auth?.authType === "api-token" || req.auth?.user?.role === "admin") return true;
+  if (req.auth?.authType === "api-token" || String(req.auth?.user?.role || "").trim().toLowerCase() === "admin") return true;
   publicError(res, 403, "ADMIN_REQUIRED", "Admin access is required.", req.correlationId);
   return false;
 }
