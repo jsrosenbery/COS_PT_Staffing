@@ -3,7 +3,7 @@ import Papa from "papaparse";
 import cosLogo from "./assets/cos-logo.jpg";
 import AdminOperationsPanel from "./AdminOperationsPanel";
 import { buildInitialPtRoster } from "./adminOpsUtils";
-import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty, appendAuditLog, wipeActivePTRoster } from "./persistenceApi";
+import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty, wipeActivePTRoster } from "./persistenceApi";
 import {
   API_BASE,
   acceptInvite,
@@ -1381,27 +1381,9 @@ export default function PTFacultyStaffingMVP() {
 
 
   async function writeAudit(eventType, note, extras = {}) {
-    try {
-      await appendAuditLog({
-        event_type: eventType,
-        actor_name:
-          role === "admin" ? "Scheduler / Admin" :
-          role === "dean" ? selectedDeanName || "Dean" :
-          role === "chair" ? selectedChairName || "Division Chair" :
-          selectedFaculty ? facultyName(selectedFaculty) : "System",
-        actor_role: role,
-        division: extras.division || "",
-        term: extras.term || activeTerm?.code || "",
-        section_key: extras.section_key || "",
-        instructor_name: extras.instructor_name || "",
-        old_value: extras.old_value || null,
-        new_value: extras.new_value || null,
-        note: note || "",
-        source: extras.source || "ui",
-      });
-    } catch (error) {
-      console.warn("Could not write audit log", error);
-    }
+    void eventType;
+    void note;
+    void extras;
   }
 
   async function wipePreferencesForDivision() {
@@ -2258,6 +2240,7 @@ export default function PTFacultyStaffingMVP() {
 
   async function assignSectionToInstructor(row, topEmployeeId, requiresRationale = false) {
     if (!row?.assignment_group_id || !row?.employee_id || !activeTerm?.code) return;
+    const expectedRecommendedEmployeeId = topEmployeeId || "";
     const isBypass = Boolean(requiresRationale && topEmployeeId && topEmployeeId !== row.employee_id);
     let exceptionReasonCode = "";
     let exceptionExplanation = "";
@@ -2292,6 +2275,7 @@ export default function PTFacultyStaffingMVP() {
           selectedEmployeeId: row.employee_id,
           exceptionReasonCode,
           exceptionExplanation: exceptionExplanation.trim(),
+          expectedRecommendedEmployeeId,
         }),
       });
       const data = await response.json();
@@ -2313,11 +2297,12 @@ export default function PTFacultyStaffingMVP() {
 
     setChairMessage("");
     try {
-      const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
-      const response = await apiFetch(`${API_BASE}/assignments/${assignment.id}`, {
+      const params = new URLSearchParams();
+      if (assignment.version) params.set("expectedVersion", assignment.version);
+      const response = await apiFetch(`${API_BASE}/assignments/${assignment.id}${params.toString() ? `?${params.toString()}` : ""}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ actorName }),
+        body: JSON.stringify({ expectedVersion: assignment.version || null }),
       });
       const data = await response.json();
       if (!response.ok) {
@@ -2345,14 +2330,13 @@ export default function PTFacultyStaffingMVP() {
 
     setChairMessage("");
     try {
-      const actorName = role === "chair" ? selectedChairName || "Division Chair" : role === "dean" ? selectedDeanName || "Dean" : "Scheduler / Admin";
       const response = await apiFetch(`${API_BASE}/assignments/${assignment.id}/reassign`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           employeeId: candidateRow.employee_id,
-          actorName,
           reason: reason.trim(),
+          expectedVersion: assignment.version || null,
         }),
       });
       const data = await response.json();
@@ -2386,7 +2370,6 @@ export default function PTFacultyStaffingMVP() {
           termCode: activeTerm.code,
           disciplineCode: selectedDisciplineCode !== "ALL" ? selectedDisciplineCode : "",
           divisions: scopedDivisions,
-          actorName: selectedChairName || "Division Chair",
         }),
       });
       const data = await response.json();
@@ -2420,7 +2403,6 @@ export default function PTFacultyStaffingMVP() {
           termCode: activeTerm.code,
           disciplineCode: selectedDisciplineCode !== "ALL" ? selectedDisciplineCode : "",
           divisions: scopedDivisions,
-          actorName: selectedDeanName || "Dean",
         }),
       });
       const data = await response.json();

@@ -247,7 +247,9 @@ router.get("/audit", requireElevatedRole, async (req, res) => {
   }
 
   const sql = `
-    SELECT id, event_type, actor_name, actor_role, division, term, section_key, instructor_name, old_value, new_value, note, source, created_at
+    SELECT id, event_type, actor_user_id, actor_email, actor_name, actor_role, actor_session_type,
+           division, term, section_key, instructor_name, old_value, new_value, reason_code,
+           explanation, request_id, note, source, created_at
     FROM scope_audit_log
     ${where.length ? "WHERE " + where.join(" AND ") : ""}
     ORDER BY ${safeSortBy} ${safeSortDir}
@@ -257,35 +259,6 @@ router.get("/audit", requireElevatedRole, async (req, res) => {
   try {
     const result = await query(sql, params);
     res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.post("/audit", requireElevatedRole, async (req, res) => {
-  const row = req.body || {};
-  const actor = req.auth?.user || {};
-  try {
-    const result = await query(
-      `INSERT INTO scope_audit_log
-        (event_type, actor_name, actor_role, division, term, section_key, instructor_name, old_value, new_value, note, source)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-       RETURNING id, created_at`,
-      [
-        row.event_type || "",
-        actor.full_name || actor.email || req.auth?.authType || "",
-        actor.role || req.auth?.role || "",
-        row.division || "",
-        row.term || "",
-        row.section_key || "",
-        row.instructor_name || "",
-        row.old_value || null,
-        row.new_value || null,
-        row.note || "",
-        row.source || "",
-      ]
-    );
-    res.json({ success: true, audit: result.rows[0] });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

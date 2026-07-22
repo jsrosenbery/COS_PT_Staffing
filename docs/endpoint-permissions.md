@@ -60,6 +60,6 @@ Division-scoped users must have an assigned division list. Chairs and deans with
 | `POST /api/windows/freeze` | chair/dean/admin | Division-scoped write |
 | `POST /api/windows/reopen` | admin | Admin/API-token plus explicit audit reason |
 | `GET /api/audit` | chair/dean/admin | Elevated audit read; division filtering should be used for scoped review |
-| `POST /api/audit` | chair/dean/admin/system | Server-authored actor fields |
+| `POST /api/audit` | removed/internal only | Clients cannot append audit rows directly; mutation services write server-authored events |
 
 System/internal-only behavior is represented by server-generated audit records and derived decision/preference snapshots. Clients must not be trusted for actor identity, role, or broad division scope.
