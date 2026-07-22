@@ -54,6 +54,14 @@ export default function AdminOperationsPanel({
   const ptInputRef = useRef(null);
 
   const closesAt = useMemo(() => toIsoDate(addBusinessDays(new Date(), 10)), []);
+  const portalUrl = typeof window !== "undefined" ? window.location.origin : "https://your-scope-portal.example";
+  const disseminationSubject = `${activeTerm?.code || "Active term"} PT staffing window for ${selectedDivision || "selected division"}`;
+  const disseminationBody =
+    `A staffing window is now open for ${selectedDivision || "the selected division"}.\n\n` +
+    `Please log in to S.C.O.P.E. to review available sections and submit your preferences:\n${portalUrl}\n\n` +
+    `If you have not already created an account, please request account access at the same link. Use your COS email address so your access can be matched to the part-time faculty roster.\n\n` +
+    `This staffing window closes automatically on ${closesAt}.\n\n` +
+    `Sender: ${senderEmail || "jacoba@cos.edu"}`;
 
   const selectedDivisionRecipients = useMemo(() => {
     return ptStaffingRows.filter((row) => row.division === selectedDivision);
@@ -203,21 +211,29 @@ export default function AdminOperationsPanel({
 
         <div style={ui.sectionCard}>
           <div style={{ fontWeight: 800 }}>Division Dissemination</div>
-          <div style={{ color: "var(--text-muted)", marginTop: 6 }}>Set the sender address, choose one division at a time, and let the window auto-close in 10 business days.</div>
+          <div style={{ color: "var(--text-muted)", marginTop: 6 }}>Set the sender address, choose one division at a time, and preview the email copy for the 10-business-day staffing window.</div>
           <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
             <select style={ui.select} value={selectedDivision} onChange={(e) => setSelectedDivision(e.target.value)}>
               {divisionOptions.map((division) => <option key={division} value={division}>{division}</option>)}
             </select>
             <input style={ui.input} value={senderEmail} onChange={(e) => setSenderEmail(e.target.value)} placeholder="Sender email" />
             <div style={{ border: "1px solid var(--border-soft)", borderRadius: 12, padding: 12, background: "var(--bg-soft)" }}>
-              <div style={{ fontWeight: 700 }}>Preview</div>
+              <div style={{ fontWeight: 700 }}>Email Preview</div>
               <div style={{ marginTop: 6, fontSize: 14 }}>Term: {activeTerm?.code}</div>
               <div style={{ marginTop: 4, fontSize: 14 }}>Division: {selectedDivision || "None selected"}</div>
               <div style={{ marginTop: 4, fontSize: 14 }}>Recipients: {selectedDivisionRecipients.length}</div>
               <div style={{ marginTop: 4, fontSize: 14 }}>Window close: {closesAt}</div>
               <div style={{ marginTop: 4, fontSize: 14 }}>From: {senderEmail || "(set sender email)"}</div>
+              <div style={{ marginTop: 4, fontSize: 14 }}>Portal link: {portalUrl}</div>
             </div>
-            <textarea readOnly style={{ ...ui.input, minHeight: 120, resize: "vertical" }} value={`Subject: ${activeTerm?.code || "Active term"} PT staffing window for ${selectedDivision || "selected division"}\n\nA staffing window is now open for ${selectedDivision || "the selected division"}. Please log into S.C.O.P.E. using your email and password to review available sections and submit preferences.\n\nThis window closes automatically on ${closesAt}.\n\nPortal access will use your email-based account.\n\nSender: ${senderEmail || "jacoba@cos.edu"}`} />
+            <div>
+              <div style={{ marginBottom: 6, fontWeight: 700 }}>Subject line</div>
+              <input readOnly style={ui.input} value={disseminationSubject} />
+            </div>
+            <div>
+              <div style={{ marginBottom: 6, fontWeight: 700 }}>Email body</div>
+              <textarea readOnly style={{ ...ui.input, minHeight: 180, resize: "vertical" }} value={disseminationBody} />
+            </div>
           </div>
         </div>
       </div>
