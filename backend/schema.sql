@@ -203,8 +203,47 @@ CREATE TABLE IF NOT EXISTS scope_assignments (
   status TEXT NOT NULL DEFAULT 'tentative',
   actor_name TEXT NOT NULL DEFAULT '',
   reason TEXT NOT NULL DEFAULT '',
+  reason_code TEXT NOT NULL DEFAULT '',
+  justification TEXT NOT NULL DEFAULT '',
+  recommendation_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  decision_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS scope_contract_exception_reasons (
+  code TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  requires_explanation BOOLEAN NOT NULL DEFAULT TRUE,
+  active_status TEXT NOT NULL DEFAULT 'active',
+  display_order INTEGER NOT NULL DEFAULT 100,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS scope_chair_decisions (
+  id SERIAL PRIMARY KEY,
+  term_code TEXT NOT NULL,
+  division TEXT NOT NULL DEFAULT '',
+  discipline_code TEXT NOT NULL DEFAULT '',
+  assignment_group_id TEXT NOT NULL DEFAULT '',
+  recommended_employee_id TEXT NOT NULL DEFAULT '',
+  selected_employee_id TEXT NOT NULL DEFAULT '',
+  selected_faculty_name TEXT NOT NULL DEFAULT '',
+  decision_status TEXT NOT NULL DEFAULT 'tentative',
+  exception_reason_code TEXT NOT NULL DEFAULT '',
+  exception_explanation TEXT NOT NULL DEFAULT '',
+  recommendation_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  decision_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+  decided_by_user_id INTEGER,
+  decided_by_email TEXT NOT NULL DEFAULT '',
+  decided_by_name TEXT NOT NULL DEFAULT '',
+  decided_by_role TEXT NOT NULL DEFAULT '',
+  decided_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (decision_status IN ('recommended', 'tentative', 'bypassed', 'released', 'chair_finalized', 'dean_approved', 'returned_for_revision'))
 );
 
 ALTER TABLE scope_pt_faculty
@@ -218,6 +257,18 @@ ADD COLUMN IF NOT EXISTS employee_id TEXT DEFAULT '';
 
 ALTER TABLE scope_user_invites
 ADD COLUMN IF NOT EXISTS employee_id TEXT DEFAULT '';
+
+ALTER TABLE scope_assignments
+ADD COLUMN IF NOT EXISTS reason_code TEXT DEFAULT '';
+
+ALTER TABLE scope_assignments
+ADD COLUMN IF NOT EXISTS justification TEXT DEFAULT '';
+
+ALTER TABLE scope_assignments
+ADD COLUMN IF NOT EXISTS recommendation_snapshot JSONB DEFAULT '{}'::jsonb;
+
+ALTER TABLE scope_assignments
+ADD COLUMN IF NOT EXISTS decision_snapshot JSONB DEFAULT '{}'::jsonb;
 
 CREATE INDEX IF NOT EXISTS idx_scope_roles_active ON scope_roles (active_status);
 CREATE INDEX IF NOT EXISTS idx_scope_users_active ON scope_users (active_status);
@@ -237,6 +288,25 @@ CREATE INDEX IF NOT EXISTS idx_scope_preferences_term_section ON scope_preferenc
 CREATE INDEX IF NOT EXISTS idx_scope_faculty_availability_term_faculty ON scope_faculty_availability (term_code, faculty_id);
 CREATE INDEX IF NOT EXISTS idx_scope_assignments_term_section ON scope_assignments (term_code, assignment_group_id);
 CREATE INDEX IF NOT EXISTS idx_scope_audit_term_section ON scope_audit_log (term, section_key);
+CREATE INDEX IF NOT EXISTS idx_scope_chair_decisions_term_section ON scope_chair_decisions (term_code, assignment_group_id, decided_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scope_assignments_one_active_section
+ON scope_assignments (term_code, assignment_group_id)
+WHERE COALESCE(status, 'tentative') NOT IN ('released', 'deleted', 'void', 'returned_for_revision');
+
+INSERT INTO scope_contract_exception_reasons (code, label, description, requires_explanation, display_order)
+VALUES
+  ('COURSE_CONTINUITY', 'Course continuity', 'Continuity with an instructor who recently taught the course.', TRUE, 10),
+  ('DUAL_ENROLLMENT_SITE_POSITION', 'Dual-enrollment site position', 'Instructor is specially positioned for a dual-enrollment site assignment.', TRUE, 20),
+  ('SPECIALIZED_QUALIFICATION', 'Specialized qualification', 'Instructor has a specialized qualification needed for the section.', TRUE, 30),
+  ('AVAILABILITY_OR_SCHEDULE_CONFLICT', 'Availability or schedule conflict', 'A senior candidate is unavailable due to documented availability or schedule conflict.', TRUE, 40),
+  ('LOAD_OR_ASSIGNMENT_LIMIT', 'Load or assignment limit', 'A senior candidate is unavailable due to load or assignment limits.', TRUE, 50),
+  ('OTHER_CONTRACTUAL_EXCEPTION', 'Other contractual exception', 'Another approved contractual exception.', TRUE, 60)
+ON CONFLICT (code) DO UPDATE SET
+  label = EXCLUDED.label,
+  description = EXCLUDED.description,
+  requires_explanation = EXCLUDED.requires_explanation,
+  display_order = EXCLUDED.display_order,
+  updated_at = NOW();
 
 UPDATE scope_pt_faculty
 SET seniority_rank = COALESCE(NULLIF(seniority_rank, ''), seniority_value, '')
