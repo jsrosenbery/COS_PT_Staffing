@@ -37,7 +37,7 @@ There are no separate migration credentials or migration feature flags. `npm run
 
 ## Bootstrap and development-only variables
 
-`ADMIN_EMAIL`, `ADMIN_EMPLOYEE_ID`, `ADMIN_FULL_NAME`, `ADMIN_DIVISION`, and `ADMIN_PASSWORD` are consumed only by `npm run seed:logins`. Treat `ADMIN_PASSWORD` as a secret. Run the seeder deliberately, verify the named administrator can sign in, then remove all seed variables from the deployed environment.
+`ADMIN_EMAIL`, `ADMIN_EMPLOYEE_ID`, `ADMIN_FULL_NAME`, `ADMIN_DIVISION`, and `ADMIN_PASSWORD` are consumed only by `npm run seed:logins`. Treat `ADMIN_PASSWORD` as a secret. Run the seeder deliberately, verify the named administrator can sign in, then remove all seed variables from the deployed environment. `SEED_DEMO_USERS` is a development-only feature flag: it defaults to `true` outside production and `false` in production; production rejects `true`.
 
 `DEMO_FACULTY_*`, `DEMO_CHAIR_*`, and `DEMO_DEAN_*` variables are development/staging test fixtures only. Never configure them in production, and remove their accounts and credentials before a staging environment is promoted or copied.
 

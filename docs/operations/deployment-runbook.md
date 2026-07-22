@@ -33,6 +33,8 @@ If migration fails, do not deploy application code. Preserve logs, determine whe
 
 Preferred path: use `npm run seed:logins` once with securely supplied `ADMIN_*` values to create a named administrator. Do not create demo users in production.
 
+With `NODE_ENV=production`, the command requires `ADMIN_EMAIL` and `ADMIN_PASSWORD`, seeds only that administrator, rejects `SEED_DEMO_USERS=true`, and does not print the password. Demo faculty/chair/dean identities remain available for local development only.
+
 If API-token bootstrap is institutionally approved:
 
 1. Generate and securely store a strong random `API_TOKEN`.
