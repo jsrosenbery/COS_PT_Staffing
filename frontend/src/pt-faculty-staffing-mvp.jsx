@@ -2510,7 +2510,7 @@ export default function PTFacultyStaffingMVP() {
     setPreferencesMessage("");
   }
 
-  async function savePreferences() {
+  async function savePreferences(action = "submit") {
     if (!selectedFaculty) return;
     setSavingPreferences(true);
     setPreferencesMessage("");
@@ -2523,6 +2523,7 @@ export default function PTFacultyStaffingMVP() {
           facultyId: selectedFaculty.employeeId,
           employeeId: selectedFaculty.employeeId,
           facultyName: facultyName(selectedFaculty),
+          action,
           preferences: facultyPreferences.map((item, index) => ({
             assignment_group_id: item.assignment_group_id,
             discipline_code: item.discipline_code,
@@ -2536,7 +2537,9 @@ export default function PTFacultyStaffingMVP() {
         setPreferencesMessage(data.error || "Could not save preferences.");
         return;
       }
-      setPreferencesMessage(`Saved ${data.savedCount || 0} preference(s).`);
+      setPreferencesMessage(action === "draft"
+        ? `Draft saved with ${data.savedCount || 0} preference(s).`
+        : `Submitted ${data.savedCount || 0} preference(s), version ${data.versionNumber || ""}.`);
       await writeAudit("preferences_saved", `Saved ${data.savedCount || 0} faculty preference row(s).`, {
         division: "",
         term: activeTerm.code,
@@ -4798,8 +4801,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   )}
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                  <button style={ui.btnPrimary} onClick={savePreferences} disabled={savingPreferences}>
-                    {savingPreferences ? "Saving..." : "Save Preferences"}
+                  <button style={ui.btn} onClick={() => savePreferences("draft")} disabled={savingPreferences}>
+                    {savingPreferences ? "Saving..." : "Save Draft"}
+                  </button>
+                  <button style={ui.btnPrimary} onClick={() => savePreferences("submit")} disabled={savingPreferences}>
+                    {savingPreferences ? "Submitting..." : "Submit Preferences"}
                   </button>
                   <button style={ui.btn} onClick={() => {
                     setFacultyPreferences([]);
