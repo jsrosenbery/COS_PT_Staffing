@@ -37,6 +37,10 @@ app.use(async (req, res, next) => {
     return next();
   }
 
+  if (req.method === "GET" && req.path === "/api/terms") {
+    return next();
+  }
+
   try {
     const auth = await authenticateRequest(req);
     if (auth) {

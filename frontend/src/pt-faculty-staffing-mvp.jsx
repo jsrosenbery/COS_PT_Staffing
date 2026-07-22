@@ -898,7 +898,7 @@ const ui = {
 };
 
 export default function PTFacultyStaffingMVP() {
-  const [role, setRole] = useState(() => getCurrentUser()?.role || "admin");
+  const [role, setRole] = useState(() => getCurrentUser()?.role || "faculty");
   const [apiTokenInput, setApiTokenInput] = useState(() => getApiToken());
   const [apiAccessMessage, setApiAccessMessage] = useState("");
   const [currentUser, setCurrentUser] = useState(() => getCurrentUser());
@@ -1014,23 +1014,30 @@ export default function PTFacultyStaffingMVP() {
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
   const apiTokenConfigured = Boolean(apiTokenInput.trim());
+  const savedApiTokenConfigured = Boolean(getApiToken());
+  const canUseAdminTools = role === "admin" && (currentUser?.role === "admin" || savedApiTokenConfigured);
+  const canUseElevatedTools = canUseAdminTools || ["chair", "dean"].includes(currentUser?.role || "");
   const roleOptions = currentUser && currentUser.role !== "admin"
     ? [{ value: currentUser.role, label: currentUser.role === "chair" ? "Division Chair" : currentUser.role === "dean" ? "Dean" : "Part-Time Faculty" }]
-    : [
+    : currentUser?.role === "admin" || savedApiTokenConfigured
+      ? [
       { value: "admin", label: "Scheduler / Admin" },
       { value: "chair", label: "Division Chair" },
       { value: "dean", label: "Dean" },
       { value: "faculty", label: "Part-Time Faculty" },
-    ];
+      ]
+      : [{ value: "faculty", label: "Part-Time Faculty" }];
 
   function saveApiAccessToken() {
     setApiToken(apiTokenInput);
     setApiAccessMessage(apiTokenInput.trim() ? "API access token saved for this browser session." : "API access token cleared.");
+    if (apiTokenInput.trim()) setRole("admin");
   }
 
   function clearApiAccessToken() {
     clearApiToken();
     setApiTokenInput("");
+    if (!currentUser) setRole("faculty");
     setApiAccessMessage("API access token cleared.");
   }
 
@@ -1196,8 +1203,8 @@ export default function PTFacultyStaffingMVP() {
   }, []);
 
   useEffect(() => {
-    if (role === "admin") refreshAccountRequests();
-  }, [role]);
+    if (canUseAdminTools) refreshAccountRequests();
+  }, [canUseAdminTools]);
 
 
   function normalizeRoleRows(rows = []) {
@@ -1375,6 +1382,10 @@ export default function PTFacultyStaffingMVP() {
   }
 
   async function activateTerm(termCode) {
+    if (!canUseAdminTools) {
+      setTermMessage("Sign in as an admin or save the bootstrap API token before changing terms.");
+      return;
+    }
     try {
       const data = await fetchJson("/terms/activate", {
         method: "POST",
@@ -1389,6 +1400,10 @@ export default function PTFacultyStaffingMVP() {
   }
 
   async function createOrUpdateTerm() {
+    if (!canUseAdminTools) {
+      setTermMessage("Sign in as an admin or save the bootstrap API token before saving terms.");
+      return;
+    }
     try {
       const data = await fetchJson("/terms", {
         method: "POST",
@@ -2830,6 +2845,8 @@ export default function PTFacultyStaffingMVP() {
                 style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)", minWidth: 220 }}
                 value={activeTerm.code}
                 onChange={(e) => activateTerm(e.target.value)}
+                disabled={!canUseAdminTools}
+                title={canUseAdminTools ? "Switch active term" : "Admin access is required to switch the active term"}
               >
                 {terms.length ? terms.map((term) => (
                   <option key={term.code} value={term.code} style={{ color: "#0f172a" }}>
@@ -3082,7 +3099,7 @@ export default function PTFacultyStaffingMVP() {
           </div>
         ) : null}
 
-        {role === "admin" ? (
+        {canUseAdminTools ? (
         <div className="cos-summary-card" style={ui.card}>
           <div style={ui.between}>
             <div>
@@ -3155,7 +3172,7 @@ export default function PTFacultyStaffingMVP() {
         </div>
         ) : null}
 
-        {role === "admin" ? (
+        {canUseAdminTools ? (
         <div className="cos-summary-card" style={ui.card}>
           <h2 style={ui.cardTitle}>Subject Mapping Upload</h2>
           <div style={ui.cardDesc}>
@@ -3239,13 +3256,13 @@ OH,ORNAMENTAL_HORTICULTURE`}
         </div>
         ) : null}
 
-        {role === "admin" && mappingAdminError ? (
+        {canUseAdminTools && mappingAdminError ? (
           <div style={{ ...ui.card, borderColor: "#fecaca", background: "#fff7f7" }}>
             <div style={{ color: "#b91c1c", fontWeight: 700 }}>{mappingAdminError}</div>
           </div>
         ) : null}
 
-        {role === "admin" && showMappingList ? (
+        {canUseAdminTools && showMappingList ? (
           <div style={ui.card}>
             <div style={ui.between}>
               <div>
@@ -3286,7 +3303,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           </div>
         ) : null}
 
-        {role === "admin" ? (
+        {canUseAdminTools ? (
         <div style={ui.card}>
           <h2 style={ui.cardTitle}>Schedule Upload</h2>
           <div style={ui.cardDesc}>
@@ -3586,7 +3603,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
         </div>
         ) : null}
 
-        {role === "admin" ? (
+        {canUseAdminTools ? (
         <div style={ui.card}>
           <div style={ui.between}>
             <div>
@@ -3692,7 +3709,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
         </div>
         ) : null}
 
-        {role === "admin" ? (
+        {canUseAdminTools ? (
           <AdminOperationsPanel
             ui={ui}
             activeTerm={activeTerm}
@@ -3871,7 +3888,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   <button style={ui.btn} onClick={exportPreferences}>
                     Export Preferences
                   </button>
-                  {role === "admin" ? (
+                  {canUseAdminTools ? (
                     <button style={ui.btn} onClick={wipePreferencesForDivision}>
                       Wipe Division Preferences
                     </button>

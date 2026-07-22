@@ -78,7 +78,15 @@ export async function fetchJson(path, options = {}) {
   const text = await response.text();
 
   if (!response.ok) {
-    throw new Error(text || `Request failed with status ${response.status}`);
+    try {
+      const data = text ? JSON.parse(text) : {};
+      throw new Error(data.error || data.message || `Request failed with status ${response.status}`);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(text || `Request failed with status ${response.status}`);
+      }
+      throw error;
+    }
   }
 
   if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
