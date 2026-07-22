@@ -1,16 +1,9 @@
 import crypto from "crypto";
+import { rateLimiter as createRateLimiter } from "./rateLimit.js";
 
-const DEFAULT_LIMITS = Object.freeze({
-  login: { windowMs: 15 * 60 * 1000, max: 10 },
-  accountRequest: { windowMs: 60 * 60 * 1000, max: 8 },
-  passwordResetRequest: { windowMs: 60 * 60 * 1000, max: 6 },
-  passwordResetComplete: { windowMs: 15 * 60 * 1000, max: 8 },
-  inviteAccept: { windowMs: 15 * 60 * 1000, max: 8 },
-});
-
-const limitStores = new Map();
 export const REQUEST_ID_MAX_LENGTH = 128;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+export { resetRateLimiters } from "./rateLimit.js";
 
 function envFlag(name, fallback = false) {
   const raw = process.env[name];
@@ -48,12 +41,16 @@ export function validateProductionConfig(env = process.env) {
   const databaseUrl = text(env.DATABASE_URL);
   const appBaseUrl = text(env.APP_BASE_URL);
   const apiToken = text(env.API_TOKEN);
+  const rateLimitStore = text(env.RATE_LIMIT_STORE || (production ? "postgres" : "memory")).toLowerCase();
+  const proxyHops = text(env.RATE_LIMIT_TRUST_PROXY_HOPS || "0");
   const apiTokenEnabled = ["1", "true", "yes", "on"].includes(String(env.API_TOKEN_AUTH_ENABLED ?? (!production ? "true" : "false")).trim().toLowerCase());
 
   if (production && authDisabled) errors.push("AUTH_DISABLED cannot be true in production.");
   if (production && !corsOrigin) errors.push("CORS_ORIGIN must be explicitly configured in production.");
   if (production && !databaseUrl) errors.push("DATABASE_URL must be configured in production.");
   if (production && !appBaseUrl) errors.push("APP_BASE_URL must be configured in production for invite and password-reset links.");
+  if (production && rateLimitStore !== "postgres") errors.push("RATE_LIMIT_STORE must be postgres in production.");
+  if (!/^[0-5]$/.test(proxyHops)) errors.push("RATE_LIMIT_TRUST_PROXY_HOPS must be an integer from 0 through 5.");
   if (production && apiTokenEnabled) {
     if (!apiToken) errors.push("API_TOKEN_AUTH_ENABLED requires API_TOKEN.");
     if (apiToken && isWeakSecret(apiToken)) errors.push("API_TOKEN must be a strong random bootstrap secret when enabled.");
@@ -125,46 +122,10 @@ export function logError(label, error, req = {}) {
   });
 }
 
-export function resetRateLimiters() {
-  limitStores.clear();
-}
-
 export function rateLimiter(name, options = {}) {
-  const config = { ...(DEFAULT_LIMITS[name] || DEFAULT_LIMITS.login), ...options };
-  if (!limitStores.has(name)) limitStores.set(name, new Map());
-  const store = limitStores.get(name);
-
-  return (req, res, next) => {
-    const now = Date.now();
-    const keyParts = [
-      req.ip || req.socket?.remoteAddress || "unknown",
-      text(req.body?.email || req.body?.token || req.body?.employee_id || ""),
-    ];
-    const key = keyParts.join("|");
-    const existing = store.get(key);
-    const entry = existing && existing.resetAt > now
-      ? existing
-      : { count: 0, resetAt: now + config.windowMs };
-    entry.count += 1;
-    store.set(key, entry);
-
-    for (const [storedKey, storedValue] of store.entries()) {
-      if (storedValue.resetAt <= now) store.delete(storedKey);
-    }
-
-    res.setHeader("X-RateLimit-Limit", String(config.max));
-    res.setHeader("X-RateLimit-Remaining", String(Math.max(0, config.max - entry.count)));
-    res.setHeader("X-RateLimit-Reset", new Date(entry.resetAt).toISOString());
-
-    if (entry.count > config.max) {
-      return publicError(
-        res,
-        429,
-        "RATE_LIMITED",
-        "Too many attempts. Please wait and try again.",
-        req.correlationId
-      );
-    }
-    return next();
-  };
+  return createRateLimiter(name, {
+    ...options,
+    onLimited: (res, req) => publicError(res, 429, "RATE_LIMITED", "Too many attempts. Please wait and try again.", req.correlationId),
+    onStoreError: (res, req) => publicError(res, 503, "RATE_LIMIT_UNAVAILABLE", "Authentication is temporarily unavailable. Please try again later.", req.correlationId),
+  });
 }

@@ -21,6 +21,12 @@ Database migrations are an explicit release step and must complete before deploy
 
 See [Database migrations](docs/database-migrations.md) for production adoption, verification, failure handling, and rollback limitations.
 
+## Authentication rate limiting
+
+Production uses PostgreSQL-backed authentication rate limits shared by every backend instance. Apply migrations before deploying the backend and leave `RATE_LIMIT_STORE=postgres`. If PostgreSQL is unavailable, protected authentication endpoints return `503` rather than silently falling back to process-local counters.
+
+Local development and tests default to `RATE_LIMIT_STORE=memory`; counters then reset with the process. See [Authentication rate limiting](docs/auth-rate-limiting.md) for proxy and deployment configuration.
+
 ## Validation
 
 Before opening a pull request, run:
