@@ -228,3 +228,7 @@ Keep the current routes operational, but introduce immutable allocation records 
 3. Use the pure allocation analyzer to power chair queue recommendations.
 4. Make chair assignment routes validate bypass rules server-side.
 5. Replace destructive deletes with status transitions or superseding records after migration.
+
+## Data Retention Note
+
+Preference submissions, recommendation snapshots, chair decisions, exception justifications, dean review outcomes, and server-generated audit records are institutional decision records. The system should retain enough immutable data to reconstruct staffing decisions after roster, seniority, qualification, mapping, or schedule changes. The official retention duration should be set by College policy and applicable records-retention requirements; this model intentionally does not prescribe a retention period.
