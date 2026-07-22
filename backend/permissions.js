@@ -32,3 +32,31 @@ export function requirePreferenceOwnerOrElevated(req, res, next) {
   }
   return res.status(403).json({ error: "Faculty users can only manage their own preferences." });
 }
+
+export function splitScope(value) {
+  return String(value || "")
+    .split(/[|,;]/)
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function requestedDivisions(req) {
+  const values = [
+    req.body?.division,
+    req.body?.divisionName,
+    ...(Array.isArray(req.body?.divisions) ? req.body.divisions : []),
+    req.query?.division,
+    req.query?.divisionName,
+    ...String(req.query?.divisions || "").split("|"),
+  ];
+  return values.flatMap(splitScope);
+}
+
+export function requireDivisionScope(req, res, next) {
+  if (isAdmin(req)) return next();
+  const requested = requestedDivisions(req);
+  if (!requested.length) return next();
+  const allowed = splitScope(req.auth?.user?.division);
+  if (allowed.length && requested.every((division) => allowed.includes(division))) return next();
+  return res.status(403).json({ error: "This action is outside your assigned division scope." });
+}

@@ -10,6 +10,7 @@ import {
   summarizePtRosterReplace,
   toIsoDate,
 } from "./adminOpsUtils";
+import { sendDissemination } from "./apiClient";
 
 function panelStat(label, value) {
   return (
@@ -48,6 +49,8 @@ export default function AdminOperationsPanel({
   const [deanMessage, setDeanMessage] = useState("");
   const [ptMessage, setPtMessage] = useState("");
   const [ptSummary, setPtSummary] = useState(null);
+  const [sendMessage, setSendMessage] = useState("");
+  const [sending, setSending] = useState(false);
   const [selectedDivision, setSelectedDivision] = useState(divisionOptions[0] || "");
   const chairInputRef = useRef(null);
   const deanInputRef = useRef(null);
@@ -137,6 +140,29 @@ export default function AdminOperationsPanel({
       inactivated: count,
     });
     setPtMessage(`Marked ${count} active PT roster row(s) inactive. Historical records remain intact.`);
+  }
+
+  async function handleSendDissemination() {
+    if (!selectedDivision || !activeTerm?.code) return;
+    const confirmed = window.confirm(`Send staffing window email to ${selectedDivisionRecipients.length} recipient(s) in ${selectedDivision}?`);
+    if (!confirmed) return;
+    setSending(true);
+    setSendMessage("");
+    try {
+      const data = await sendDissemination({
+        termCode: activeTerm.code,
+        division: selectedDivision,
+        senderEmail,
+        subject: disseminationSubject,
+        body: disseminationBody,
+        closesAt,
+      });
+      setSendMessage(`Sent to ${data.recipientCount || 0} recipient(s). Staffing window opened.`);
+    } catch (error) {
+      setSendMessage(error.message || "Could not send dissemination email.");
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
@@ -234,6 +260,19 @@ export default function AdminOperationsPanel({
               <div style={{ marginBottom: 6, fontWeight: 700 }}>Email body</div>
               <textarea readOnly style={{ ...ui.input, minHeight: 180, resize: "vertical" }} value={disseminationBody} />
             </div>
+            <button
+              type="button"
+              style={ui.btnPrimary}
+              disabled={sending || !selectedDivision || !selectedDivisionRecipients.length}
+              onClick={handleSendDissemination}
+            >
+              {sending ? "Sending..." : "Send Dissemination Email"}
+            </button>
+            {sendMessage ? (
+              <div style={{ color: sendMessage.startsWith("Sent") ? "#166534" : "#b91c1c", fontWeight: 700 }}>
+                {sendMessage}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

@@ -156,6 +156,34 @@ export async function rejectAccountRequest(id) {
   return fetchJson(`/auth/account-requests/${encodeURIComponent(id)}/reject`, { method: "POST" });
 }
 
+export async function loadUsers() {
+  return fetchJson("/auth/users");
+}
+
+export async function updateUser(id, payload) {
+  return fetchJson(`/auth/users/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function resendUserInvite(id) {
+  return fetchJson(`/auth/users/${encodeURIComponent(id)}/resend-invite`, { method: "POST" });
+}
+
+export async function sendUserPasswordReset(id) {
+  return fetchJson(`/auth/users/${encodeURIComponent(id)}/password-reset`, { method: "POST" });
+}
+
+export async function sendDissemination(payload) {
+  return fetchJson("/dissemination/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function requestPasswordReset(email) {
   return fetchJson("/auth/password-reset/request", {
     method: "POST",

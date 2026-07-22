@@ -116,6 +116,83 @@ router.get("/account-requests", async (req, res) => {
   }
 });
 
+router.get("/users", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const result = await query(
+      `SELECT id, employee_id, email, full_name, role, division, active_status, password_set_at, last_login_at, created_at, updated_at
+       FROM scope_users
+       ORDER BY active_status, role, full_name, email
+       LIMIT 1000`
+    );
+    res.json({ users: result.rows.map(sanitizeUser) });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not load users." });
+  }
+});
+
+router.patch("/users/:id", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const employeeId = String(req.body?.employee_id || req.body?.employeeId || "").trim();
+    const fullName = String(req.body?.full_name || req.body?.fullName || "").trim();
+    const role = String(req.body?.role || "").trim().toLowerCase();
+    const division = String(req.body?.division || "").trim();
+    const activeStatus = String(req.body?.active_status || req.body?.activeStatus || "").trim().toLowerCase();
+    if (role && !validRoles.has(role)) return res.status(400).json({ error: "Role must be admin, chair, dean, or faculty." });
+    if (activeStatus && !["invited", "active", "disabled"].includes(activeStatus)) {
+      return res.status(400).json({ error: "Status must be invited, active, or disabled." });
+    }
+
+    const existingResult = await query("SELECT * FROM scope_users WHERE id = $1 LIMIT 1", [req.params.id]);
+    const existing = existingResult.rows[0];
+    if (!existing) return res.status(404).json({ error: "User not found." });
+    const hasEmployeeId = Object.prototype.hasOwnProperty.call(req.body || {}, "employee_id") || Object.prototype.hasOwnProperty.call(req.body || {}, "employeeId");
+    const hasFullName = Object.prototype.hasOwnProperty.call(req.body || {}, "full_name") || Object.prototype.hasOwnProperty.call(req.body || {}, "fullName");
+    const hasDivision = Object.prototype.hasOwnProperty.call(req.body || {}, "division");
+
+    const result = await query(
+      `UPDATE scope_users
+       SET employee_id = $2,
+           full_name = $3,
+           role = $4,
+           division = $5,
+           active_status = $6,
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [
+        req.params.id,
+        hasEmployeeId ? employeeId : existing.employee_id || "",
+        hasFullName ? fullName : existing.full_name || "",
+        role || existing.role,
+        hasDivision ? division : existing.division || "",
+        activeStatus || existing.active_status,
+      ]
+    );
+    const nextRole = role || existing.role;
+    const nextDivision = hasDivision ? division : existing.division || "";
+    const nextStatus = activeStatus || existing.active_status;
+    if (nextStatus !== "active" || nextRole !== existing.role || nextDivision !== (existing.division || "")) {
+      await query("UPDATE scope_user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL", [req.params.id]);
+    }
+    await query(
+      `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, instructor_name, old_value, new_value, note, source)
+       VALUES ('USER_UPDATED', $1, 'admin', $2, $3, $4, $5, 'backend')`,
+      [
+        req.auth?.user?.email || req.auth?.authType || "",
+        existing.email,
+        JSON.stringify(sanitizeUser(existing)),
+        JSON.stringify(sanitizeUser(result.rows[0])),
+        `Updated user ${existing.email}.`,
+      ]
+    );
+    res.json({ user: sanitizeUser(result.rows[0]) });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not update user." });
+  }
+});
+
 router.post("/invite", async (req, res) => {
   if (!requireAdmin(req, res)) return;
 
@@ -165,6 +242,59 @@ router.post("/invite", async (req, res) => {
     res.status(201).json({ invite: inviteResult.rows[0], inviteUrl, email: emailResult });
   } catch (error) {
     res.status(500).json({ error: error.message || "Could not create invitation." });
+  }
+});
+
+router.post("/users/:id/resend-invite", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const userResult = await query("SELECT * FROM scope_users WHERE id = $1 LIMIT 1", [req.params.id]);
+    const user = userResult.rows[0];
+    if (!user) return res.status(404).json({ error: "User not found." });
+    if (user.active_status === "disabled") return res.status(400).json({ error: "Disabled users cannot receive invites." });
+
+    const token = createRawToken();
+    const inviteUrl = buildInviteUrl(token);
+    const inviteResult = await query(
+      `INSERT INTO scope_user_invites (user_id, employee_id, email, full_name, role, division, invite_token_hash, expires_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, employee_id, email, full_name, role, division, expires_at, accepted_at, created_at`,
+      [
+        user.id,
+        user.employee_id || "",
+        user.email,
+        user.full_name || "",
+        user.role,
+        user.division || "",
+        hashToken(token),
+        inviteExpiresAt(),
+        req.auth?.user?.email || req.auth?.authType || "",
+      ]
+    );
+    const emailResult = await sendInviteEmail({ email: user.email, fullName: user.full_name, inviteUrl });
+    res.json({ invite: inviteResult.rows[0], inviteUrl, email: emailResult });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not resend invite." });
+  }
+});
+
+router.post("/users/:id/password-reset", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const userResult = await query("SELECT * FROM scope_users WHERE id = $1 AND active_status = 'active' LIMIT 1", [req.params.id]);
+    const user = userResult.rows[0];
+    if (!user) return res.status(404).json({ error: "Active user not found." });
+    const token = createRawToken();
+    const resetUrl = buildPasswordResetUrl(token);
+    await query(
+      `INSERT INTO scope_password_resets (user_id, reset_token_hash, expires_at)
+       VALUES ($1, $2, $3)`,
+      [user.id, hashToken(token), resetExpiresAt()]
+    );
+    const emailResult = await sendPasswordResetEmail({ email: user.email, fullName: user.full_name, resetUrl });
+    res.json({ resetUrl, email: emailResult });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not send password reset." });
   }
 });
 

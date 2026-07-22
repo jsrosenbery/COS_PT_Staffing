@@ -2,7 +2,8 @@ import express from "express";
 import multer from "multer";
 import Papa from "papaparse";
 import { pool, query } from "../db.js";
-import { requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles } from "../permissions.js";
+import { requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles } from "../permissions.js";
+import { sendDisseminationEmail } from "../emailService.js";
 
 const router = express.Router();
 const upload = multer({
@@ -532,7 +533,7 @@ router.post("/upload/subject-mapping", requireRoles("admin"), upload.single("fil
   } finally { client.release(); }
 });
 
-router.post("/upload/schedule/preview", requireElevatedRole, upload.single("file"), async (req, res) => {
+router.post("/upload/schedule/preview", requireElevatedRole, requireDivisionScope, upload.single("file"), async (req, res) => {
   const file = req.file;
   const termCode = normalize(req.body?.termCode);
   const divisionName = canonicalDivisionName(req.body?.divisionName);
@@ -562,7 +563,7 @@ router.post("/upload/schedule/preview", requireElevatedRole, upload.single("file
   } catch (error) { res.status(500).json({ ok: false, error: error.message, errors: [error.message] }); }
 });
 
-router.post("/upload/schedule", requireElevatedRole, upload.single("file"), async (req, res) => {
+router.post("/upload/schedule", requireElevatedRole, requireDivisionScope, upload.single("file"), async (req, res) => {
   const file = req.file;
   const termCode = normalize(req.body?.termCode);
   const divisionName = canonicalDivisionName(req.body?.divisionName);
@@ -871,7 +872,7 @@ async function advanceAssignmentStatus({ client, termCode, fromStatuses, toStatu
   return result.rows;
 }
 
-router.post("/assignments/submit", requireRoles("chair"), async (req, res) => {
+router.post("/assignments/submit", requireRoles("chair"), requireDivisionScope, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = [], actorName = "" } = req.body || {};
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim()).filter(Boolean) : [];
@@ -898,7 +899,7 @@ router.post("/assignments/submit", requireRoles("chair"), async (req, res) => {
   } finally { client.release(); }
 });
 
-router.post("/assignments/approve", requireRoles("dean"), async (req, res) => {
+router.post("/assignments/approve", requireRoles("dean"), requireDivisionScope, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = [], actorName = "" } = req.body || {};
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim()).filter(Boolean) : [];
@@ -925,7 +926,7 @@ router.post("/assignments/approve", requireRoles("dean"), async (req, res) => {
   } finally { client.release(); }
 });
 
-router.post("/assignments", requireElevatedRole, async (req, res) => {
+router.post("/assignments", requireElevatedRole, requireDivisionScope, async (req, res) => {
   const { termCode = "", disciplineCode = "", assignmentGroupId = "", employeeId = "", actorName = "", reason = "" } = req.body || {};
   if (!termCode || !assignmentGroupId || !employeeId) return res.status(400).json({ error: "termCode, assignmentGroupId, and employeeId are required." });
   const client = await pool.connect();
@@ -1060,7 +1061,7 @@ router.post("/preferences", requirePreferenceOwnerOrElevated, async (req, res) =
 });
 
 
-router.delete("/preferences", requireElevatedRole, async (req, res) => {
+router.delete("/preferences", requireElevatedRole, requireDivisionScope, async (req, res) => {
   const { termCode = "", division = "" } = req.query;
   if (!termCode || !division) return res.status(400).json({ error: "termCode and division are required." });
   const client = await pool.connect();
@@ -1161,6 +1162,72 @@ router.post("/preferences/wipe", requireElevatedRole, async (req,res)=>{
                 [termCode,`Wiped ${division}`]);
    res.json({ok:true,deleted:result.rowCount});
  }catch(e){res.status(500).json({error:e.message});}
+});
+
+router.post("/dissemination/send", requireElevatedRole, requireDivisionScope, async (req, res) => {
+  const {
+    termCode = "",
+    division = "",
+    senderEmail = "",
+    subject = "",
+    body = "",
+    closesAt = null,
+  } = req.body || {};
+
+  if (!termCode || !division || !senderEmail || !subject || !body) {
+    return res.status(400).json({ error: "termCode, division, senderEmail, subject, and body are required." });
+  }
+
+  const client = await pool.connect();
+  let transactionStarted = false;
+  try {
+    const recipientResult = await client.query(
+      `SELECT DISTINCT email, CONCAT_WS(' ', first_name, last_name) AS full_name
+       FROM scope_pt_faculty
+       WHERE division = $1
+         AND COALESCE(active_status, 'active') = 'active'
+         AND COALESCE(email, '') <> ''
+       ORDER BY email`,
+      [division]
+    );
+    const recipients = recipientResult.rows.map((row) => row.email).filter(Boolean);
+    if (!recipients.length) return res.status(400).json({ error: "No active recipients with email were found for this division." });
+
+    const emailResult = await sendDisseminationEmail({ recipients, subject, body });
+
+    await client.query("BEGIN");
+    transactionStarted = true;
+    const windowResult = await client.query(
+      `INSERT INTO scope_staffing_windows (term, division, sender_email, closes_at, status, updated_at)
+       VALUES ($1, $2, $3, $4, 'open', NOW())
+       RETURNING id, term, division, sender_email, opened_at, closes_at, status`,
+      [termCode, division, senderEmail, closesAt || null]
+    );
+    await client.query(
+      `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, division, term, note, source)
+       VALUES ('DISSEMINATION_SENT', $1, $2, $3, $4, $5, 'backend')`,
+      [
+        req.auth?.user?.full_name || req.auth?.user?.email || req.auth?.authType || "",
+        req.auth?.user?.role || req.auth?.role || "",
+        division,
+        termCode,
+        `Sent staffing window email to ${recipients.length} recipient(s). Subject: ${subject}`,
+      ]
+    );
+    await client.query("COMMIT");
+
+    res.json({
+      success: true,
+      recipientCount: recipients.length,
+      email: emailResult,
+      window: windowResult.rows[0],
+    });
+  } catch (error) {
+    if (transactionStarted) await client.query("ROLLBACK");
+    res.status(500).json({ error: error.message || "Could not send dissemination email." });
+  } finally {
+    client.release();
+  }
 });
 export default router;
 

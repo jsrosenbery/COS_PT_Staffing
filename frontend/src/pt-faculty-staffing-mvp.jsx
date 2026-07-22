@@ -17,12 +17,16 @@ import {
   getCurrentUser,
   inviteUser,
   loadAccountRequests,
+  loadUsers,
   login,
   logout,
   rejectAccountRequest,
   requestAccount,
   requestPasswordReset,
+  resendUserInvite,
+  sendUserPasswordReset,
   setApiToken,
+  updateUser,
 } from "./apiClient";
 
 const initialTerms = [];
@@ -912,6 +916,9 @@ export default function PTFacultyStaffingMVP() {
   const [accountRequests, setAccountRequests] = useState([]);
   const [accountRequestsMessage, setAccountRequestsMessage] = useState("");
   const [accountRequestsBusy, setAccountRequestsBusy] = useState(false);
+  const [managedUsers, setManagedUsers] = useState([]);
+  const [managedUsersMessage, setManagedUsersMessage] = useState("");
+  const [managedUsersBusy, setManagedUsersBusy] = useState(false);
   const [accessRequestForm, setAccessRequestForm] = useState({ email: "", full_name: "", employee_id: "", role: "faculty", division: "", note: "" });
   const [accessRequestMessage, setAccessRequestMessage] = useState("");
   const [accessRequestBusy, setAccessRequestBusy] = useState(false);
@@ -1156,6 +1163,48 @@ export default function PTFacultyStaffingMVP() {
     }
   }
 
+  async function refreshManagedUsers() {
+    setManagedUsersBusy(true);
+    setManagedUsersMessage("");
+    try {
+      const data = await loadUsers();
+      setManagedUsers(data.users || []);
+    } catch (error) {
+      setManagedUsersMessage(error.message || "Could not load users.");
+    } finally {
+      setManagedUsersBusy(false);
+    }
+  }
+
+  async function saveManagedUser(user, patch) {
+    setManagedUsersBusy(true);
+    setManagedUsersMessage("");
+    try {
+      const data = await updateUser(user.id, { ...user, ...patch });
+      setManagedUsers((prev) => prev.map((item) => item.id === user.id ? data.user : item));
+      setManagedUsersMessage(`Updated ${data.user.email}.`);
+    } catch (error) {
+      setManagedUsersMessage(error.message || "Could not update user.");
+    } finally {
+      setManagedUsersBusy(false);
+    }
+  }
+
+  async function runUserAction(user, action) {
+    setManagedUsersBusy(true);
+    setManagedUsersMessage("");
+    try {
+      const data = action === "invite" ? await resendUserInvite(user.id) : await sendUserPasswordReset(user.id);
+      const link = data.inviteUrl || data.resetUrl || "";
+      const staged = data.email?.delivered === false && link ? ` Console link: ${link}` : "";
+      setManagedUsersMessage(`${action === "invite" ? "Invite" : "Password reset"} sent for ${user.email}.${staged}`);
+    } catch (error) {
+      setManagedUsersMessage(error.message || "Could not complete user action.");
+    } finally {
+      setManagedUsersBusy(false);
+    }
+  }
+
   async function reviewAccountRequest(id, action) {
     setAccountRequestsBusy(true);
     setAccountRequestsMessage("");
@@ -1204,6 +1253,10 @@ export default function PTFacultyStaffingMVP() {
 
   useEffect(() => {
     if (canUseAdminTools) refreshAccountRequests();
+  }, [canUseAdminTools]);
+
+  useEffect(() => {
+    if (canUseAdminTools) refreshManagedUsers();
   }, [canUseAdminTools]);
 
 
@@ -3704,6 +3757,82 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   {accountRequestsBusy ? "Loading requests..." : "No pending account requests."}
                 </div>
               )}
+            </div>
+          </div>
+          <div style={{ marginTop: 22, borderTop: "1px solid var(--border-soft)", paddingTop: 16 }}>
+            <div style={ui.between}>
+              <div>
+                <h3 style={{ ...ui.cardTitle, fontSize: 16 }}>User Management</h3>
+                <div style={ui.cardDesc}>Disable users, adjust roles/divisions, resend setup links, or trigger password resets.</div>
+              </div>
+              <button type="button" style={ui.btn} onClick={refreshManagedUsers} disabled={managedUsersBusy}>
+                Refresh
+              </button>
+            </div>
+            {managedUsersMessage ? (
+              <div style={{ marginTop: 10, fontSize: 13, color: managedUsersMessage.includes("Could not") ? "#b91c1c" : "var(--text-muted)", fontWeight: 700 }}>
+                {managedUsersMessage}
+              </div>
+            ) : null}
+            <div style={{ overflowX: "auto", marginTop: 12 }}>
+              <table className="cos-table" style={ui.table}>
+                <thead>
+                  <tr>
+                    <th style={ui.th}>User</th>
+                    <th style={ui.th}>Role</th>
+                    <th style={ui.th}>Division</th>
+                    <th style={ui.th}>Status</th>
+                    <th style={ui.th}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {managedUsers.length ? managedUsers.map((user) => (
+                    <tr key={user.id}>
+                      <td style={ui.td}>
+                        <div style={{ fontWeight: 800 }}>{user.full_name || user.email}</div>
+                        <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{user.email}{user.employee_id ? ` | ${user.employee_id}` : ""}</div>
+                      </td>
+                      <td style={ui.td}>
+                        <select style={ui.input} value={user.role || "faculty"} onChange={(e) => saveManagedUser(user, { role: e.target.value })} disabled={managedUsersBusy}>
+                          <option value="faculty">Faculty</option>
+                          <option value="chair">Chair</option>
+                          <option value="dean">Dean</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </td>
+                      <td style={ui.td}>
+                        <select style={ui.input} value={user.division || ""} onChange={(e) => saveManagedUser(user, { division: e.target.value })} disabled={managedUsersBusy}>
+                          <option value="">All / none</option>
+                          {uploadDivisionOptions.map((division) => (
+                            <option key={division} value={division}>{division}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td style={ui.td}>
+                        <select style={ui.input} value={user.active_status || "invited"} onChange={(e) => saveManagedUser(user, { active_status: e.target.value })} disabled={managedUsersBusy}>
+                          <option value="invited">Invited</option>
+                          <option value="active">Active</option>
+                          <option value="disabled">Disabled</option>
+                        </select>
+                      </td>
+                      <td style={ui.td}>
+                        <div style={ui.row}>
+                          <button type="button" style={ui.btn} onClick={() => runUserAction(user, "invite")} disabled={managedUsersBusy || user.active_status === "disabled"}>
+                            Resend Invite
+                          </button>
+                          <button type="button" style={ui.btn} onClick={() => runUserAction(user, "reset")} disabled={managedUsersBusy || user.active_status !== "active"}>
+                            Password Reset
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td style={ui.td} colSpan={5}>{managedUsersBusy ? "Loading users..." : "No users found."}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
