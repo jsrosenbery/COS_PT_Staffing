@@ -47,7 +47,7 @@ test("generic client-controlled audit write endpoint is removed", () => {
 });
 
 test("schema stores immutable audit context and optimistic versions", () => {
-  const schema = read("../schema.sql");
+  const schema = read("../migrations/0001_baseline.sql");
 
   assert.match(schema, /actor_user_id INTEGER/);
   assert.match(schema, /actor_email TEXT DEFAULT ''/);

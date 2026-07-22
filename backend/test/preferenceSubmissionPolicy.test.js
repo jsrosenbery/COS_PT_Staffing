@@ -96,7 +96,7 @@ test("window timezone is documented as America/Los_Angeles", () => {
 });
 
 test("schema stores versioning, frozen, superseded, actor, and uniqueness fields", () => {
-  const schema = fs.readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
+  const schema = fs.readFileSync(new URL("../migrations/0001_baseline.sql", import.meta.url), "utf8");
 
   assert.match(schema, /status TEXT NOT NULL DEFAULT 'submitted'/);
   assert.match(schema, /version_number INTEGER NOT NULL DEFAULT 1/);

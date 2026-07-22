@@ -150,3 +150,9 @@ test("security headers and stable public errors are wired into startup", () => {
   assert.match(server, /publicError\(res, 401, "UNAUTHORIZED"/);
   assert.match(server, /cleanupExpiredAuthRecords/);
 });
+
+test("production startup does not execute schema migrations", () => {
+  const server = read("../server.js");
+  assert.doesNotMatch(server, /schema\.sql|runMigrations|ensureSchema/);
+  assert.match(server, /app\.listen/);
+});

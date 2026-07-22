@@ -6,6 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
+    "migrate": "node scripts/migrate.js",
+    "migrate:status": "node scripts/migrate.js --status",
+    "db:setup": "npm run migrate",
     "seed:logins": "node scripts/seed-login-users.js"
   },
   "dependencies": {
