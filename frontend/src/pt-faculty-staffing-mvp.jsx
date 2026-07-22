@@ -1022,6 +1022,7 @@ export default function PTFacultyStaffingMVP() {
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
   const apiTokenConfigured = Boolean(apiTokenInput.trim());
   const savedApiTokenConfigured = Boolean(getApiToken());
+  const canShowWorkspace = Boolean(currentUser || savedApiTokenConfigured);
   const canUseAdminTools = role === "admin" && (currentUser?.role === "admin" || savedApiTokenConfigured);
   const canUseElevatedTools = canUseAdminTools || ["chair", "dean"].includes(currentUser?.role || "");
   const roleOptions = currentUser && currentUser.role !== "admin"
@@ -1478,21 +1479,24 @@ export default function PTFacultyStaffingMVP() {
 
   useEffect(() => {
     loadTerms();
-    hydrateAdminDirectories();
   }, []);
 
   useEffect(() => {
-    if ((role === "chair" || role === "admin" || role === "dean") && activeTerm?.code) {
-      loadChairWorkflow();
-    }
-  }, [role, activeTerm?.code, selectedDisciplineCode, selectedChairName, selectedDeanName, chairAssignments, deanAssignments]);
+    if (canShowWorkspace) hydrateAdminDirectories();
+  }, [canShowWorkspace]);
 
   useEffect(() => {
-    if (activeTerm?.code) {
+    if (canShowWorkspace && (role === "chair" || role === "admin" || role === "dean") && activeTerm?.code) {
+      loadChairWorkflow();
+    }
+  }, [canShowWorkspace, role, activeTerm?.code, selectedDisciplineCode, selectedChairName, selectedDeanName, chairAssignments, deanAssignments]);
+
+  useEffect(() => {
+    if (canShowWorkspace && activeTerm?.code) {
       setSelectedDisciplineCode("ALL");
       loadAvailableSections("ALL");
     }
-  }, [role, activeTerm?.code, selectedChairName, selectedDeanName, chairAssignments, deanAssignments]);
+  }, [canShowWorkspace, role, activeTerm?.code, selectedChairName, selectedDeanName, chairAssignments, deanAssignments]);
 
 
   const themeVars = darkMode
@@ -1621,8 +1625,8 @@ export default function PTFacultyStaffingMVP() {
   }, [selectedUploadDivision, activeTerm.code]);
 
   useEffect(() => {
-    loadDivisionStatuses();
-  }, [activeTerm?.code]);
+    if (canShowWorkspace) loadDivisionStatuses();
+  }, [canShowWorkspace, activeTerm?.code]);
 
 
   useEffect(() => {
@@ -2883,32 +2887,36 @@ export default function PTFacultyStaffingMVP() {
                 <span>Dark View</span>
                 <input type="checkbox" checked={darkMode} onChange={(e) => setDarkMode(e.target.checked)} />
               </label>
-              <select
-                style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)" }}
-                value={role}
-                onChange={(e) => { setRole(e.target.value); setSelectedDisciplineCode("ALL"); }}
-              >
-                {roleOptions.map((option) => (
-                  <option key={option.value} value={option.value} style={{ color: "#0f172a" }}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)", minWidth: 220 }}
-                value={activeTerm.code}
-                onChange={(e) => activateTerm(e.target.value)}
-                disabled={!canUseAdminTools}
-                title={canUseAdminTools ? "Switch active term" : "Admin access is required to switch the active term"}
-              >
-                {terms.length ? terms.map((term) => (
-                  <option key={term.code} value={term.code} style={{ color: "#0f172a" }}>
-                    {term.name}{term.active ? " - Active" : ""}
-                  </option>
-                )) : (
-                  <option value={activeTerm.code} style={{ color: "#0f172a" }}>{activeTerm.name}</option>
-                )}
-              </select>
+              {canShowWorkspace ? (
+                <>
+                  <select
+                    style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)" }}
+                    value={role}
+                    onChange={(e) => { setRole(e.target.value); setSelectedDisciplineCode("ALL"); }}
+                  >
+                    {roleOptions.map((option) => (
+                      <option key={option.value} value={option.value} style={{ color: "#0f172a" }}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)", minWidth: 220 }}
+                    value={activeTerm.code}
+                    onChange={(e) => activateTerm(e.target.value)}
+                    disabled={!canUseAdminTools}
+                    title={canUseAdminTools ? "Switch active term" : "Admin access is required to switch the active term"}
+                  >
+                    {terms.length ? terms.map((term) => (
+                      <option key={term.code} value={term.code} style={{ color: "#0f172a" }}>
+                        {term.name}{term.active ? " - Active" : ""}
+                      </option>
+                    )) : (
+                      <option value={activeTerm.code} style={{ color: "#0f172a" }}>{activeTerm.name}</option>
+                    )}
+                  </select>
+                </>
+              ) : null}
               <form
                 onSubmit={handleLogin}
                 style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "8px 10px", borderRadius: 16, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.22)" }}
@@ -2958,6 +2966,7 @@ export default function PTFacultyStaffingMVP() {
                   <span style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>{authMessage}</span>
                 ) : null}
               </form>
+              {canShowWorkspace ? (
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "8px 10px", borderRadius: 16, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.22)" }}>
                 <input
                   type="password"
@@ -2982,10 +2991,12 @@ export default function PTFacultyStaffingMVP() {
                   <span style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>{apiAccessMessage}</span>
                 ) : null}
               </div>
+              ) : null}
             </div>
           </div>
         </div>
 
+        {canShowWorkspace ? (
         <div style={ui.gridSummary}>
           <SummaryCard title="Ready" value={summary.ready} />
           <SummaryCard title="Open" value={summary.open} />
@@ -2994,6 +3005,7 @@ export default function PTFacultyStaffingMVP() {
           <SummaryCard title="Submitted" value={summary.submitted} />
           <SummaryCard title="No Activity" value={summary.noActivity} />
         </div>
+        ) : null}
 
         {setupInviteToken && !currentUser ? (
           <div style={ui.card}>
@@ -3152,6 +3164,8 @@ export default function PTFacultyStaffingMVP() {
           </div>
         ) : null}
 
+        {canShowWorkspace ? (
+        <>
         {canUseAdminTools ? (
         <div className="cos-summary-card" style={ui.card}>
           <div style={ui.between}>
@@ -4835,6 +4849,8 @@ OH,ORNAMENTAL_HORTICULTURE`}
         </div>
 
 
+        </>
+        ) : null}
       </div>
     </div>
   );
