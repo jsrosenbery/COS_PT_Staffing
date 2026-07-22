@@ -10,6 +10,15 @@ export function hasAnyRole(req, roles = []) {
   return roles.includes(role);
 }
 
+export function currentRole(req) {
+  return req.auth?.user?.role || req.auth?.role || "";
+}
+
+export function allowedDivisions(req) {
+  if (isAdmin(req)) return [];
+  return splitScope(req.auth?.user?.division);
+}
+
 export function requireRoles(...roles) {
   return (req, res, next) => {
     if (hasAnyRole(req, roles)) return next();
@@ -55,8 +64,36 @@ export function requestedDivisions(req) {
 export function requireDivisionScope(req, res, next) {
   if (isAdmin(req)) return next();
   const requested = requestedDivisions(req);
-  if (!requested.length) return next();
-  const allowed = splitScope(req.auth?.user?.division);
+  if (!requested.length) return res.status(400).json({ error: "A division scope is required for this action." });
+  const allowed = allowedDivisions(req);
   if (allowed.length && requested.every((division) => allowed.includes(division))) return next();
   return res.status(403).json({ error: "This action is outside your assigned division scope." });
+}
+
+export function scopeFilterForReq(req, requested = []) {
+  if (isAdmin(req)) return requested;
+  const allowed = allowedDivisions(req);
+  if (!allowed.length) return [];
+  const normalizedRequested = requested.flatMap(splitScope);
+  if (!normalizedRequested.length) return allowed;
+  return normalizedRequested.filter((division) => allowed.includes(division));
+}
+
+export function requireScopedRead(req, res, next) {
+  if (isAdmin(req)) return next();
+  const allowed = allowedDivisions(req);
+  if (!allowed.length) return res.status(403).json({ error: "No valid division scope is assigned to this account." });
+  return next();
+}
+
+export function enforceFacultySelf(req, res, next) {
+  if (isAdmin(req) || elevatedRoles.has(req.auth?.user?.role)) return next();
+  const user = req.auth?.user;
+  if (user?.role !== "faculty" || !user.employee_id) {
+    return res.status(403).json({ error: "Faculty account ownership could not be verified." });
+  }
+  req.query.facultyId = user.employee_id;
+  req.body.facultyId = user.employee_id;
+  req.body.employeeId = user.employee_id;
+  return next();
 }

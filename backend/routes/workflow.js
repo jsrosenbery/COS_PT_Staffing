@@ -6,7 +6,7 @@ import { analyzeAllocation } from "../domain/allocationAnalysis.js";
 import { defaultContractExceptionReasons, validateChairDecision } from "../domain/chairDecision.js";
 import { buildDecisionExplanation, decisionExplanationRows } from "../domain/decisionExplanation.js";
 import { canSavePreferenceVersion, preferenceSubmissionStatuses, preferenceWindowTimezone, validatePreferenceRanks } from "../domain/preferenceSubmissionPolicy.js";
-import { isAdmin, requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles } from "../permissions.js";
+import { enforceFacultySelf, isAdmin, requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles, requireScopedRead, scopeFilterForReq } from "../permissions.js";
 import { sendDisseminationEmail } from "../emailService.js";
 
 const router = express.Router();
@@ -998,7 +998,7 @@ router.post("/upload/schedule", requireElevatedRole, requireDivisionScope, uploa
   } finally { client.release(); }
 });
 
-router.get("/available-sections", async (req, res) => {
+router.get("/available-sections", requireScopedRead, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
@@ -1008,10 +1008,11 @@ router.get("/available-sections", async (req, res) => {
       params.push(disciplineCode);
       where += ` AND s.discipline_code = $${params.length}`;
     }
-    const divisionList = String(divisions || "").split("|").map((v) => v.trim()).filter(Boolean);
+    const divisionList = scopeFilterForReq(req, String(divisions || "").split("|"));
+    if (!isAdmin(req) && !divisionList.length) return res.status(403).json({ error: "No permitted divisions are available for this request." });
     if (divisionList.length) {
       params.push(divisionList);
-      where += ` AND s.division = ANY($${params.length}::text[])`;
+      where += ` AND LOWER(s.division) = ANY($${params.length}::text[])`;
     }
     const result = await query(
       `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.subject_code, s.course_number,
@@ -1025,10 +1026,17 @@ router.get("/available-sections", async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.get("/division-statuses", async (req, res) => {
+router.get("/division-statuses", requireScopedRead, async (req, res) => {
   const { termCode = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
+    const params = [termCode];
+    const scopedDivisions = scopeFilterForReq(req, []);
+    let scopedWhere = "";
+    if (scopedDivisions.length) {
+      params.push(scopedDivisions);
+      scopedWhere = `AND LOWER(s.division) = ANY($${params.length}::text[])`;
+    }
     const result = await query(
       `SELECT s.division AS division, s.division AS division_name,
               COUNT(DISTINCT s.assignment_group_id)::int AS open_sections_count,
@@ -1042,10 +1050,10 @@ router.get("/division-statuses", async (req, res) => {
        LEFT JOIN scope_preferences p ON p.term_code = s.term_code AND p.assignment_group_id = s.assignment_group_id
        LEFT JOIN scope_assignments a ON a.term_code = s.term_code AND a.assignment_group_id = s.assignment_group_id AND COALESCE(a.status, 'tentative') <> 'released'
        LEFT JOIN scope_audit_log l ON l.term = s.term_code AND l.section_key = s.assignment_group_id
-       WHERE s.term_code = $1
+       WHERE s.term_code = $1 ${scopedWhere}
        GROUP BY s.division
        ORDER BY s.division`,
-      [termCode]
+      params
     );
     const divisions = result.rows.map((row) => {
       const sectionCount = row.open_sections_count || 0;
@@ -1455,7 +1463,7 @@ router.post("/chair-decisions", requireRoles("chair"), requireDivisionScope, asy
   }
 });
 
-router.get("/chair-workflow", async (req, res) => {
+router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
@@ -1465,10 +1473,11 @@ router.get("/chair-workflow", async (req, res) => {
       params.push(disciplineCode);
       where += ` AND s.discipline_code = $${params.length}`;
     }
-    const divisionList = String(divisions || "").split("|").map((v) => v.trim()).filter(Boolean);
+    const divisionList = scopeFilterForReq(req, String(divisions || "").split("|"));
+    if (!isAdmin(req) && !divisionList.length) return res.status(403).json({ error: "No permitted divisions are available for this request." });
     if (divisionList.length) {
       params.push(divisionList);
-      where += ` AND s.division = ANY($${params.length}::text[])`;
+      where += ` AND LOWER(s.division) = ANY($${params.length}::text[])`;
     }
     const result = await query(
       `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus,
@@ -1525,7 +1534,7 @@ router.get("/chair-workflow", async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.get("/assignments", async (req, res) => {
+router.get("/assignments", requireElevatedRole, requireScopedRead, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
@@ -1535,10 +1544,11 @@ router.get("/assignments", async (req, res) => {
       params.push(disciplineCode);
       scopedFilter += ` AND COALESCE(NULLIF(a.discipline_code, ''), s.discipline_code) = $${params.length}`;
     }
-    const divisionList = String(divisions || "").split("|").map((v) => v.trim()).filter(Boolean);
+    const divisionList = scopeFilterForReq(req, String(divisions || "").split("|"));
+    if (!isAdmin(req) && !divisionList.length) return res.status(403).json({ error: "No permitted divisions are available for this request." });
     if (divisionList.length) {
       params.push(divisionList);
-      scopedFilter += ` AND s.division = ANY($${params.length}::text[])`;
+      scopedFilter += ` AND LOWER(s.division) = ANY($${params.length}::text[])`;
     }
     const result = await query(
       `SELECT a.id, a.assignment_group_id, a.employee_id, a.faculty_name, a.status, a.reason, a.reason_code, a.justification,
@@ -1663,11 +1673,15 @@ router.post("/assignments/approve", requireRoles("dean"), requireDivisionScope, 
   } finally { client.release(); }
 });
 
-router.post("/assignments", requireElevatedRole, requireDivisionScope, async (req, res) => {
+router.post("/assignments", requireElevatedRole, async (req, res) => {
   const { termCode = "", disciplineCode = "", assignmentGroupId = "", employeeId = "", actorName = "", reason = "" } = req.body || {};
   if (!termCode || !assignmentGroupId || !employeeId) return res.status(400).json({ error: "termCode, assignmentGroupId, and employeeId are required." });
   const client = await pool.connect();
   try {
+    const section = await client.query(`SELECT division FROM scope_sections WHERE term_code = $1 AND assignment_group_id = $2 LIMIT 1`, [termCode, assignmentGroupId]);
+    if (!section.rows.length) return res.status(404).json({ error: "Section not found." });
+    const scoped = scopeFilterForReq(req, [section.rows[0].division]);
+    if (!isAdmin(req) && !scoped.length) return res.status(403).json({ error: "This action is outside your assigned division scope." });
     const faculty = await client.query(`SELECT CONCAT_WS(' ', first_name, last_name) AS faculty_name FROM scope_pt_faculty WHERE employee_id = $1 ORDER BY COALESCE(active_status, 'active') = 'active' DESC LIMIT 1`, [employeeId]);
     const facultyName = faculty.rows[0]?.faculty_name || employeeId;
     await client.query("BEGIN");
@@ -1691,10 +1705,22 @@ router.delete("/assignments/:id", requireElevatedRole, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const existing = await client.query(`SELECT * FROM scope_assignments WHERE id = $1 LIMIT 1`, [req.params.id]);
+    const existing = await client.query(
+      `SELECT a.*, s.division
+       FROM scope_assignments a
+       LEFT JOIN scope_sections s ON s.term_code = a.term_code AND s.assignment_group_id = a.assignment_group_id
+       WHERE a.id = $1
+       LIMIT 1`,
+      [req.params.id]
+    );
     if (!existing.rows.length) {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Assignment not found." });
+    }
+    const scoped = scopeFilterForReq(req, [existing.rows[0].division]);
+    if (!isAdmin(req) && !scoped.length) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "This action is outside your assigned division scope." });
     }
     await client.query(`DELETE FROM scope_assignments WHERE id = $1`, [req.params.id]);
     await client.query("COMMIT");
@@ -1711,10 +1737,22 @@ router.put("/assignments/:id/reassign", requireElevatedRole, async (req, res) =>
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const existing = await client.query(`SELECT * FROM scope_assignments WHERE id = $1 LIMIT 1`, [req.params.id]);
+    const existing = await client.query(
+      `SELECT a.*, s.division
+       FROM scope_assignments a
+       LEFT JOIN scope_sections s ON s.term_code = a.term_code AND s.assignment_group_id = a.assignment_group_id
+       WHERE a.id = $1
+       LIMIT 1`,
+      [req.params.id]
+    );
     if (!existing.rows.length) {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "Assignment not found." });
+    }
+    const scoped = scopeFilterForReq(req, [existing.rows[0].division]);
+    if (!isAdmin(req) && !scoped.length) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "This action is outside your assigned division scope." });
     }
     const faculty = await client.query(`SELECT CONCAT_WS(' ', first_name, last_name) AS faculty_name FROM scope_pt_faculty WHERE employee_id = $1 LIMIT 1`, [employeeId]);
     const facultyName = faculty.rows[0]?.faculty_name || employeeId;
@@ -1727,7 +1765,7 @@ router.put("/assignments/:id/reassign", requireElevatedRole, async (req, res) =>
   } finally { client.release(); }
 });
 
-router.get("/preferences", requirePreferenceOwnerOrElevated, async (req, res) => {
+router.get("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated, async (req, res) => {
   const { termCode = "", facultyId = "" } = req.query;
   if (!termCode || !facultyId) return res.status(400).json({ error: "termCode and facultyId are required." });
   try {
@@ -1760,7 +1798,7 @@ router.get("/preferences", requirePreferenceOwnerOrElevated, async (req, res) =>
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.post("/preferences", requirePreferenceOwnerOrElevated, async (req, res) => {
+router.post("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated, async (req, res) => {
   const { termCode = "", facultyId = "", employeeId = "", facultyName = "", preferences = [], availability = {}, action = "submit", auditReason = "", source = "web" } = req.body || {};
   if (!termCode || !facultyId) return res.status(400).json({ error: "termCode and facultyId are required." });
   if (!Array.isArray(preferences)) return res.status(400).json({ error: "preferences must be an array." });
@@ -1908,25 +1946,32 @@ router.delete("/preferences", requireElevatedRole, requireDivisionScope, async (
   } finally { client.release(); }
 });
 
-router.get("/preferences/export", async (req, res) => {
-  const { termCode = "" } = req.query;
+router.get("/preferences/export", requireElevatedRole, requireScopedRead, async (req, res) => {
+  const { termCode = "", divisions = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
+    const params = [termCode];
+    const scopedDivisions = scopeFilterForReq(req, String(divisions || "").split("|"));
+    let scopedFilter = "";
+    if (scopedDivisions.length) {
+      params.push(scopedDivisions);
+      scopedFilter = `AND LOWER(s.division) = ANY($${params.length}::text[])`;
+    }
     const result = await query(
       `SELECT p.term_code, p.faculty_id, p.employee_id, p.faculty_name, p.assignment_group_id, p.discipline_code, p.preference_rank,
               s.primary_subject_course, s.primary_crn, s.title
        FROM scope_preferences p
        LEFT JOIN scope_sections s ON s.term_code = p.term_code AND s.assignment_group_id = p.assignment_group_id
-       WHERE p.term_code = $1
+       WHERE p.term_code = $1 ${scopedFilter}
        ORDER BY p.faculty_name, p.preference_rank`,
-      [termCode]
+      params
     );
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.send(Papa.unparse(result.rows));
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-router.get("/decision-logs", async (req, res) => {
+router.get("/decision-logs", requireElevatedRole, requireScopedRead, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
@@ -1942,14 +1987,15 @@ router.get("/decision-logs", async (req, res) => {
         )
       )`;
     }
-    const divisionList = String(divisions || "").split("|").map((v) => v.trim()).filter(Boolean);
+    const divisionList = scopeFilterForReq(req, String(divisions || "").split("|"));
+    if (!isAdmin(req) && !divisionList.length) return res.status(403).json({ error: "No permitted divisions are available for this request." });
     if (divisionList.length) {
       params.push(divisionList);
       scopedClause += ` AND (
-        division = ANY($${params.length}::text[])
+        LOWER(division) = ANY($${params.length}::text[])
         OR section_key IN (
           SELECT assignment_group_id FROM scope_sections
-          WHERE term_code = $1 AND division = ANY($${params.length}::text[])
+          WHERE term_code = $1 AND LOWER(division) = ANY($${params.length}::text[])
         )
       )`;
     }
@@ -1967,6 +2013,8 @@ router.get("/decision-logs", async (req, res) => {
 router.post("/preferences/wipe", requireElevatedRole, async (req,res)=>{
  const {termCode,division}=req.body||{};
  if(!termCode||!division) return res.status(400).json({error:"termCode and division required"});
+ const scoped = scopeFilterForReq(req, [division]);
+ if (!isAdmin(req) && !scoped.length) return res.status(403).json({ error: "This action is outside your assigned division scope." });
  try{
    const result=await query(
      `DELETE FROM scope_preferences

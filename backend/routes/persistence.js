@@ -1,16 +1,24 @@
 import express from "express";
 import { pool, query } from "../db.js";
-import { requireElevatedRole, requireRoles } from "../permissions.js";
+import { requireElevatedRole, requireRoles, requireScopedRead, scopeFilterForReq } from "../permissions.js";
 
 const router = express.Router();
 
-router.get("/roles", async (_req, res) => {
+router.get("/roles", requireElevatedRole, requireScopedRead, async (req, res) => {
   try {
+    const params = [];
+    let where = "WHERE COALESCE(active_status, 'active') = 'active'";
+    const divisions = scopeFilterForReq(req, []);
+    if (divisions.length) {
+      params.push(divisions);
+      where += ` AND LOWER(division) = ANY($${params.length}::text[])`;
+    }
     const result = await query(
       `SELECT employee_id, first_name, last_name, email, role, division, active_status
        FROM scope_roles
-       WHERE COALESCE(active_status, 'active') = 'active'
-       ORDER BY division, role, last_name, first_name`
+       ${where}
+       ORDER BY division, role, last_name, first_name`,
+      params
     );
     res.json(result.rows);
   } catch (error) {
@@ -56,17 +64,26 @@ router.post("/roles", requireRoles("admin"), async (req, res) => {
   }
 });
 
-router.get("/pt-faculty", async (req, res) => {
+router.get("/pt-faculty", requireScopedRead, async (req, res) => {
   const includeInactive = String(req.query.includeInactive || "") === "1";
   try {
+    const where = [];
+    const params = [];
+    if (!includeInactive) where.push("COALESCE(active_status, 'active') = 'active'");
+    const divisions = scopeFilterForReq(req, []);
+    if (divisions.length) {
+      params.push(divisions);
+      where.push(`LOWER(division) = ANY($${params.length}::text[])`);
+    }
     const result = await query(
       `SELECT employee_id, first_name, last_name, email, division, discipline,
               COALESCE(NULLIF(seniority_rank, ''), seniority_value, '') AS seniority_rank,
               COALESCE(NULLIF(seniority_value, ''), seniority_rank, '') AS seniority_value,
               qualified_disciplines, active_status
        FROM scope_pt_faculty
-       ${includeInactive ? "" : "WHERE COALESCE(active_status, 'active') = 'active'"}
-       ORDER BY division, discipline, last_name, first_name`
+       ${where.length ? "WHERE " + where.join(" AND ") : ""}
+       ORDER BY division, discipline, last_name, first_name`,
+      params
     );
     res.json(result.rows);
   } catch (error) {
@@ -151,12 +168,21 @@ router.delete("/pt-faculty", requireRoles("admin"), async (_req, res) => {
   }
 });
 
-router.get("/windows", async (_req, res) => {
+router.get("/windows", requireElevatedRole, requireScopedRead, async (req, res) => {
   try {
+    const params = [];
+    let scoped = "";
+    const divisions = scopeFilterForReq(req, []);
+    if (divisions.length) {
+      params.push(divisions);
+      scoped = `WHERE LOWER(division) = ANY($${params.length}::text[])`;
+    }
     const result = await query(
       `SELECT id, term, division, sender_email, opened_at, closes_at, status
        FROM scope_staffing_windows
+       ${scoped}
        ORDER BY opened_at DESC`
+      , params
     );
     res.json(result.rows);
   } catch (error) {
@@ -236,8 +262,9 @@ router.get("/audit", requireElevatedRole, async (req, res) => {
   }
 });
 
-router.post("/audit", async (req, res) => {
+router.post("/audit", requireElevatedRole, async (req, res) => {
   const row = req.body || {};
+  const actor = req.auth?.user || {};
   try {
     const result = await query(
       `INSERT INTO scope_audit_log
@@ -246,8 +273,8 @@ router.post("/audit", async (req, res) => {
        RETURNING id, created_at`,
       [
         row.event_type || "",
-        row.actor_name || "",
-        row.actor_role || "",
+        actor.full_name || actor.email || req.auth?.authType || "",
+        actor.role || req.auth?.role || "",
         row.division || "",
         row.term || "",
         row.section_key || "",
