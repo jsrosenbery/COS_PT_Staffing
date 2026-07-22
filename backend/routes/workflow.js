@@ -1685,6 +1685,35 @@ router.post("/assignments/approve", requireRoles("dean"), requireDivisionScope, 
   } finally { client.release(); }
 });
 
+router.post("/assignments/return", requireRoles("dean"), requireDivisionScope, async (req, res) => {
+  const { termCode = "", disciplineCode = "", divisions = [], reason = "" } = req.body || {};
+  if (!termCode) return res.status(400).json({ error: "termCode is required." });
+  if (!String(reason || "").trim()) return res.status(400).json({ error: "A revision reason is required." });
+  const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean) : [];
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const rows = await advanceAssignmentStatus({
+      client,
+      req,
+      termCode,
+      fromStatuses: ["chair_submitted"],
+      toStatus: "returned_for_revision",
+      divisions: divisionList,
+      disciplineCode: String(disciplineCode || "").trim(),
+      actorName: req.auth?.user?.full_name || req.auth?.user?.email || "",
+      actorRole: "dean",
+      eventType: "DEAN_RETURNED_FOR_REVISION",
+      notePrefix: `Returned for revision: ${String(reason).trim()}.`,
+    });
+    await client.query("COMMIT");
+    res.json({ success: true, returnedCount: rows.length, message: `${rows.length} assignment(s) returned for chair revision.` });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: error.message });
+  } finally { client.release(); }
+});
+
 router.post("/assignments", requireElevatedRole, async (req, res) => {
   const { termCode = "", disciplineCode = "", assignmentGroupId = "", employeeId = "", reason = "", expectedAssignmentVersion = null } = req.body || {};
   if (!termCode || !assignmentGroupId || !employeeId) return res.status(400).json({ error: "termCode, assignmentGroupId, and employeeId are required." });

@@ -37,3 +37,10 @@ cd frontend && npm run build
 ```
 
 Set `TEST_DATABASE_URL` to an expendable PostgreSQL database when running backend tests so the migration integration cases execute. CI provides an isolated PostgreSQL service automatically.
+
+The staffing lifecycle integration suite creates a uniquely named schema inside `TEST_DATABASE_URL`, applies all migrations, starts the backend routers on an ephemeral local port, and drops the schema afterward. It never reads or writes production data and does not send email. To run it locally with the rest of the backend suite:
+
+```sh
+cd backend
+TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/scope_test npm test
+```
