@@ -85,7 +85,13 @@ router.post("/request-account", async (req, res) => {
        RETURNING id, email, full_name, requested_role, division, status, created_at`,
       [employeeId, email, fullName, requestedRole, division, note]
     );
-    const emailResult = await sendAccountRequestNotice({ email, fullName });
+    let emailResult;
+    try {
+      emailResult = await sendAccountRequestNotice({ email, fullName });
+    } catch (emailError) {
+      console.error("[account-request-email]", emailError);
+      emailResult = { delivered: false, error: "Confirmation email could not be sent." };
+    }
     res.status(201).json({ request: result.rows[0], email: emailResult });
   } catch (error) {
     res.status(500).json({ error: error.message || "Could not request account access." });
