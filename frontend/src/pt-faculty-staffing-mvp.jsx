@@ -1100,7 +1100,7 @@ export default function PTFacultyStaffingMVP() {
     setAccessRequestBusy(true);
     setAccessRequestMessage("");
     try {
-      await requestAccount({
+      const data = await requestAccount({
         email: accessRequestForm.email,
         full_name: accessRequestForm.full_name,
         employee_id: accessRequestForm.employee_id,
@@ -1109,7 +1109,11 @@ export default function PTFacultyStaffingMVP() {
         note: accessRequestForm.note,
       });
       setAccessRequestForm({ email: "", full_name: "", employee_id: "", role: "faculty", division: "", note: "" });
-      setAccessRequestMessage("Account request submitted for review.");
+      setAccessRequestMessage(
+        data.email?.delivered === false
+          ? "Account request submitted for review. Email delivery is not active yet; the request is still recorded."
+          : "Account request submitted for review. Confirmation email sent."
+      );
     } catch (error) {
       setAccessRequestMessage(error.message || "Could not submit account request.");
     } finally {
@@ -3114,8 +3118,9 @@ export default function PTFacultyStaffingMVP() {
                     style={{ ...ui.input, maxWidth: 260 }}
                     value={accessRequestForm.division}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, division: e.target.value }))}
+                    required
                   >
-                    <option value="">Division optional</option>
+                    <option value="">Select division</option>
                     {uploadDivisionOptions.map((division) => (
                       <option key={division} value={division}>{division}</option>
                     ))}

@@ -76,7 +76,7 @@ router.post("/request-account", async (req, res) => {
     const requestedRole = String(req.body?.requested_role || req.body?.role || "faculty").trim().toLowerCase();
     const division = String(req.body?.division || "").trim();
     const note = String(req.body?.note || "").trim();
-    if (!email || !fullName) return res.status(400).json({ error: "Email and full name are required." });
+    if (!email || !fullName || !division) return res.status(400).json({ error: "Email, full name, and division are required." });
     if (!validRoles.has(requestedRole)) return res.status(400).json({ error: "Requested role must be admin, chair, dean, or faculty." });
 
     const result = await query(
@@ -85,8 +85,8 @@ router.post("/request-account", async (req, res) => {
        RETURNING id, email, full_name, requested_role, division, status, created_at`,
       [employeeId, email, fullName, requestedRole, division, note]
     );
-    await sendAccountRequestNotice({ email, fullName });
-    res.status(201).json({ request: result.rows[0] });
+    const emailResult = await sendAccountRequestNotice({ email, fullName });
+    res.status(201).json({ request: result.rows[0], email: emailResult });
   } catch (error) {
     res.status(500).json({ error: error.message || "Could not request account access." });
   }
