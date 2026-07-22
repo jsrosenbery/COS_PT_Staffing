@@ -3,6 +3,9 @@ const RAW_BASE =
   "https://cos-pt-staffing.onrender.com/api";
 
 export const API_BASE = RAW_BASE.replace(/\/$/, "");
+export const API_TOKEN_AUTH_ENABLED =
+  String(import.meta.env.VITE_API_TOKEN_AUTH_ENABLED || "").trim().toLowerCase() === "true" ||
+  (import.meta.env.DEV && String(import.meta.env.VITE_API_TOKEN_AUTH_ENABLED || "").trim() !== "false");
 const API_TOKEN_STORAGE_KEY = "cos_pt_staffing_api_token";
 const SESSION_STORAGE_KEY = "cos_pt_staffing_session_token";
 const USER_STORAGE_KEY = "cos_pt_staffing_user";
@@ -55,7 +58,7 @@ export function clearSession() {
 
 export function withAuthHeaders(options = {}) {
   const sessionToken = getSessionToken();
-  const apiToken = getApiToken();
+  const apiToken = API_TOKEN_AUTH_ENABLED ? getApiToken() : "";
   const token = sessionToken || apiToken;
   if (!token) return options;
 

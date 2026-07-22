@@ -6,6 +6,7 @@ import { buildInitialPtRoster } from "./adminOpsUtils";
 import { loadRoles, loadPTFaculty, saveRoles, savePTFaculty, wipeActivePTRoster } from "./persistenceApi";
 import {
   API_BASE,
+  API_TOKEN_AUTH_ENABLED,
   acceptInvite,
   apiFetch,
   approveAccountRequest,
@@ -1031,7 +1032,7 @@ export default function PTFacultyStaffingMVP() {
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
   const apiTokenConfigured = Boolean(apiTokenInput.trim());
-  const savedApiTokenConfigured = Boolean(getApiToken());
+  const savedApiTokenConfigured = API_TOKEN_AUTH_ENABLED && Boolean(getApiToken());
   const canShowWorkspace = Boolean(currentUser || savedApiTokenConfigured);
   const canUseAdminTools = role === "admin" && (currentUser?.role === "admin" || savedApiTokenConfigured);
   const canUseElevatedTools = canUseAdminTools || ["chair", "dean"].includes(currentUser?.role || "");
@@ -1047,6 +1048,7 @@ export default function PTFacultyStaffingMVP() {
       : [{ value: "faculty", label: "Part-Time Faculty" }];
 
   function saveApiAccessToken() {
+    if (!API_TOKEN_AUTH_ENABLED) return;
     setApiToken(apiTokenInput);
     setApiAccessMessage(apiTokenInput.trim() ? "API access token saved for this browser session." : "API access token cleared.");
     if (apiTokenInput.trim()) setRole("admin");
@@ -1097,7 +1099,7 @@ export default function PTFacultyStaffingMVP() {
     try {
       const data = await inviteUser(inviteForm);
       setInviteForm({ email: "", full_name: "", employee_id: "", role: "faculty", division: "" });
-      setInviteMessage(data.email?.delivered === false ? `Invitation staged. Console email link: ${data.inviteUrl}` : "Invitation sent.");
+      setInviteMessage(data.email?.delivered === false && data.inviteUrl ? `Invitation staged. Console email link: ${data.inviteUrl}` : "Invitation sent.");
     } catch (error) {
       setInviteMessage(error.message || "Could not send invitation.");
     } finally {
@@ -1226,7 +1228,7 @@ export default function PTFacultyStaffingMVP() {
     try {
       const data = action === "approve" ? await approveAccountRequest(id) : await rejectAccountRequest(id);
       setAccountRequests((prev) => prev.filter((request) => request.id !== id));
-      setAccountRequestsMessage(action === "approve" && data.email?.delivered === false ? `Approved. Console invite link: ${data.inviteUrl}` : `Request ${action}d.`);
+      setAccountRequestsMessage(action === "approve" && data.email?.delivered === false && data.inviteUrl ? `Approved. Console invite link: ${data.inviteUrl}` : `Request ${action}d.`);
     } catch (error) {
       setAccountRequestsMessage(error.message || `Could not ${action} request.`);
     } finally {
@@ -2925,7 +2927,7 @@ export default function PTFacultyStaffingMVP() {
                 <span>Dark View</span>
                 <input type="checkbox" checked={darkMode} onChange={(e) => setDarkMode(e.target.checked)} />
               </label>
-              {canShowWorkspace ? (
+              {canShowWorkspace && API_TOKEN_AUTH_ENABLED ? (
                 <>
                   <select
                     style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)" }}
