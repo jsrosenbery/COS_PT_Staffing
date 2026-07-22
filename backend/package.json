@@ -11,7 +11,8 @@
     "db:setup": "npm run migrate",
     "db:integrity-report": "node scripts/data-integrity-report.js",
     "db:integrity-precheck": "node scripts/data-integrity-report.js --strict",
-    "seed:logins": "node scripts/seed-login-users.js"
+    "seed:logins": "node scripts/seed-login-users.js",
+    "staging:verify": "node scripts/staging-verify.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

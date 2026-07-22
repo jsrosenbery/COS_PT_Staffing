@@ -21,6 +21,13 @@ Database migrations are an explicit release step and must complete before deploy
 
 See [Database migrations](docs/database-migrations.md) for production adoption, verification, failure handling, and rollback limitations.
 
+## Operational readiness
+
+- [Environment configuration](docs/operations/environment-reference.md)
+- [Controlled deployment runbook](docs/operations/deployment-runbook.md)
+- [Staging pilot verification checklist](docs/operations/staging-pilot-checklist.md)
+- [Production release checklist](docs/operations/production-release-checklist.md)
+
 ## Authentication rate limiting
 
 Production uses PostgreSQL-backed authentication rate limits shared by every backend instance. Apply migrations before deploying the backend and leave `RATE_LIMIT_STORE=postgres`. If PostgreSQL is unavailable, protected authentication endpoints return `503` rather than silently falling back to process-local counters.

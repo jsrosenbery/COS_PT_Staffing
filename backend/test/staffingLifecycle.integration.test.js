@@ -305,24 +305,43 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
     });
 
     await t.test("two chairs cannot assign the same staffing unit", async () => {
-      const current = await api(`/api/allocation-analysis?termCode=${TERM}&division=${encodeURIComponent(SCIENCE)}`, { role: "chair", division: SCIENCE });
-      const recommendation = current.body.analysis.sections.find((item) => item.assignmentGroupId === "S-A3").highestSeniorityCurrentlyEligibleCandidate;
+      const concurrencyTerm = "2099CO";
+      await pool.query("INSERT INTO scope_terms (term_code, term_name) VALUES ($1, 'Concurrency Test Term')", [concurrencyTerm]);
+      await pool.query(
+        `INSERT INTO scope_sections
+           (term_code, division, assignment_group_id, primary_subject_course, primary_crn, title, subject_code, discipline_code, raw_row)
+         VALUES ($1,$2,'CONCURRENT-1','MATH 250','92500','Concurrency Fixture','MATH','MATH','{"staff_eligible":true}'::jsonb)`,
+        [concurrencyTerm, SCIENCE]
+      );
+      const submission = await pool.query(
+        `INSERT INTO scope_preference_submissions
+           (term_code, faculty_id, employee_id, faculty_name, division, discipline_code, status, version_number,
+            submission_snapshot, submitted_at, frozen_at)
+         VALUES ($1,'F2','F2','Bea Equal',$2,'MATH','frozen',1,'{}'::jsonb,NOW(),NOW())
+         RETURNING id`,
+        [concurrencyTerm, SCIENCE]
+      );
+      await pool.query(
+        `INSERT INTO scope_preference_submission_items
+           (submission_id, term_code, faculty_id, employee_id, faculty_name, assignment_group_id, discipline_code, preference_rank, item_snapshot)
+         VALUES ($1,$2,'F2','F2','Bea Equal','CONCURRENT-1','MATH',1,'{}'::jsonb)`,
+        [submission.rows[0].id, concurrencyTerm]
+      );
       const request = () => api("/api/chair-decisions", {
         method: "POST",
         role: "chair",
         division: SCIENCE,
         body: {
-          termCode: TERM,
+          termCode: concurrencyTerm,
           division: SCIENCE,
-          assignmentGroupId: "S-A3",
-          selectedEmployeeId: recommendation.employeeId,
-          expectedRecommendedEmployeeId: recommendation.employeeId,
+          assignmentGroupId: "CONCURRENT-1",
+          selectedEmployeeId: "F2",
+          expectedRecommendedEmployeeId: "F2",
         },
       });
       const results = await Promise.all([request(), request()]);
       assert.deepEqual(results.map((result) => result.status).sort(), [201, 409]);
-      decisions.set("S-A3", results.find((result) => result.status === 201).body.decision);
-      const active = await pool.query("SELECT COUNT(*)::int AS count FROM scope_assignments WHERE term_code = $1 AND assignment_group_id = 'S-A3' AND status = 'tentative'", [TERM]);
+      const active = await pool.query("SELECT COUNT(*)::int AS count FROM scope_assignments WHERE term_code = $1 AND assignment_group_id = 'CONCURRENT-1' AND status = 'tentative'", [concurrencyTerm]);
       assert.equal(active.rows[0].count, 1);
     });
 
@@ -334,7 +353,7 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
         body: { termCode: TERM, divisions: [SCIENCE] },
       });
       assert.equal(submitted.status, 200);
-      assert.equal(submitted.body.submittedCount, 3);
+      assert.equal(submitted.body.submittedCount, 2);
 
       const chairCannotReturn = await api("/api/assignments/return", {
         method: "POST",
@@ -351,7 +370,7 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
         body: { termCode: TERM, divisions: [SCIENCE], reason: "Clarify the contractual exception and resubmit." },
       });
       assert.equal(returned.status, 200);
-      assert.equal(returned.body.returnedCount, 3);
+      assert.equal(returned.body.returnedCount, 2);
 
       for (const [groupId, decision] of decisions.entries()) {
         const revised = await api("/api/assignments", {
@@ -371,12 +390,12 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
 
       assert.equal((await api("/api/assignments/submit", {
         method: "POST", role: "chair", division: SCIENCE, body: { termCode: TERM, divisions: [SCIENCE] },
-      })).body.submittedCount, 3);
+      })).body.submittedCount, 2);
       const approved = await api("/api/assignments/approve", {
         method: "POST", role: "dean", division: SCIENCE, body: { termCode: TERM, divisions: [SCIENCE] },
       });
       assert.equal(approved.status, 200);
-      assert.equal(approved.body.approvedCount, 3);
+      assert.equal(approved.body.approvedCount, 2);
     });
 
     await t.test("two updates using the same version reject the stale writer", async () => {
