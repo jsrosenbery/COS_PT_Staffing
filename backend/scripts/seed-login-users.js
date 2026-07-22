@@ -1,51 +1,66 @@
 import "dotenv/config";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRawToken, hashPassword } from "../auth.js";
 import { pool, query } from "../db.js";
 
-const demoUsers = [
+function enabled(value, fallback) {
+  if (value === undefined || value === "") return fallback;
+  return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
+}
+
+function demoUsers(env) {
+  return [
   {
     employee_id: "DEMO-PT-001",
-    email: process.env.DEMO_FACULTY_EMAIL || "faculty.demo@cos.edu",
-    full_name: process.env.DEMO_FACULTY_NAME || "Demo Part-Time Faculty",
+    email: env.DEMO_FACULTY_EMAIL || "faculty.demo@cos.edu",
+    full_name: env.DEMO_FACULTY_NAME || "Demo Part-Time Faculty",
     role: "faculty",
-    division: process.env.DEMO_FACULTY_DIVISION || "Social Sciences",
-    password: process.env.DEMO_FACULTY_PASSWORD || "",
+    division: env.DEMO_FACULTY_DIVISION || "Social Sciences",
+    password: env.DEMO_FACULTY_PASSWORD || "",
   },
   {
     employee_id: "DEMO-CHAIR-001",
-    email: process.env.DEMO_CHAIR_EMAIL || "chair.demo@cos.edu",
-    full_name: process.env.DEMO_CHAIR_NAME || "Demo Division Chair",
+    email: env.DEMO_CHAIR_EMAIL || "chair.demo@cos.edu",
+    full_name: env.DEMO_CHAIR_NAME || "Demo Division Chair",
     role: "chair",
-    division: process.env.DEMO_CHAIR_DIVISION || "Social Sciences",
-    password: process.env.DEMO_CHAIR_PASSWORD || "",
+    division: env.DEMO_CHAIR_DIVISION || "Social Sciences",
+    password: env.DEMO_CHAIR_PASSWORD || "",
   },
   {
     employee_id: "DEMO-DEAN-001",
-    email: process.env.DEMO_DEAN_EMAIL || "dean.demo@cos.edu",
-    full_name: process.env.DEMO_DEAN_NAME || "Demo Dean",
+    email: env.DEMO_DEAN_EMAIL || "dean.demo@cos.edu",
+    full_name: env.DEMO_DEAN_NAME || "Demo Dean",
     role: "dean",
-    division: process.env.DEMO_DEAN_DIVISION || "Social Sciences",
-    password: process.env.DEMO_DEAN_PASSWORD || "",
+    division: env.DEMO_DEAN_DIVISION || "Social Sciences",
+    password: env.DEMO_DEAN_PASSWORD || "",
   },
-];
+  ];
+}
 
-function buildUsers() {
-  const users = [...demoUsers];
-  const adminEmail = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+export function buildUsers(env = process.env) {
+  const production = String(env.NODE_ENV || "").trim().toLowerCase() === "production";
+  const seedDemoUsers = enabled(env.SEED_DEMO_USERS, !production);
+  if (production && seedDemoUsers) throw new Error("SEED_DEMO_USERS cannot be enabled in production.");
+
+  const users = seedDemoUsers ? demoUsers(env) : [];
+  const adminEmail = String(env.ADMIN_EMAIL || "").trim().toLowerCase();
+  if (production && !adminEmail) throw new Error("ADMIN_EMAIL is required for production bootstrap.");
+  if (production && !String(env.ADMIN_PASSWORD || "")) throw new Error("ADMIN_PASSWORD is required for production bootstrap.");
   if (adminEmail) {
     users.unshift({
-      employee_id: process.env.ADMIN_EMPLOYEE_ID || "ADMIN-001",
+      employee_id: env.ADMIN_EMPLOYEE_ID || "ADMIN-001",
       email: adminEmail,
-      full_name: process.env.ADMIN_FULL_NAME || "S.C.O.P.E. Admin",
+      full_name: env.ADMIN_FULL_NAME || "S.C.O.P.E. Admin",
       role: "admin",
-      division: process.env.ADMIN_DIVISION || "",
-      password: process.env.ADMIN_PASSWORD || "",
+      division: env.ADMIN_DIVISION || "",
+      password: env.ADMIN_PASSWORD || "",
     });
   }
   return users;
 }
 
-async function upsertUser(user) {
+async function upsertUser(user, { discloseGeneratedPassword = true } = {}) {
   const generatedPassword = user.password ? "" : createRawToken(18);
   const password = user.password || generatedPassword;
   const passwordRecord = await hashPassword(password);
@@ -87,7 +102,7 @@ async function upsertUser(user) {
     email: user.email,
     role: user.role,
     division: user.division || "",
-    password: generatedPassword || "(provided via environment)",
+    password: discloseGeneratedPassword ? (generatedPassword || "(provided via environment)") : "(not displayed)",
   };
 }
 
@@ -103,18 +118,23 @@ async function main() {
 
   const results = [];
   for (const user of users) {
-    results.push(await upsertUser(user));
+    results.push(await upsertUser(user, {
+      discloseGeneratedPassword: String(process.env.NODE_ENV || "").trim().toLowerCase() !== "production",
+    }));
   }
 
   console.log("Seeded login users:");
   console.table(results);
 }
 
-main()
-  .catch((error) => {
-    console.error(error.message || error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await pool.end();
-  });
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
+if (fileURLToPath(import.meta.url) === invokedPath) {
+  main()
+    .catch((error) => {
+      console.error(error.message || error);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await pool.end();
+    });
+}
