@@ -7,9 +7,11 @@ import {
   inviteExpiresAt,
   issueSession,
   resetExpiresAt,
+  revokeOtherSessions,
   sanitizeUser,
   verifyPassword,
 } from "../auth.js";
+import { logError, publicError, publicTokenUrlsEnabled, rateLimiter } from "../security.js";
 import {
   buildInviteUrl,
   buildPasswordResetUrl,
@@ -21,17 +23,32 @@ import {
 const router = express.Router();
 const validRoles = new Set(["admin", "chair", "dean", "faculty"]);
 
+const loginLimit = rateLimiter("login");
+const accountRequestLimit = rateLimiter("accountRequest");
+const resetRequestLimit = rateLimiter("passwordResetRequest");
+const resetCompleteLimit = rateLimiter("passwordResetComplete");
+const inviteAcceptLimit = rateLimiter("inviteAccept");
+
 function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
 function requireAdmin(req, res) {
   if (req.auth?.authType === "api-token" || req.auth?.user?.role === "admin") return true;
-  res.status(403).json({ error: "Admin access is required." });
+  publicError(res, 403, "ADMIN_REQUIRED", "Admin access is required.", req.correlationId);
   return false;
 }
 
-router.post("/login", async (req, res) => {
+function unexpected(res, req, label, error, publicMessage) {
+  logError(label, error, req);
+  return publicError(res, 500, "INTERNAL_ERROR", publicMessage, req.correlationId);
+}
+
+function tokenUrlResponse(field, value) {
+  return publicTokenUrlsEnabled() ? { [field]: value } : {};
+}
+
+router.post("/login", loginLimit, async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
     const password = String(req.body?.password || "");
@@ -47,7 +64,7 @@ router.post("/login", async (req, res) => {
     const session = await issueSession(user.id);
     res.json({ user: sanitizeUser(user), session });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not sign in." });
+    unexpected(res, req, "auth-login", error, "Could not sign in.");
   }
 });
 
@@ -60,7 +77,7 @@ router.post("/logout", async (req, res) => {
     }
     res.json({ ok: true });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not sign out." });
+    unexpected(res, req, "auth-logout", error, "Could not sign out.");
   }
 });
 
@@ -68,7 +85,7 @@ router.get("/me", (req, res) => {
   res.json({ user: req.auth?.user || null, authType: req.auth?.authType || null });
 });
 
-router.post("/request-account", async (req, res) => {
+router.post("/request-account", accountRequestLimit, async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
     const fullName = String(req.body?.full_name || req.body?.fullName || "").trim();
@@ -94,7 +111,7 @@ router.post("/request-account", async (req, res) => {
     }
     res.status(201).json({ request: result.rows[0], email: emailResult });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not request account access." });
+    unexpected(res, req, "auth-request-account", error, "Could not request account access.");
   }
 });
 
@@ -118,7 +135,7 @@ router.get("/account-requests", async (req, res) => {
     );
     res.json({ requests: result.rows });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not load account requests." });
+    unexpected(res, req, "auth-account-requests", error, "Could not load account requests.");
   }
 });
 
@@ -133,7 +150,7 @@ router.get("/users", async (req, res) => {
     );
     res.json({ users: result.rows.map(sanitizeUser) });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not load users." });
+    unexpected(res, req, "auth-users", error, "Could not load users.");
   }
 });
 
@@ -195,7 +212,7 @@ router.patch("/users/:id", async (req, res) => {
     );
     res.json({ user: sanitizeUser(result.rows[0]) });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not update user." });
+    unexpected(res, req, "auth-update-user", error, "Could not update user.");
   }
 });
 
@@ -245,9 +262,9 @@ router.post("/invite", async (req, res) => {
     );
 
     const emailResult = await sendInviteEmail({ email, fullName, inviteUrl });
-    res.status(201).json({ invite: inviteResult.rows[0], inviteUrl, email: emailResult });
+    res.status(201).json({ invite: inviteResult.rows[0], ...tokenUrlResponse("inviteUrl", inviteUrl), email: emailResult });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not create invitation." });
+    unexpected(res, req, "auth-invite", error, "Could not create invitation.");
   }
 });
 
@@ -278,9 +295,9 @@ router.post("/users/:id/resend-invite", async (req, res) => {
       ]
     );
     const emailResult = await sendInviteEmail({ email: user.email, fullName: user.full_name, inviteUrl });
-    res.json({ invite: inviteResult.rows[0], inviteUrl, email: emailResult });
+    res.json({ invite: inviteResult.rows[0], ...tokenUrlResponse("inviteUrl", inviteUrl), email: emailResult });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not resend invite." });
+    unexpected(res, req, "auth-resend-invite", error, "Could not resend invite.");
   }
 });
 
@@ -298,9 +315,9 @@ router.post("/users/:id/password-reset", async (req, res) => {
       [user.id, hashToken(token), resetExpiresAt()]
     );
     const emailResult = await sendPasswordResetEmail({ email: user.email, fullName: user.full_name, resetUrl });
-    res.json({ resetUrl, email: emailResult });
+    res.json({ ...tokenUrlResponse("resetUrl", resetUrl), email: emailResult });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not send password reset." });
+    unexpected(res, req, "auth-admin-password-reset", error, "Could not send password reset.");
   }
 });
 
@@ -361,9 +378,9 @@ router.post("/account-requests/:id/approve", async (req, res) => {
     );
 
     const emailResult = await sendInviteEmail({ email: request.email, fullName: request.full_name, inviteUrl });
-    res.json({ invite: inviteResult.rows[0], inviteUrl, email: emailResult });
+    res.json({ invite: inviteResult.rows[0], ...tokenUrlResponse("inviteUrl", inviteUrl), email: emailResult });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not approve account request." });
+    unexpected(res, req, "auth-approve-account-request", error, "Could not approve account request.");
   }
 });
 
@@ -380,11 +397,11 @@ router.post("/account-requests/:id/reject", async (req, res) => {
     if (!result.rows.length) return res.status(404).json({ error: "Pending account request not found." });
     res.json({ request: result.rows[0] });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not reject account request." });
+    unexpected(res, req, "auth-reject-account-request", error, "Could not reject account request.");
   }
 });
 
-router.post("/password-reset/request", async (req, res) => {
+router.post("/password-reset/request", resetRequestLimit, async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
     if (!email) return res.status(400).json({ error: "Email is required." });
@@ -403,11 +420,11 @@ router.post("/password-reset/request", async (req, res) => {
     }
     res.json({ ok: true, message: "If an active account exists for that email, a password reset link will be sent." });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not request password reset." });
+    unexpected(res, req, "auth-password-reset-request", error, "Could not request password reset.");
   }
 });
 
-router.post("/password-reset/complete", async (req, res) => {
+router.post("/password-reset/complete", resetCompleteLimit, async (req, res) => {
   try {
     const token = String(req.body?.token || "").trim();
     const password = String(req.body?.password || "");
@@ -440,18 +457,18 @@ router.post("/password-reset/complete", async (req, res) => {
        RETURNING *`,
       [reset.user_id, passwordRecord.hash, passwordRecord.salt]
     );
-    await query("UPDATE scope_password_resets SET used_at = NOW() WHERE id = $1", [reset.id]);
-    await query("UPDATE scope_user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL", [reset.user_id]);
+    await query("UPDATE scope_password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL", [reset.user_id]);
 
     const user = userResult.rows[0];
     const session = await issueSession(user.id);
+    await revokeOtherSessions(user.id, session.token);
     res.json({ user: sanitizeUser(user), session });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not reset password." });
+    unexpected(res, req, "auth-password-reset-complete", error, "Could not reset password.");
   }
 });
 
-router.post("/accept-invite", async (req, res) => {
+router.post("/accept-invite", inviteAcceptLimit, async (req, res) => {
   try {
     const token = String(req.body?.token || "").trim();
     const password = String(req.body?.password || "");
@@ -488,13 +505,14 @@ router.post("/accept-invite", async (req, res) => {
         RETURNING *`,
       [invite.user_id, fullName, invite.full_name, invite.role, invite.division, passwordRecord.hash, passwordRecord.salt, invite.employee_id || ""]
     );
-    await query("UPDATE scope_user_invites SET accepted_at = NOW() WHERE id = $1", [invite.id]);
+    await query("UPDATE scope_user_invites SET accepted_at = NOW() WHERE user_id = $1 AND accepted_at IS NULL", [invite.user_id]);
 
     const user = userResult.rows[0];
     const session = await issueSession(user.id);
+    await revokeOtherSessions(user.id, session.token);
     res.json({ user: sanitizeUser(user), session });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not accept invitation." });
+    unexpected(res, req, "auth-accept-invite", error, "Could not accept invitation.");
   }
 });
 

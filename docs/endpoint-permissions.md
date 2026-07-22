@@ -1,6 +1,6 @@
 # Backend Endpoint Permission Matrix
 
-API-token authentication is treated as bootstrap/admin access. It is intentionally documented as admin-equivalent for backend operations and should be distributed only as a server secret or temporary administrative bootstrap credential.
+API-token authentication is treated as bootstrap/admin access only. It is disabled by default in production through `API_TOKEN_AUTH_ENABLED=false`, should be enabled only for temporary administrative setup, and should be distributed only as a server secret or short-lived bootstrap credential.
 
 Division-scoped users must have an assigned division list. Chairs and deans with multiple divisions may access only those divisions. Omitting a division parameter must not broaden access; read endpoints derive allowed divisions from the authenticated account and write endpoints validate the target record's division from the database where possible.
 
