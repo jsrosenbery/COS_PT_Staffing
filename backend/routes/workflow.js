@@ -4,6 +4,7 @@ import Papa from "papaparse";
 import { pool, query } from "../db.js";
 import { analyzeAllocation } from "../domain/allocationAnalysis.js";
 import { defaultContractExceptionReasons, validateChairDecision } from "../domain/chairDecision.js";
+import { buildDecisionExplanation, decisionExplanationRows } from "../domain/decisionExplanation.js";
 import { isAdmin, requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles } from "../permissions.js";
 import { sendDisseminationEmail } from "../emailService.js";
 
@@ -508,6 +509,92 @@ async function buildAllocationAnalysisFromDb(db, {
   };
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function csvFromRows(rows, headers) {
+  const escapeCell = (value) => {
+    const safe = String(value ?? "");
+    const escaped = safe.replace(/"/g, '""');
+    return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
+  };
+  return [headers.join(","), ...rows.map((row) => headers.map((header) => escapeCell(row[header])).join(","))].join("\n");
+}
+
+async function buildDecisionExplanationFromDb(db, { termCode, division = "", divisions = [], disciplineCode = "" }) {
+  const requestedDivisions = divisions.length ? divisions : parseScopeList(division);
+  const { analysis } = await buildAllocationAnalysisFromDb(db, {
+    termCode,
+    division: requestedDivisions.join("|"),
+    divisions: requestedDivisions,
+    disciplineCode,
+  });
+
+  const sectionIds = (analysis.sections || []).map((section) => section.assignmentGroupId).filter(Boolean);
+  const params = [termCode];
+  let sectionWhere = "WHERE term_code = $1";
+  if (sectionIds.length) {
+    params.push(sectionIds);
+    sectionWhere += ` AND assignment_group_id = ANY($${params.length}::text[])`;
+  }
+
+  const [sectionsResult, decisionsResult, submissionsResult, submissionItemsResult] = await Promise.all([
+    db.query(
+      `SELECT term_code, division, assignment_group_id, primary_subject_course, primary_crn, title, discipline_code, raw_row, created_at, updated_at
+       FROM scope_sections
+       ${sectionWhere}
+       ORDER BY division, discipline_code, primary_subject_course, primary_crn`,
+      params
+    ),
+    sectionIds.length
+      ? db.query(
+          `SELECT id, term_code, division, discipline_code, assignment_group_id, recommended_employee_id, selected_employee_id,
+                  selected_faculty_name, decision_status, exception_reason_code, exception_explanation,
+                  recommendation_snapshot, decision_snapshot, decided_by_email, decided_by_name, decided_by_role,
+                  decided_at, created_at, updated_at
+           FROM scope_chair_decisions
+           WHERE term_code = $1 AND assignment_group_id = ANY($2::text[])
+           ORDER BY decided_at, id`,
+          [termCode, sectionIds]
+        )
+      : Promise.resolve({ rows: [] }),
+    db.query(
+      `SELECT id, term_code, faculty_id, employee_id, faculty_name, division, discipline_code, submission_snapshot,
+              submitted_by_email, submitted_by_name, submitted_by_role, submitted_at, created_at
+       FROM scope_preference_submissions
+       WHERE term_code = $1
+         ${requestedDivisions.length ? "AND LOWER(division) = ANY($2::text[])" : ""}
+       ORDER BY submitted_at DESC, id DESC`,
+      requestedDivisions.length ? [termCode, requestedDivisions.map((value) => value.toLowerCase())] : [termCode]
+    ),
+    db.query(
+      `SELECT i.id, i.submission_id, i.term_code, i.faculty_id, i.employee_id, i.faculty_name,
+              i.assignment_group_id, i.discipline_code, i.preference_rank, i.item_snapshot, i.created_at
+       FROM scope_preference_submission_items i
+       JOIN scope_preference_submissions s ON s.id = i.submission_id
+       WHERE i.term_code = $1
+         ${requestedDivisions.length ? "AND LOWER(s.division) = ANY($2::text[])" : ""}
+       ORDER BY i.faculty_name, i.preference_rank`,
+      requestedDivisions.length ? [termCode, requestedDivisions.map((value) => value.toLowerCase())] : [termCode]
+    ),
+  ]);
+
+  return buildDecisionExplanation({
+    termCode,
+    division: requestedDivisions.join("|"),
+    sections: sectionsResult.rows,
+    decisions: decisionsResult.rows,
+    submissions: submissionsResult.rows,
+    submissionItems: submissionItemsResult.rows,
+    currentAnalysis: analysis,
+  });
+}
+
 async function getProtectedWork(termCode, division) {
   const sections = await query(`SELECT assignment_group_id FROM scope_sections WHERE term_code = $1 AND division = $2`, [termCode, division]);
   const sectionIds = sections.rows.map((r) => r.assignment_group_id);
@@ -881,6 +968,119 @@ router.get("/contract-exception-reasons", requireElevatedRole, async (_req, res)
     res.json({ reasons: await getContractExceptionReasons({ query }) });
   } catch (error) {
     res.status(500).json({ error: error.message || "Could not load contractual exception reasons." });
+  }
+});
+
+router.get("/decision-explanations", requireElevatedRole, requireDivisionScope, async (req, res) => {
+  const { termCode = "", division = "", divisions = "", disciplineCode = "" } = req.query;
+  const requestedDivisions = parseScopeList(divisions || division);
+  if (!termCode) return res.status(400).json({ error: "termCode is required." });
+  if (!isAdmin(req) && !requestedDivisions.length) {
+    return res.status(400).json({ error: "division or divisions is required for scoped decision explanations." });
+  }
+  try {
+    const explanation = await buildDecisionExplanationFromDb({ query }, {
+      termCode,
+      divisions: requestedDivisions,
+      disciplineCode,
+    });
+    res.json({ explanation });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not build decision explanations." });
+  }
+});
+
+router.get("/decision-explanations/export.csv", requireRoles("admin"), async (req, res) => {
+  const { termCode = "", division = "", divisions = "", disciplineCode = "" } = req.query;
+  if (!termCode) return res.status(400).json({ error: "termCode is required." });
+  try {
+    const explanation = await buildDecisionExplanationFromDb({ query }, {
+      termCode,
+      divisions: parseScopeList(divisions || division),
+      disciplineCode,
+    });
+    const rows = decisionExplanationRows(explanation);
+    const headers = [
+      "term_code",
+      "division",
+      "assignment_group_id",
+      "course",
+      "crn",
+      "candidate_employee_id",
+      "candidate_name",
+      "seniority_rank",
+      "preference_rank",
+      "qualified",
+      "available_at_decision",
+      "disposition",
+      "recommended_employee_id",
+      "selected_employee_id",
+      "decision_status",
+      "exception_reason_code",
+      "decided_at",
+    ];
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="scope-decision-explanations-${termCode}.csv"`);
+    res.send(csvFromRows(rows, headers));
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not export decision explanations." });
+  }
+});
+
+router.get("/decision-explanations/print", requireRoles("admin"), async (req, res) => {
+  const { termCode = "", division = "", divisions = "", disciplineCode = "" } = req.query;
+  if (!termCode) return res.status(400).send("termCode is required.");
+  try {
+    const explanation = await buildDecisionExplanationFromDb({ query }, {
+      termCode,
+      divisions: parseScopeList(divisions || division),
+      disciplineCode,
+    });
+    const sections = explanation.sections.map((section) => `
+      <section>
+        <h2>${escapeHtml(section.section?.primary_subject_course || section.assignment_group_id)} ${escapeHtml(section.section?.primary_crn || "")}</h2>
+        <p><strong>Recommendation:</strong> ${escapeHtml(section.original_system_recommendation.faculty_name || section.original_system_recommendation.employee_id || "None")}</p>
+        <p><strong>Chair decision:</strong> ${escapeHtml(section.chair_decision?.faculty_name || "No chair decision recorded")} ${section.chair_decision?.exception_reason_code ? `(${escapeHtml(section.chair_decision.exception_reason_code)})` : ""}</p>
+        <table>
+          <thead><tr><th>Candidate</th><th>Seniority</th><th>Pref</th><th>Qualified</th><th>Available</th><th>Disposition</th></tr></thead>
+          <tbody>
+            ${section.interested_faculty.map((candidate) => `
+              <tr>
+                <td>${escapeHtml(candidate.faculty_name || candidate.employee_id)}</td>
+                <td>${escapeHtml(candidate.seniority_rank)}</td>
+                <td>${escapeHtml(candidate.preference_rank)}</td>
+                <td>${escapeHtml(candidate.qualified)}</td>
+                <td>${escapeHtml(candidate.available_at_decision)}</td>
+                <td>${escapeHtml(candidate.disposition)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </section>
+    `).join("");
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(`<!doctype html>
+      <html>
+        <head>
+          <title>S.C.O.P.E. Decision Explanations</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
+            h1 { font-size: 24px; }
+            h2 { font-size: 18px; margin-top: 28px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+            th, td { border: 1px solid #d1d5db; padding: 6px 8px; text-align: left; }
+            th { background: #f3f4f6; }
+            @media print { body { margin: 12mm; } section { break-inside: avoid; } }
+          </style>
+        </head>
+        <body>
+          <h1>S.C.O.P.E. Decision Explanations - ${escapeHtml(termCode)}</h1>
+          <p>Generated from stored recommendation, decision, and preference snapshots where available.</p>
+          ${sections}
+        </body>
+      </html>`);
+  } catch (error) {
+    res.status(500).send(escapeHtml(error.message || "Could not render decision explanations."));
   }
 });
 
@@ -1351,9 +1551,40 @@ router.post("/preferences", requirePreferenceOwnerOrElevated, async (req, res) =
   if (!termCode || !facultyId) return res.status(400).json({ error: "termCode and facultyId are required." });
   const availabilityDays = Array.isArray(availability.days) ? availability.days.map((value) => String(value || "").trim()).filter(Boolean) : [];
   const availabilityTimeBlocks = Array.isArray(availability.timeBlocks) ? availability.timeBlocks.map((value) => String(value || "").trim()).filter(Boolean) : [];
+  const actor = req.auth?.user || {};
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const facultyResult = await client.query(
+      `SELECT division, discipline
+       FROM scope_pt_faculty
+       WHERE employee_id = $1
+       ORDER BY COALESCE(active_status, 'active') = 'active' DESC
+       LIMIT 1`,
+      [employeeId || facultyId]
+    );
+    const facultyRosterRow = facultyResult.rows[0] || {};
+    const submissionResult = await client.query(
+      `INSERT INTO scope_preference_submissions
+        (term_code, faculty_id, employee_id, faculty_name, division, discipline_code, submission_snapshot,
+         submitted_by_user_id, submitted_by_email, submitted_by_name, submitted_by_role)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11)
+       RETURNING id, submitted_at`,
+      [
+        termCode,
+        facultyId,
+        employeeId,
+        facultyName,
+        facultyRosterRow.division || "",
+        facultyRosterRow.discipline || "",
+        JSON.stringify({ preferences, availability: { days: availabilityDays, timeBlocks: availabilityTimeBlocks } }),
+        actor.id || null,
+        actor.email || "",
+        actor.full_name || actor.email || "",
+        actor.role || "",
+      ]
+    );
+    const submissionId = submissionResult.rows[0]?.id;
     await client.query(`DELETE FROM scope_preferences WHERE term_code = $1 AND faculty_id = $2`, [termCode, facultyId]);
     for (const pref of preferences) {
       await client.query(
@@ -1361,6 +1592,22 @@ router.post("/preferences", requirePreferenceOwnerOrElevated, async (req, res) =
           (term_code, faculty_id, employee_id, faculty_name, assignment_group_id, discipline_code, preference_rank, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
         [termCode, facultyId, employeeId, facultyName, pref.assignment_group_id, pref.discipline_code || "", pref.preference_rank || 1]
+      );
+      await client.query(
+        `INSERT INTO scope_preference_submission_items
+          (submission_id, term_code, faculty_id, employee_id, faculty_name, assignment_group_id, discipline_code, preference_rank, item_snapshot)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
+        [
+          submissionId,
+          termCode,
+          facultyId,
+          employeeId,
+          facultyName,
+          pref.assignment_group_id,
+          pref.discipline_code || "",
+          pref.preference_rank || 1,
+          JSON.stringify(pref),
+        ]
       );
     }
     await client.query(
@@ -1376,7 +1623,7 @@ router.post("/preferences", requirePreferenceOwnerOrElevated, async (req, res) =
       [termCode, facultyId, employeeId, facultyName, JSON.stringify(availabilityDays), JSON.stringify(availabilityTimeBlocks)]
     );
     await client.query("COMMIT");
-    res.json({ success: true, savedCount: preferences.length });
+    res.json({ success: true, savedCount: preferences.length, submissionId, submittedAt: submissionResult.rows[0]?.submitted_at });
   } catch (error) {
     await client.query("ROLLBACK");
     res.status(500).json({ error: error.message });
