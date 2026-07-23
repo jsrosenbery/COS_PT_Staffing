@@ -33,6 +33,10 @@ The command lists each repository migration as `applied` or `pending`, including
 
 After migration, verify that no migration is pending and complete the normal backend health check before directing traffic to the new release.
 
+Migration `0004_staffing_windows_updated_at.sql` safely upgrades older databases whose existing
+`scope_staffing_windows` table predates the `updated_at` column. It adds the column with a current-time
+default and does not drop, recreate, or remove any staffing-window records.
+
 ## Backups, failures, and rollback
 
 Always create a restorable backup before production migration and retain it through post-deploy verification. The runner stops at the first failure and rolls that migration back where PostgreSQL supports transactional DDL. Investigate the error before retrying; never insert migration-history rows manually to bypass a failure.

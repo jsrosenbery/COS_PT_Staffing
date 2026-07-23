@@ -1,0 +1,2 @@
+ALTER TABLE scope_staffing_windows
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
