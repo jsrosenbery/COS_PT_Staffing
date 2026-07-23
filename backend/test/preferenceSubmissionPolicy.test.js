@@ -59,6 +59,28 @@ test("attempted faculty submission after closure is rejected", () => {
   assert.match(result.error, /closed/i);
 });
 
+test("missing preference window is reported without throwing", () => {
+  const result = canSavePreferenceVersion({
+    action: "submit",
+    windowRow: null,
+    now: "2027-01-05T08:00:00.000Z",
+    actorRole: "faculty",
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.state.open, false);
+  assert.equal(result.state.missing, true);
+  assert.match(result.error, /No preference window is configured/i);
+});
+
+test("preference submission reports an unlinked faculty roster account before checking its window", () => {
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+
+  assert.match(workflow, /WHERE employee_id = \$1\s+AND COALESCE\(active_status, 'active'\) = 'active'/);
+  assert.match(workflow, /if \(!facultyRosterRow\) \{\s+await client\.query\("ROLLBACK"\)/);
+  assert.match(workflow, /Your account is not linked to an active PT staffing roster record/);
+});
+
 test("administrator correction after closure is explicit and requires an audit reason in the route", () => {
   const result = canSavePreferenceVersion({
     action: "admin_correct",

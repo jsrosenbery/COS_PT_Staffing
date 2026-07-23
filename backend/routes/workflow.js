@@ -1928,11 +1928,18 @@ router.post("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated
       `SELECT division, discipline
        FROM scope_pt_faculty
        WHERE employee_id = $1
+         AND COALESCE(active_status, 'active') = 'active'
        ORDER BY COALESCE(active_status, 'active') = 'active' DESC
        LIMIT 1`,
       [employeeId || facultyId]
     );
-    const facultyRosterRow = facultyResult.rows[0] || {};
+    const facultyRosterRow = facultyResult.rows[0] || null;
+    if (!facultyRosterRow) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID to the roster.",
+      });
+    }
     const windowResult = await client.query(
       `SELECT id, term, division, opened_at, closes_at, status
        FROM scope_staffing_windows
