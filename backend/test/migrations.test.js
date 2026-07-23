@@ -32,10 +32,21 @@ async function withEmptyDatabase(run) {
 
 const silentLogger = { info() {} };
 
+test("staffing-window compatibility migration adds the missing timestamp without destructive changes", async () => {
+  const migration = await fs.readFile(
+    new URL("../migrations/0004_staffing_windows_updated_at.sql", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(migration, /ALTER TABLE scope_staffing_windows/i);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW\(\)/i);
+  assert.doesNotMatch(migration, /\b(DROP|TRUNCATE|DELETE)\b/i);
+});
+
 integrationTest("applies all ordered migrations to an empty PostgreSQL database", async () => {
   await withEmptyDatabase(async (pool) => {
     const result = await runMigrations({ pool, logger: silentLogger });
-    assert.deepEqual(result.applied, ["0001", "0002", "0003"]);
+    assert.deepEqual(result.applied, ["0001", "0002", "0003", "0004"]);
 
     const tables = await pool.query(`
       SELECT to_regclass('scope_users') AS users,
@@ -46,11 +57,23 @@ integrationTest("applies all ordered migrations to an empty PostgreSQL database"
     assert.equal(tables.rows[0].assignments, "scope_assignments");
     assert.equal(tables.rows[0].rate_limits, "scope_rate_limits");
 
+    const windowColumns = await pool.query(`
+      SELECT column_name, is_nullable, column_default
+      FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name = 'scope_staffing_windows'
+        AND column_name = 'updated_at'
+    `);
+    assert.equal(windowColumns.rowCount, 1);
+    assert.equal(windowColumns.rows[0].is_nullable, "NO");
+    assert.match(windowColumns.rows[0].column_default, /now\(\)/i);
+
     const history = await pool.query("SELECT * FROM scope_schema_migrations ORDER BY migration_identifier");
-    assert.equal(history.rowCount, 3);
+    assert.equal(history.rowCount, 4);
     assert.equal(history.rows[0].migration_filename, "0001_baseline.sql");
     assert.equal(history.rows[1].migration_filename, "0002_security_integrity_constraints.sql");
     assert.equal(history.rows[2].migration_filename, "0003_shared_auth_rate_limits.sql");
+    assert.equal(history.rows[3].migration_filename, "0004_staffing_windows_updated_at.sql");
     assert.ok(history.rows.every((row) => row.applied_at));
   });
 });
@@ -75,9 +98,9 @@ integrationTest("skips migrations that were already applied successfully", async
     const secondRun = await runMigrations({ pool, logger: silentLogger });
 
     assert.deepEqual(secondRun.applied, []);
-    assert.deepEqual(secondRun.skipped, ["0001", "0002", "0003"]);
+    assert.deepEqual(secondRun.skipped, ["0001", "0002", "0003", "0004"]);
     const history = await pool.query("SELECT COUNT(*)::int AS count FROM scope_schema_migrations");
-    assert.equal(history.rows[0].count, 3);
+    assert.equal(history.rows[0].count, 4);
   });
 });
 
