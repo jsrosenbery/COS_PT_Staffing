@@ -83,6 +83,33 @@ test("production store failure fails closed without calling route logic", async 
   assert.equal(res.body.code, "RATE_LIMIT_UNAVAILABLE");
 });
 
+test("PostgreSQL limiter creates the rate limit table when the migration is missing", async () => {
+  const calls = [];
+  let insertAttempts = 0;
+  const store = new PostgresRateLimitStore({
+    async query(sql) {
+      calls.push(sql);
+      if (/INSERT INTO scope_rate_limits/.test(sql)) {
+        insertAttempts += 1;
+        if (insertAttempts === 1) {
+          const error = new Error("relation scope_rate_limits does not exist");
+          error.code = "42P01";
+          throw error;
+        }
+        return { rows: [{ request_count: 1, expires_at: new Date(Date.now() + 60_000).toISOString() }] };
+      }
+      return { rows: [] };
+    },
+  });
+
+  const result = await store.consume("accountRequest", "b".repeat(64), 60_000);
+
+  assert.equal(result.count, 1);
+  assert.equal(insertAttempts, 2);
+  assert.ok(calls.some((sql) => /CREATE TABLE IF NOT EXISTS scope_rate_limits/.test(sql)));
+  assert.ok(calls.some((sql) => /CREATE INDEX IF NOT EXISTS idx_scope_rate_limits_expiry/.test(sql)));
+});
+
 test("forwarded addresses are ignored unless an exact trusted hop count is configured", () => {
   const req = request({}, "10.0.0.4", { "x-forwarded-for": "203.0.113.9, 10.0.0.3" });
   assert.equal(clientIp(req, { RATE_LIMIT_TRUST_PROXY_HOPS: "0" }), "10.0.0.4");
