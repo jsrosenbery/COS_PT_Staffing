@@ -94,6 +94,31 @@ test("API token remains isolated as documented admin-equivalent bootstrap behavi
   assert.deepEqual(scopeFilterForReq(request, []), []);
 });
 
+test("admin section reads ignore empty division query values", () => {
+  const request = req({ role: "admin", division: "", query: { divisions: "" } });
+
+  assert.deepEqual(scopeFilterForReq(request, [""]), []);
+  assert.deepEqual(scopeFilterForReq(request, [" Agriculture ", "", "Business"]), ["agriculture", "business"]);
+});
+
+test("faculty section reads fall back to the authenticated division when the query omits divisions", () => {
+  const request = req({ role: "faculty", division: "Social Sciences", query: { divisions: "" } });
+
+  assert.deepEqual(scopeFilterForReq(request, [""]), ["social sciences"]);
+});
+
+test("faculty section display is bound to the authenticated employee roster record", () => {
+  const frontend = fs.readFileSync(
+    new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(frontend, /role === "faculty" \? normalize\(currentUser\?\.employee_id\)\.toLowerCase\(\) : ""/);
+  assert.match(frontend, /ownRosterRow\?\.employeeId \|\| ""/);
+  assert.match(frontend, /if \(!facultyScopeKeys\.size\) \{\s+return \[\];/);
+  assert.match(frontend, /Your account is not linked to an active PT staffing roster record/);
+});
+
 test("division-sensitive workflow reads apply scope directly in SQL", () => {
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
 

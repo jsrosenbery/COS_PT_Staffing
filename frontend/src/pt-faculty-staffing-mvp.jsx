@@ -1691,17 +1691,31 @@ export default function PTFacultyStaffingMVP() {
     );
   }, [ptStaffingRows, ptFacultyDisciplineFilter]);
 
+  const authenticatedFacultyId =
+    role === "faculty" ? normalize(currentUser?.employee_id).toLowerCase() : "";
+
   useEffect(() => {
+    if (authenticatedFacultyId) {
+      const ownRosterRow = previewFacultyOptions.find(
+        (item) => normalize(item.employeeId).toLowerCase() === authenticatedFacultyId
+      );
+      setSelectedFacultyId(ownRosterRow?.employeeId || "");
+      return;
+    }
     if (!previewFacultyOptions.length) return;
     if (!previewFacultyOptions.some((item) => item.employeeId === selectedFacultyId)) {
       setSelectedFacultyId(previewFacultyOptions[0].employeeId);
     }
-  }, [previewFacultyOptions, selectedFacultyId]);
+  }, [authenticatedFacultyId, previewFacultyOptions, selectedFacultyId]);
 
-  const selectedFaculty = useMemo(
-    () => previewFacultyOptions.find((item) => item.employeeId === selectedFacultyId) || previewFacultyOptions[0] || null,
-    [previewFacultyOptions, selectedFacultyId]
-  );
+  const selectedFaculty = useMemo(() => {
+    if (authenticatedFacultyId) {
+      return previewFacultyOptions.find(
+        (item) => normalize(item.employeeId).toLowerCase() === authenticatedFacultyId
+      ) || null;
+    }
+    return previewFacultyOptions.find((item) => item.employeeId === selectedFacultyId) || previewFacultyOptions[0] || null;
+  }, [authenticatedFacultyId, previewFacultyOptions, selectedFacultyId]);
 
   const facultySeniorityRows = useMemo(() => {
     if (!selectedFaculty) return [];
@@ -1740,7 +1754,7 @@ export default function PTFacultyStaffingMVP() {
           .flatMap((row) => row.scopeKeys)
       );
       if (!facultyScopeKeys.size) {
-        return availableSections;
+        return [];
       }
       const scoped = availableSections.filter((section) => sectionMatchesFacultyScope(section, facultyScopeKeys));
       return scoped;
@@ -4490,7 +4504,9 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   ? "View only the open sections assigned to the selected chair disciplines."
                   : role === "dean"
                   ? "View only the open sections that fall inside the selected dean divisions."
-                  : "View only the open sections available to the selected faculty member's seniority disciplines."}
+                  : selectedFaculty
+                  ? "View only the open sections available to your seniority disciplines."
+                  : "Your faculty account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID to the roster."}
               </div>
             </div>
             <div style={ui.row}>
@@ -4896,7 +4912,9 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 ) : (
                   <tr>
                     <td style={ui.td} colSpan={role === "faculty" ? 11 : 9}>
-                      No PT-eligible open sections found yet. Upload a schedule, then click Refresh Sections.
+                      {role === "faculty" && !selectedFaculty
+                        ? "Your account is not linked to an active PT staffing roster record."
+                        : "No PT-eligible open sections found yet. Upload a schedule, then click Refresh Sections."}
                     </td>
                   </tr>
                 )}
