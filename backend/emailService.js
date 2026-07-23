@@ -2,6 +2,7 @@ const EMAIL_PROVIDER = (process.env.EMAIL_PROVIDER || "console").trim().toLowerC
 const EMAIL_FROM = process.env.EMAIL_FROM || "no-reply@cos.edu";
 const APP_BASE_URL = (process.env.APP_BASE_URL || "").trim();
 const SENDGRID_API_KEY = (process.env.SENDGRID_API_KEY || "").trim();
+const BREVO_API_KEY = (process.env.BREVO_API_KEY || "").trim();
 
 export function buildInviteUrl(token) {
   const base = APP_BASE_URL || process.env.CORS_ORIGIN?.split(",")?.[0]?.trim() || "";
@@ -47,11 +48,40 @@ async function sendWithSendGrid({ to, subject, text, html }) {
   return { provider: "sendgrid", delivered: true, recipientCount: recipients.length };
 }
 
+async function sendWithBrevo({ to, subject, text, html }) {
+  if (!BREVO_API_KEY) throw new Error("BREVO_API_KEY is required when EMAIL_PROVIDER=brevo.");
+  const recipients = normalizeRecipients(to);
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": BREVO_API_KEY,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      sender: { email: EMAIL_FROM },
+      to: recipients.map((email) => ({ email })),
+      subject,
+      textContent: text || "",
+      ...(html ? { htmlContent: html } : {}),
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Brevo send failed: ${response.status} ${body}`);
+  }
+  return { provider: "brevo", delivered: true, recipientCount: recipients.length };
+}
+
 export async function sendEmail({ to, subject, text, html }) {
   if (!to) throw new Error("Email recipient is required.");
 
   if (EMAIL_PROVIDER === "sendgrid") {
     return sendWithSendGrid({ to, subject, text, html });
+  }
+
+  if (EMAIL_PROVIDER === "brevo") {
+    return sendWithBrevo({ to, subject, text, html });
   }
 
   console.log("[email:console]", JSON.stringify({ from: EMAIL_FROM, to, subject, text, html }, null, 2));

@@ -22,6 +22,7 @@ Production startup fails when:
 - `DATABASE_URL` is missing;
 - `APP_BASE_URL` is missing;
 - `EMAIL_PROVIDER=sendgrid` but `SENDGRID_API_KEY` or `EMAIL_FROM` is missing/weak;
+- `EMAIL_PROVIDER=brevo` but `BREVO_API_KEY` or `EMAIL_FROM` is missing/weak;
 - API-token auth is enabled with a missing or weak `API_TOKEN`.
 
 ## Reset And Invite Links

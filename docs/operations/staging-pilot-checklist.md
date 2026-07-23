@@ -49,7 +49,7 @@ Use synthetic or specifically approved staging data. Record evidence and the res
 
   Unset the session token afterward. The script must report health, minimal public terms, named session, allowed division read, and cross-division `403` as passing.
 - [ ] Verify rate limiting persists across a backend restart or multiple instances; a store outage must fail protected authentication requests closed rather than silently disabling protection.
-- [ ] Verify SendGrid delivery, sender, invite/reset links, and suppression of tokens in API responses, or record that email is intentionally console-only for an isolated pilot.
+- [ ] Verify Brevo or SendGrid delivery, sender, invite/reset links, and suppression of tokens in API responses, or record that email is intentionally console-only for an isolated pilot.
 - [ ] Verify allowed CORS succeeds and an unapproved origin fails.
 - [ ] Verify the production-candidate frontend build's `VITE_API_BASE_URL` points to the intended staging backend before pilot testing; repeat with the intended production backend before release.
 - [ ] Run the documented smoke test and attach results, relevant request IDs, CI run, frontend build output, migration status, and backup/restore evidence.

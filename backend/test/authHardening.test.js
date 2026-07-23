@@ -88,6 +88,8 @@ test("production configuration fails closed for unsafe auth settings", () => {
   assert.match(validateProductionConfig({ ...base, RATE_LIMIT_STORE: "memory" }).errors.join(" "), /RATE_LIMIT_STORE/);
   assert.match(validateProductionConfig({ ...base, API_TOKEN_AUTH_ENABLED: "true", API_TOKEN: "short" }).errors.join(" "), /API_TOKEN/);
   assert.match(validateProductionConfig({ ...base, EMAIL_PROVIDER: "sendgrid", SENDGRID_API_KEY: "", EMAIL_FROM: "" }).errors.join(" "), /SENDGRID_API_KEY/);
+  assert.match(validateProductionConfig({ ...base, EMAIL_PROVIDER: "brevo", BREVO_API_KEY: "", EMAIL_FROM: "" }).errors.join(" "), /BREVO_API_KEY/);
+  assert.equal(validateProductionConfig({ ...base, EMAIL_PROVIDER: "brevo", BREVO_API_KEY: "xkeysib-production-key-that-is-long-enough", EMAIL_FROM: "jacoba@cos.edu" }).ok, true);
 });
 
 test("token bearer URLs are suppressed by default in production", () => {
