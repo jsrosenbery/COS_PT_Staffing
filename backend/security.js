@@ -59,6 +59,10 @@ export function validateProductionConfig(env = process.env) {
     if (isWeakSecret(env.SENDGRID_API_KEY)) errors.push("SENDGRID_API_KEY must be configured as a strong secret when EMAIL_PROVIDER=sendgrid.");
     if (!text(env.EMAIL_FROM)) errors.push("EMAIL_FROM must be configured when EMAIL_PROVIDER=sendgrid.");
   }
+  if (String(env.EMAIL_PROVIDER || "").trim().toLowerCase() === "brevo") {
+    if (isWeakSecret(env.BREVO_API_KEY)) errors.push("BREVO_API_KEY must be configured as a strong secret when EMAIL_PROVIDER=brevo.");
+    if (!text(env.EMAIL_FROM)) errors.push("EMAIL_FROM must be configured when EMAIL_PROVIDER=brevo.");
+  }
 
   return { ok: errors.length === 0, errors };
 }
