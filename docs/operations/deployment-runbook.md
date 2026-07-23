@@ -1,5 +1,7 @@
 # Controlled deployment runbook
 
+This runbook deploys **SHERMAN — Seniority & Hiring Eligibility Ranking Management for Academic Needs**, the College's part-time faculty staffing application.
+
 Use this sequence for staging first and production only after staging approval. Record the operator, release commit, database target, backup identifier, timestamps, and outcomes in the institution's change record.
 
 ## 1. Preflight and backup

@@ -1,6 +1,6 @@
 # Production Authentication Hardening
 
-S.C.O.P.E. keeps the current user-account workflow: account requests, admin approval, invitation setup links, login, password reset, and server-issued sessions.
+SHERMAN (Seniority & Hiring Eligibility Ranking Management for Academic Needs) keeps the current user-account workflow: account requests, admin approval, invitation setup links, login, password reset, and server-issued sessions.
 
 ## Bootstrap API Token
 

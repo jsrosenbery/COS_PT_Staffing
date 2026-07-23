@@ -1243,7 +1243,7 @@ router.get("/decision-explanations/export.csv", requireRoles("admin"), async (re
       "decided_at",
     ];
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="scope-decision-explanations-${termCode}.csv"`);
+    res.setHeader("Content-Disposition", `attachment; filename="sherman-decision-explanations-${termCode}.csv"`);
     res.send(csvFromRows(rows, headers));
   } catch (error) {
     res.status(500).json({ error: error.message || "Could not export decision explanations." });
@@ -1285,7 +1285,7 @@ router.get("/decision-explanations/print", requireRoles("admin"), async (req, re
     res.send(`<!doctype html>
       <html>
         <head>
-          <title>S.C.O.P.E. Decision Explanations</title>
+          <title>SHERMAN Decision Explanations</title>
           <style>
             body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
             h1 { font-size: 24px; }
@@ -1297,7 +1297,7 @@ router.get("/decision-explanations/print", requireRoles("admin"), async (req, re
           </style>
         </head>
         <body>
-          <h1>S.C.O.P.E. Decision Explanations - ${escapeHtml(termCode)}</h1>
+          <h1>SHERMAN Decision Explanations - ${escapeHtml(termCode)}</h1>
           <p>Generated from stored recommendation, decision, and preference snapshots where available.</p>
           ${sections}
         </body>
