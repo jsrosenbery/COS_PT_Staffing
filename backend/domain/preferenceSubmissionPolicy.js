@@ -43,6 +43,18 @@ export function validatePreferenceRanks(preferences = []) {
 
 export function windowState(windowRow = {}, now = new Date()) {
   const serverNow = toDate(now) || new Date();
+  if (!windowRow || typeof windowRow !== "object") {
+    return {
+      status: "missing",
+      serverNow,
+      openedAt: null,
+      closesAt: null,
+      timezone: preferenceWindowTimezone,
+      open: false,
+      closed: true,
+      missing: true,
+    };
+  }
   const closesAt = toDate(windowRow.closes_at || windowRow.closesAt);
   const openedAt = toDate(windowRow.opened_at || windowRow.openedAt);
   const status = text(windowRow.status || "open").toLowerCase();
@@ -67,6 +79,13 @@ export function canSavePreferenceVersion({ action = "submit", windowRow = {}, no
   const elevated = ["admin", "chair", "dean"].includes(role);
 
   if (state.open) return { ok: true, state };
+  if (state.missing) {
+    return {
+      ok: false,
+      state,
+      error: "No preference window is configured for this term and division.",
+    };
+  }
   if (elevated && ["admin_correct", "reopen_correct"].includes(normalizedAction)) return { ok: true, state, requiresAuditReason: true };
   return {
     ok: false,
