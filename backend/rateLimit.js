@@ -71,9 +71,38 @@ export class MemoryRateLimitStore {
 export class PostgresRateLimitStore {
   constructor({ query = databaseQuery } = {}) {
     this.query = query;
+    this.schemaReady = false;
+  }
+
+  async ensureSchema() {
+    await this.query(`
+      CREATE TABLE IF NOT EXISTS scope_rate_limits (
+        limiter_name TEXT NOT NULL,
+        key_hash TEXT NOT NULL CHECK (key_hash ~ '^[0-9a-f]{64}$'),
+        window_started_at TIMESTAMPTZ NOT NULL,
+        request_count INTEGER NOT NULL CHECK (request_count > 0),
+        expires_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (limiter_name, key_hash, window_started_at)
+      )
+    `);
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS idx_scope_rate_limits_expiry
+        ON scope_rate_limits (expires_at)
+    `);
+    this.schemaReady = true;
   }
 
   async consume(name, keyHash, windowMs) {
+    try {
+      return await this.consumeOnce(name, keyHash, windowMs);
+    } catch (error) {
+      if (error?.code !== "42P01") throw error;
+      await this.ensureSchema();
+      return this.consumeOnce(name, keyHash, windowMs);
+    }
+  }
+
+  async consumeOnce(name, keyHash, windowMs) {
     const result = await this.query(
       `INSERT INTO scope_rate_limits (limiter_name, key_hash, window_started_at, request_count, expires_at)
        VALUES (

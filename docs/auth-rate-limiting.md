@@ -6,7 +6,8 @@ The five public authentication operations - login, account request, password-res
 
 - Production defaults to and requires `RATE_LIMIT_STORE=postgres`. The `scope_rate_limits` table is created by migration `0003_shared_auth_rate_limits.sql`, and atomic PostgreSQL upserts make counters persistent and shared across backend instances.
 - Development and tests default to `RATE_LIMIT_STORE=memory`. This is intentionally process-local and resets on restart.
-- A PostgreSQL limiter error fails closed for the affected authentication request with HTTP `503` and code `RATE_LIMIT_UNAVAILABLE`. There is no automatic in-memory production fallback because that would weaken protection during a database outage.
+- If the `scope_rate_limits` table is missing, the limiter creates that small table/index and retries once so public authentication flows do not go unavailable because a release migration was missed.
+- Other PostgreSQL limiter errors fail closed for the affected authentication request with HTTP `503` and code `RATE_LIMIT_UNAVAILABLE`. There is no automatic in-memory production fallback because that would weaken protection during a database outage.
 
 Run `npm run migrate` as a release step before starting the new backend version. No separate service or vendor credential is required; the limiter uses the existing `DATABASE_URL` connection.
 

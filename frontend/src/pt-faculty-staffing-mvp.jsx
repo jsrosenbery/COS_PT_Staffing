@@ -2622,6 +2622,7 @@ export default function PTFacultyStaffingMVP() {
 
   useEffect(() => {
     async function loadMappingStatus() {
+      if (!canShowWorkspace) return;
       try {
         const response = await apiFetch(`${API_BASE}/subject-mapping/${activeTerm.code}/status`);
         const data = await response.json();
@@ -2645,7 +2646,7 @@ export default function PTFacultyStaffingMVP() {
     }
 
     loadMappingStatus();
-  }, [activeTerm.code]);
+  }, [activeTerm.code, canShowWorkspace]);
 
   async function handleSubjectMappingUpload(file) {
     if (!file) return;
