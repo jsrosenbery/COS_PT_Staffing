@@ -126,11 +126,14 @@ test("API token authentication is bootstrap-only and production-disabled by defa
   const auth = read("../auth.js");
   const doc = read("../../docs/auth-production-hardening.md");
   const frontend = read("../../frontend/src/pt-faculty-staffing-mvp.jsx");
+  const apiClient = read("../../frontend/src/apiClient.js");
 
   assert.match(auth, /API_TOKEN_AUTH_ENABLED/);
   assert.match(auth, /process\.env\.NODE_ENV === "production" \? "false" : "true"/);
   assert.match(doc, /bootstrap-only administrative credential/);
   assert.match(frontend, /API_TOKEN_AUTH_ENABLED/);
+  assert.match(apiClient, /skipAuth: true/);
+  assert.match(apiClient, /correlationId/);
 });
 
 test("cleanup removes expired sessions, reset tokens, and invites", () => {

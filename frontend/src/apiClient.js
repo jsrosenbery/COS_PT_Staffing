@@ -57,6 +57,10 @@ export function clearSession() {
 }
 
 export function withAuthHeaders(options = {}) {
+  if (options.skipAuth) {
+    const { skipAuth, ...rest } = options;
+    return rest;
+  }
   const sessionToken = getSessionToken();
   const apiToken = API_TOKEN_AUTH_ENABLED ? getApiToken() : "";
   const token = sessionToken || apiToken;
@@ -83,7 +87,8 @@ export async function fetchJson(path, options = {}) {
   if (!response.ok) {
     try {
       const data = text ? JSON.parse(text) : {};
-      throw new Error(data.error || data.message || `Request failed with status ${response.status}`);
+      const correlation = data.correlationId ? ` Reference: ${data.correlationId}` : "";
+      throw new Error(`${data.error || data.message || `Request failed with status ${response.status}`}${correlation}`);
     } catch (error) {
       if (error instanceof SyntaxError) {
         throw new Error(text || `Request failed with status ${response.status}`);
@@ -110,6 +115,7 @@ export async function fetchJson(path, options = {}) {
 export async function login(email, password) {
   const data = await fetchJson("/auth/login", {
     method: "POST",
+    skipAuth: true,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
@@ -142,6 +148,7 @@ export async function inviteUser(payload) {
 export async function requestAccount(payload) {
   return fetchJson("/auth/request-account", {
     method: "POST",
+    skipAuth: true,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
@@ -190,6 +197,7 @@ export async function sendDissemination(payload) {
 export async function requestPasswordReset(email) {
   return fetchJson("/auth/password-reset/request", {
     method: "POST",
+    skipAuth: true,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
   });
@@ -198,6 +206,7 @@ export async function requestPasswordReset(email) {
 export async function completePasswordReset(token, password) {
   const data = await fetchJson("/auth/password-reset/complete", {
     method: "POST",
+    skipAuth: true,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, password }),
   });
@@ -208,6 +217,7 @@ export async function completePasswordReset(token, password) {
 export async function acceptInvite(token, password, fullName = "") {
   const data = await fetchJson("/auth/accept-invite", {
     method: "POST",
+    skipAuth: true,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, password, full_name: fullName }),
   });
