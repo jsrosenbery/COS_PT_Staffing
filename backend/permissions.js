@@ -75,10 +75,10 @@ export function requireDivisionScope(req, res, next) {
 }
 
 export function scopeFilterForReq(req, requested = []) {
-  if (isAdmin(req)) return requested;
+  const normalizedRequested = requested.flatMap(splitScope);
+  if (isAdmin(req)) return normalizedRequested;
   const allowed = allowedDivisions(req);
   if (!allowed.length) return [];
-  const normalizedRequested = requested.flatMap(splitScope);
   if (!normalizedRequested.length) return allowed;
   return normalizedRequested.filter((division) => allowed.includes(division));
 }
