@@ -2900,7 +2900,7 @@ export default function PTFacultyStaffingMVP() {
             <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
               <img
                 src={cosLogo}
-                alt="Staffing Coordination & Preference Engine logo"
+                alt="College of the Sequoias logo for SHERMAN"
                 style={{ width: 120, height: 120, objectFit: "contain", borderRadius: 22, background: "rgba(255,255,255,0.1)", padding: 8, boxShadow: "0 16px 34px rgba(15,23,42,0.22)" }}
               />
               <div>
@@ -2908,10 +2908,10 @@ export default function PTFacultyStaffingMVP() {
                   College of the Sequoias
                 </div>
                 <h1 style={{ fontSize: 36, margin: "4px 0 0 0", fontWeight: 900, letterSpacing: "-0.04em" }}>
-                  S.C.O.P.E.
+                  SHERMAN
                 </h1>
                 <div style={{ marginTop: 8, fontSize: 16, fontWeight: 800, maxWidth: 720, lineHeight: 1.35, opacity: 0.98 }}>
-                  Staffing Coordination & Preference Engine
+                  Seniority &amp; Hiring Eligibility Ranking Management for Academic Needs
                 </div>
                 <div style={{ marginTop: 8, fontSize: 14, maxWidth: 720, lineHeight: 1.5, opacity: 0.96 }}>
                   Smarter faculty staffing starts here.
@@ -3052,7 +3052,7 @@ export default function PTFacultyStaffingMVP() {
           <div style={ui.card}>
             <h2 style={ui.cardTitle}>Set Up Account</h2>
             <div style={ui.cardDesc}>
-              Enter your name and create a password to activate this S.C.O.P.E. invitation.
+              Enter your name and create a password to activate this SHERMAN invitation.
             </div>
             <form onSubmit={handleAcceptInvitation} style={{ ...ui.row, marginTop: 16, alignItems: "center" }}>
               <input
@@ -3086,7 +3086,7 @@ export default function PTFacultyStaffingMVP() {
           <div style={ui.card}>
             <h2 style={ui.cardTitle}>Reset Password</h2>
             <div style={ui.cardDesc}>
-              Create a new password for your S.C.O.P.E. account.
+              Create a new password for your SHERMAN account.
             </div>
             <form onSubmit={handleCompletePasswordReset} style={{ ...ui.row, marginTop: 16, alignItems: "center" }}>
               <input
@@ -4082,7 +4082,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     style={ui.btn}
                     onClick={() => downloadCsvFromRows(
                       divisionReportRows,
-                      `scope-division-summary-${activeTerm.code}.csv`,
+                      `sherman-division-summary-${activeTerm.code}.csv`,
                       ["division_name", "status", "note", "open_sections", "faculty_preferences", "tentative_assignments", "decision_log_entries"]
                     )}
                     disabled={!divisionReportRows.length}
@@ -4427,7 +4427,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           discipline_code: entry.discipline_code,
                           detail: entry.detail,
                         })),
-                        `scope-audit-log-${activeTerm.code}.csv`,
+                        `sherman-audit-log-${activeTerm.code}.csv`,
                         ["created_at", "actor_name", "event_type", "discipline_code", "detail"]
                       )}
                       disabled={!filteredDecisionLogs.length}
@@ -4908,6 +4908,14 @@ OH,ORNAMENTAL_HORTICULTURE`}
 
         </>
         ) : null}
+        <footer
+          aria-label="SHERMAN application information"
+          style={{ padding: "20px 4px 8px", textAlign: "center", color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6 }}
+        >
+          <strong>SHERMAN</strong> — Seniority &amp; Hiring Eligibility Ranking Management for Academic Needs
+          <br />
+          College of the Sequoias Part-Time Faculty Staffing
+        </footer>
       </div>
     </div>
   );

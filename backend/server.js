@@ -68,4 +68,4 @@ cleanupExpiredAuthRecords().catch((error) => console.error("[auth-cleanup]", err
 setInterval(() => {
   cleanupExpiredAuthRecords().catch((error) => console.error("[auth-cleanup]", error));
 }, 60 * 60 * 1000).unref?.();
-app.listen(PORT, () => console.log(`S.C.O.P.E. backend listening on port ${PORT}`));
+app.listen(PORT, () => console.log(`SHERMAN backend listening on port ${PORT}`));

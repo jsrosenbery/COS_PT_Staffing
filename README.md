@@ -1,6 +1,8 @@
-# COS Part-Time Faculty Staffing
+# SHERMAN
 
-This repository contains the S.C.O.P.E. frontend and backend for part-time faculty staffing.
+**Seniority & Hiring Eligibility Ranking Management for Academic Needs**
+
+SHERMAN is the College of the Sequoias application for part-time faculty staffing.
 
 ## Development setup
 

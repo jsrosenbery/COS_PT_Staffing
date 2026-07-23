@@ -1,5 +1,7 @@
 # Environment configuration reference
 
+This configuration supports **SHERMAN — Seniority & Hiring Eligibility Ranking Management for Academic Needs**.
+
 Keep production and staging values in the hosting platform's encrypted secret/configuration store. Do not commit populated `.env` files. Restart or redeploy the affected service after changing runtime variables; rebuild the frontend after changing any `VITE_` variable.
 
 ## Backend production variables

@@ -51,7 +51,7 @@ export function buildUsers(env = process.env) {
     users.unshift({
       employee_id: env.ADMIN_EMPLOYEE_ID || "ADMIN-001",
       email: adminEmail,
-      full_name: env.ADMIN_FULL_NAME || "S.C.O.P.E. Admin",
+      full_name: env.ADMIN_FULL_NAME || "SHERMAN Admin",
       role: "admin",
       division: env.ADMIN_DIVISION || "",
       password: env.ADMIN_PASSWORD || "",

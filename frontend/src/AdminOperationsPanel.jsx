@@ -57,11 +57,11 @@ export default function AdminOperationsPanel({
   const ptInputRef = useRef(null);
 
   const closesAt = useMemo(() => toIsoDate(addBusinessDays(new Date(), 10)), []);
-  const portalUrl = typeof window !== "undefined" ? window.location.origin : "https://your-scope-portal.example";
+  const portalUrl = typeof window !== "undefined" ? window.location.origin : "https://your-sherman-portal.example";
   const disseminationSubject = `${activeTerm?.code || "Active term"} PT staffing window for ${selectedDivision || "selected division"}`;
   const disseminationBody =
     `A staffing window is now open for ${selectedDivision || "the selected division"}.\n\n` +
-    `Please log in to S.C.O.P.E. to review available sections and submit your preferences:\n${portalUrl}\n\n` +
+    `Please log in to SHERMAN to review available sections and submit your preferences:\n${portalUrl}\n\n` +
     `If you have not already created an account, please request account access at the same link. Use your COS email address so your access can be matched to the part-time faculty roster.\n\n` +
     `This staffing window closes automatically on ${closesAt}.\n\n` +
     `Sender: ${senderEmail || "jacoba@cos.edu"}`;
