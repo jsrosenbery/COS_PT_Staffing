@@ -2442,7 +2442,17 @@ export default function PTFacultyStaffingMVP() {
       });
       const data = await response.json();
       if (!response.ok) {
-        setChairMessage(data.error || "Could not record chair decision.");
+        const errorMessage = data.error || data.message || "Could not record chair decision.";
+        const detail = data.code ? ` (${data.code})` : "";
+        console.error("Chair assignment failed", {
+          status: response.status,
+          error: data,
+          assignmentGroupId: row.assignment_group_id,
+          selectedEmployeeId: row.employee_id,
+          expectedRecommendedEmployeeId,
+        });
+        window.alert(`Assignment was not saved: ${errorMessage}`);
+        setChairMessage(`Assignment was not saved: ${errorMessage}${detail}`);
         return;
       }
       const savedAssignment = {
@@ -4608,7 +4618,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                   ) : row.section_assigned_to_other ? (
                                     <button style={ui.btn} disabled>Filled</button>
                                   ) : (
-                                    <button style={isBackendRecommended || !requiresPreferenceRationale ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, effectiveRecommendedEmployeeId, requiresPreferenceRationale)}>
+                                    <button style={isBackendRecommended || !requiresPreferenceRationale ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, backendRecommendedEmployeeId, requiresPreferenceRationale)}>
                                       {requiresPreferenceRationale ? "Assign with Rationale" : "Assign"}
                                     </button>
                                   )}

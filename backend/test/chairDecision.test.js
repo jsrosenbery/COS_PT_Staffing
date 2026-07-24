@@ -151,4 +151,14 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /loadChairWorkflow\(\{ preserveMessage: true, preserveAssignmentsOnError: true \}\)/);
   assert.match(frontend, /Seniority recommendation/);
   assert.doesNotMatch(frontend, /Backend recommendation/);
+  assert.match(frontend, /assignSectionToInstructor\(row, backendRecommendedEmployeeId, requiresPreferenceRationale\)/);
+  assert.match(frontend, /window\.alert\(`Assignment was not saved:/);
+});
+
+test("chair workflow displays the same frozen preference source used by allocation", () => {
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+
+  assert.match(workflow, /FROM scope_preference_submission_items p/);
+  assert.match(workflow, /JOIN scope_preference_submissions sub ON sub\.id = p\.submission_id/);
+  assert.match(workflow, /AND sub\.status = 'frozen'/);
 });
