@@ -4593,7 +4593,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                     {isCurrentAssignee || row.has_tentative_assignment ? <span style={workflowStatePillStyle("assigned")}>{isCurrentAssignee ? "Current assignee" : "Assigned"}</span> : null}
                                     {!isCurrentAssignee && !row.has_tentative_assignment && row.section_assigned_to_other ? <span style={workflowStatePillStyle("filled")}>Section filled</span> : null}
                                     {!isCurrentAssignee && !row.has_tentative_assignment && row.has_assignment_conflict ? <span style={workflowStatePillStyle("conflict")}>Time conflict</span> : null}
-                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isBackendRecommended ? <span style={workflowStatePillStyle("top")}>Backend recommendation</span> : null}
+                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isBackendRecommended ? <span style={workflowStatePillStyle("top")}>Seniority recommendation</span> : null}
                                     {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && requiresPreferenceRationale ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
                                     {section.currentAssignment && !isCurrentAssignee && !row.has_assignment_conflict ? <span style={workflowStatePillStyle("bypass")}>Reassign requires rationale</span> : null}
                                   </div>
