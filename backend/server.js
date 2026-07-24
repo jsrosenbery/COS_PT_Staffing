@@ -1,8 +1,9 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { query } from "./db.js";
+import { pool, query } from "./db.js";
 import { authenticateRequest, cleanupExpiredAuthRecords, publicAuthPaths } from "./auth.js";
+import { runMigrations } from "./migrations.js";
 import { assertProductionConfig, correlationId, isPublicApiRequest, logError, publicError, securityHeaders } from "./security.js";
 import authRoutes from "./routes/auth.js";
 import persistenceRoutes from "./routes/persistence.js";
@@ -17,6 +18,7 @@ const API_TOKEN = (process.env.API_TOKEN || "").trim();
 const AUTH_DISABLED = String(process.env.AUTH_DISABLED || "").toLowerCase() === "true";
 const CORS_ORIGIN = (process.env.CORS_ORIGIN || "").trim();
 const API_TOKEN_AUTH_ENABLED = String(process.env.API_TOKEN_AUTH_ENABLED ?? (process.env.NODE_ENV === "production" ? "false" : "true")).toLowerCase() === "true";
+const RUN_MIGRATIONS_ON_STARTUP = String(process.env.RUN_MIGRATIONS_ON_STARTUP || "").trim().toLowerCase() === "true";
 const authConfigured = (API_TOKEN_AUTH_ENABLED && Boolean(API_TOKEN)) || AUTH_DISABLED;
 
 if (!authConfigured && API_TOKEN_AUTH_ENABLED) {
@@ -64,8 +66,20 @@ app.use("/api/auth", authRoutes);
 app.use("/api", persistenceRoutes);
 app.use("/api", workflowRoutes);
 
-cleanupExpiredAuthRecords().catch((error) => console.error("[auth-cleanup]", error));
-setInterval(() => {
+async function start() {
+  if (RUN_MIGRATIONS_ON_STARTUP) {
+    console.log("[migrations] RUN_MIGRATIONS_ON_STARTUP=true; applying pending migrations before listening.");
+    await runMigrations({ pool });
+  }
+
   cleanupExpiredAuthRecords().catch((error) => console.error("[auth-cleanup]", error));
-}, 60 * 60 * 1000).unref?.();
-app.listen(PORT, () => console.log(`SHERMAN backend listening on port ${PORT}`));
+  setInterval(() => {
+    cleanupExpiredAuthRecords().catch((error) => console.error("[auth-cleanup]", error));
+  }, 60 * 60 * 1000).unref?.();
+  app.listen(PORT, () => console.log(`SHERMAN backend listening on port ${PORT}`));
+}
+
+start().catch((error) => {
+  console.error("[startup]", error);
+  process.exit(1);
+});
