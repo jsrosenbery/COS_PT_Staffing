@@ -12,6 +12,7 @@ import {
   approveAccountRequest,
   clearApiToken,
   completePasswordReset,
+  deleteUser,
   fetchCurrentUser,
   fetchJson,
   getApiToken,
@@ -1219,6 +1220,30 @@ export default function PTFacultyStaffingMVP() {
       setManagedUsersMessage(`${action === "invite" ? "Invite" : "Password reset"} sent for ${user.email}.${staged}`);
     } catch (error) {
       setManagedUsersMessage(error.message || "Could not complete user action.");
+    } finally {
+      setManagedUsersBusy(false);
+    }
+  }
+
+  async function deleteManagedUser(user) {
+    if (!user?.id) return;
+    if (currentUser?.id && Number(currentUser.id) === Number(user.id)) {
+      setManagedUsersMessage("You cannot delete your own signed-in admin account.");
+      return;
+    }
+    const confirmed = typeof window !== "undefined"
+      ? window.confirm(`Permanently delete ${user.full_name || user.email}? This removes the account, active sessions, pending invites, and password reset links. This cannot be undone.`)
+      : false;
+    if (!confirmed) return;
+
+    setManagedUsersBusy(true);
+    setManagedUsersMessage("");
+    try {
+      const data = await deleteUser(user.id);
+      setManagedUsers((prev) => prev.filter((item) => item.id !== user.id));
+      setManagedUsersMessage(`Deleted ${data.deletedUser?.email || user.email}.`);
+    } catch (error) {
+      setManagedUsersMessage(error.message || "Could not delete user.");
     } finally {
       setManagedUsersBusy(false);
     }
@@ -3923,6 +3948,14 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           </button>
                           <button type="button" style={ui.btn} onClick={() => runUserAction(user, "reset")} disabled={managedUsersBusy || user.active_status !== "active"}>
                             Password Reset
+                          </button>
+                          <button
+                            type="button"
+                            style={{ ...ui.btn, color: "#b91c1c", borderColor: "#fecaca" }}
+                            onClick={() => deleteManagedUser(user)}
+                            disabled={managedUsersBusy || (currentUser?.id && Number(currentUser.id) === Number(user.id))}
+                          >
+                            Delete
                           </button>
                         </div>
                       </td>

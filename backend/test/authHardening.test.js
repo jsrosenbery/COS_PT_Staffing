@@ -151,6 +151,25 @@ test("cleanup removes expired sessions, reset tokens, and invites", () => {
   assert.match(auth, /DELETE FROM scope_user_invites WHERE expires_at <= NOW\(\) OR accepted_at IS NOT NULL/);
 });
 
+test("admin user deletion is audited and protected from lockout", () => {
+  const authRoutes = read("../routes/auth.js");
+  const schema = read("../migrations/0001_baseline.sql");
+  const apiClient = read("../../frontend/src/apiClient.js");
+  const frontend = read("../../frontend/src/pt-faculty-staffing-mvp.jsx");
+
+  assert.match(authRoutes, /router\.delete\("\/users\/:id"/);
+  assert.match(authRoutes, /You cannot delete your own signed-in admin account/);
+  assert.match(authRoutes, /At least one active admin account must remain/);
+  assert.match(authRoutes, /USER_DELETED/);
+  assert.match(authRoutes, /DELETE FROM scope_users WHERE id = \$1/);
+  assert.match(schema, /scope_user_invites[\s\S]*REFERENCES scope_users\(id\) ON DELETE CASCADE/);
+  assert.match(schema, /scope_password_resets[\s\S]*REFERENCES scope_users\(id\) ON DELETE CASCADE/);
+  assert.match(schema, /scope_user_sessions[\s\S]*REFERENCES scope_users\(id\) ON DELETE CASCADE/);
+  assert.match(apiClient, /export async function deleteUser/);
+  assert.match(frontend, /deleteManagedUser/);
+  assert.match(frontend, /Permanently delete/);
+});
+
 test("security headers and stable public errors are wired into startup", () => {
   const server = read("../server.js");
 

@@ -1,5 +1,5 @@
 import express from "express";
-import { query } from "../db.js";
+import { pool, query } from "../db.js";
 import {
   createRawToken,
   hashPassword,
@@ -213,6 +213,59 @@ router.patch("/users/:id", async (req, res) => {
     res.json({ user: sanitizeUser(result.rows[0]) });
   } catch (error) {
     unexpected(res, req, "auth-update-user", error, "Could not update user.");
+  }
+});
+
+router.delete("/users/:id", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const client = await pool.connect();
+  try {
+    const userId = Number(req.params.id);
+    if (!Number.isInteger(userId) || userId < 1) return res.status(400).json({ error: "Valid user id is required." });
+    if (req.auth?.user?.id && Number(req.auth.user.id) === userId) {
+      return res.status(400).json({ error: "You cannot delete your own signed-in admin account." });
+    }
+
+    await client.query("BEGIN");
+    const existingResult = await client.query("SELECT * FROM scope_users WHERE id = $1 LIMIT 1 FOR UPDATE", [userId]);
+    const existing = existingResult.rows[0];
+    if (!existing) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "User not found." });
+    }
+    if (existing.role === "admin" && existing.active_status === "active") {
+      const otherAdminResult = await client.query(
+        `SELECT COUNT(*)::int AS count
+         FROM scope_users
+         WHERE role = 'admin'
+           AND active_status = 'active'
+           AND id <> $1`,
+        [userId]
+      );
+      if (!otherAdminResult.rows[0]?.count) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "At least one active admin account must remain." });
+      }
+    }
+
+    await client.query(
+      `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, instructor_name, old_value, note, source)
+       VALUES ('USER_DELETED', $1, 'admin', $2, $3, $4, 'backend')`,
+      [
+        req.auth?.user?.email || req.auth?.authType || "",
+        existing.email,
+        JSON.stringify(sanitizeUser(existing)),
+        `Permanently deleted user ${existing.email}.`,
+      ]
+    );
+    await client.query("DELETE FROM scope_users WHERE id = $1", [userId]);
+    await client.query("COMMIT");
+    res.json({ success: true, deletedUser: sanitizeUser(existing) });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    unexpected(res, req, "auth-delete-user", error, "Could not delete user.");
+  } finally {
+    client.release();
   }
 });
 

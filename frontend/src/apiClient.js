@@ -178,6 +178,10 @@ export async function updateUser(id, payload) {
   });
 }
 
+export async function deleteUser(id) {
+  return fetchJson(`/auth/users/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 export async function resendUserInvite(id) {
   return fetchJson(`/auth/users/${encodeURIComponent(id)}/resend-invite`, { method: "POST" });
 }
