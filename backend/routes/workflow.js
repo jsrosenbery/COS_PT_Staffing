@@ -1345,10 +1345,9 @@ router.get("/decision-explanations/print", requireRoles("admin"), async (req, re
   }
 });
 
-router.post("/chair-decisions", requireRoles("chair"), requireDivisionScope, async (req, res) => {
+router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
   const {
     termCode = "",
-    division = "",
     disciplineCode = "",
     assignmentGroupId = "",
     selectedEmployeeId = "",
@@ -1357,8 +1356,8 @@ router.post("/chair-decisions", requireRoles("chair"), requireDivisionScope, asy
     expectedRecommendedEmployeeId = "",
     expectedRecommendationSnapshot = null,
   } = req.body || {};
-  if (!termCode || !division || !assignmentGroupId || !selectedEmployeeId) {
-    return res.status(400).json({ error: "termCode, division, assignmentGroupId, and selectedEmployeeId are required." });
+  if (!termCode || !assignmentGroupId || !selectedEmployeeId) {
+    return res.status(400).json({ error: "termCode, assignmentGroupId, and selectedEmployeeId are required." });
   }
 
   const actor = req.auth?.user || {};
@@ -1368,13 +1367,21 @@ router.post("/chair-decisions", requireRoles("chair"), requireDivisionScope, asy
     const lockedSection = await client.query(
       `SELECT assignment_group_id, division, discipline_code
        FROM scope_sections
-       WHERE term_code = $1 AND assignment_group_id = $2 AND division = $3
+       WHERE term_code = $1 AND assignment_group_id = $2
        FOR UPDATE`,
-      [termCode, assignmentGroupId, division]
+      [termCode, assignmentGroupId]
     );
     if (!lockedSection.rows.length) {
       await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Staffing unit was not found in this division." });
+      return res.status(404).json({ error: "Staffing unit was not found." });
+    }
+
+    const sectionDivision = lockedSection.rows[0].division || "";
+    const sectionDisciplineCode = disciplineCode || lockedSection.rows[0].discipline_code || "";
+    const scopedDivisions = scopeFilterForReq(req, [sectionDivision]);
+    if (!isAdmin(req) && !scopedDivisions.length) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "This action is outside your assigned division scope." });
     }
 
     const existingAssignment = await client.query(
@@ -1393,9 +1400,9 @@ router.post("/chair-decisions", requireRoles("chair"), requireDivisionScope, asy
 
     const { analysis, exceptionReasons } = await buildAllocationAnalysisFromDb(client, {
       termCode,
-      division,
-      divisions: [division],
-      disciplineCode: disciplineCode || lockedSection.rows[0].discipline_code || "",
+      division: sectionDivision,
+      divisions: [sectionDivision],
+      disciplineCode: sectionDisciplineCode,
     });
     const decision = validateChairDecision({
       analysis,
@@ -1438,8 +1445,8 @@ router.post("/chair-decisions", requireRoles("chair"), requireDivisionScope, asy
        RETURNING id, decided_at`,
       [
         termCode,
-        division,
-        disciplineCode || lockedSection.rows[0].discipline_code || "",
+        sectionDivision,
+        sectionDisciplineCode,
         assignmentGroupId,
         decision.recommendedCandidate.employeeId,
         selectedEmployeeId,
@@ -1464,7 +1471,7 @@ router.post("/chair-decisions", requireRoles("chair"), requireDivisionScope, asy
        RETURNING id`,
       [
         termCode,
-        disciplineCode || lockedSection.rows[0].discipline_code || "",
+        sectionDisciplineCode,
         assignmentGroupId,
         selectedEmployeeId,
         selectedFacultyName,
@@ -1479,7 +1486,7 @@ router.post("/chair-decisions", requireRoles("chair"), requireDivisionScope, asy
 
     await writeAuditEvent(client, req, {
       eventType: "CHAIR_DECISION_RECORDED",
-      division,
+      division: sectionDivision,
       term: termCode,
       sectionKey: assignmentGroupId,
       instructorName: selectedFacultyName,
@@ -1499,9 +1506,12 @@ router.post("/chair-decisions", requireRoles("chair"), requireDivisionScope, asy
         id: decisionResult.rows[0]?.id,
         decided_at: decisionResult.rows[0]?.decided_at,
         assignment_id: assignmentResult.rows[0]?.id,
+        division: sectionDivision,
+        discipline_code: sectionDisciplineCode,
         status: decision.decisionStatus,
         recommended_employee_id: decision.recommendedCandidate.employeeId,
         selected_employee_id: selectedEmployeeId,
+        selected_faculty_name: selectedFacultyName,
         recommendation_snapshot: decision.recommendationSnapshot,
         decision_snapshot: decision.decisionSnapshot,
       },
