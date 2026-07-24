@@ -1040,6 +1040,7 @@ export default function PTFacultyStaffingMVP() {
   const canShowWorkspace = Boolean(currentUser || savedApiTokenConfigured);
   const canUseAdminTools = role === "admin" && (currentUser?.role === "admin" || savedApiTokenConfigured);
   const canUseElevatedTools = canUseAdminTools || ["chair", "dean"].includes(currentUser?.role || "");
+  const canSelectSyntheticScope = currentUser?.role === "admin" || savedApiTokenConfigured;
   const roleOptions = currentUser && currentUser.role !== "admin"
     ? [{ value: currentUser.role, label: currentUser.role === "chair" ? "Division Chair" : currentUser.role === "dean" ? "Dean" : "Part-Time Faculty" }]
     : currentUser?.role === "admin" || savedApiTokenConfigured
@@ -1578,13 +1579,25 @@ export default function PTFacultyStaffingMVP() {
     ).sort();
   }, [availableSections]);
 
+  const authenticatedDivisionScope = useMemo(() => (
+    Array.from(
+      new Set(
+        splitScopeValues(currentUser?.division, currentUser?.divisions)
+          .map(canonicalDivisionName)
+          .filter(Boolean)
+      )
+    )
+  ), [currentUser]);
+
   const chairDivisions = useMemo(() => {
+    if (role === "chair" && currentUser?.role === "chair") return authenticatedDivisionScope;
     return (chairAssignments.find((item) => item.chairName === selectedChairName)?.divisions || []).map(canonicalDivisionName);
-  }, [selectedChairName, chairAssignments]);
+  }, [role, currentUser?.role, authenticatedDivisionScope, selectedChairName, chairAssignments]);
 
   const deanDivisions = useMemo(() => {
+    if (role === "dean" && currentUser?.role === "dean") return authenticatedDivisionScope;
     return (deanAssignments.find((item) => item.deanName === selectedDeanName)?.divisions || []).map(canonicalDivisionName);
-  }, [selectedDeanName, deanAssignments]);
+  }, [role, currentUser?.role, authenticatedDivisionScope, selectedDeanName, deanAssignments]);
 
   const uploadDivisionOptions = useMemo(() => (
     Array.from(
@@ -2219,6 +2232,11 @@ export default function PTFacultyStaffingMVP() {
         role === "chair" ? chairDivisions :
         role === "dean" ? deanDivisions :
         [];
+      if ((role === "chair" || role === "dean") && !scopedDivisions.length) {
+        setSectionsError("Your account does not have a division scope assigned. Ask an administrator to update your user record.");
+        setAvailableSections([]);
+        return;
+      }
       if (scopedDivisions.length) {
         params.set("divisions", scopedDivisions.join("|"));
       }
@@ -2292,6 +2310,16 @@ export default function PTFacultyStaffingMVP() {
         role === "chair" ? chairDivisions :
         role === "dean" ? deanDivisions :
         [];
+      if ((role === "chair" || role === "dean") && !scopedDivisions.length) {
+        setChairMessage("Your account does not have a division scope assigned. Ask an administrator to update your user record.");
+        setChairWorkflowRows([]);
+        setChairPreferenceRows([]);
+        setTentativeAssignments([]);
+        setAllocationAnalysis(null);
+        setContractExceptionReasons([]);
+        setDecisionLogs([]);
+        return;
+      }
       if (scopedDivisions.length) workflowParams.set("divisions", scopedDivisions.join("|"));
 
       const [workflowResponse, assignmentsResponse, logsResponse, analysisResponse] = await Promise.all([
@@ -4107,20 +4135,24 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   Scoped to the real division structure you provided. Chair names can be swapped in once you are ready.
                 </div>
               </div>
-              <select
-                style={ui.alphaSelect}
-                value={selectedChairName}
-                onChange={(e) => {
-                  setSelectedChairName(e.target.value);
-                  setSelectedDisciplineCode("ALL");
-                }}
-              >
-                {chairAssignments.map((item) => (
-                  <option key={item.chairName} value={item.chairName}>
-                    {item.chairName}
-                  </option>
-                ))}
-              </select>
+              {canSelectSyntheticScope ? (
+                <select
+                  style={ui.alphaSelect}
+                  value={selectedChairName}
+                  onChange={(e) => {
+                    setSelectedChairName(e.target.value);
+                    setSelectedDisciplineCode("ALL");
+                  }}
+                >
+                  {chairAssignments.map((item) => (
+                    <option key={item.chairName} value={item.chairName}>
+                      {item.chairName}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span style={ui.chip}>{currentUser?.full_name || currentUser?.email || "Authenticated chair"}</span>
+              )}
             </div>
             <div style={{ marginTop: 12 }}>
               {chairDivisions.map((division) => (
@@ -4139,20 +4171,24 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   Scoped to the real dean coverage structure you provided. Dean names can be swapped in later.
                 </div>
               </div>
-              <select
-                style={ui.alphaSelect}
-                value={selectedDeanName}
-                onChange={(e) => {
-                  setSelectedDeanName(e.target.value);
-                  setSelectedDisciplineCode("ALL");
-                }}
-              >
-                {deanAssignments.map((item) => (
-                  <option key={item.deanName} value={item.deanName}>
-                    {item.deanName}
-                  </option>
-                ))}
-              </select>
+              {canSelectSyntheticScope ? (
+                <select
+                  style={ui.alphaSelect}
+                  value={selectedDeanName}
+                  onChange={(e) => {
+                    setSelectedDeanName(e.target.value);
+                    setSelectedDisciplineCode("ALL");
+                  }}
+                >
+                  {deanAssignments.map((item) => (
+                    <option key={item.deanName} value={item.deanName}>
+                      {item.deanName}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span style={ui.chip}>{currentUser?.full_name || currentUser?.email || "Authenticated dean"}</span>
+              )}
             </div>
             <div style={{ marginTop: 12 }}>
               {deanDivisions.map((division) => (
