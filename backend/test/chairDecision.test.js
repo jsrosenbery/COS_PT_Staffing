@@ -153,6 +153,8 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.doesNotMatch(frontend, /Backend recommendation/);
   assert.match(frontend, /assignSectionToInstructor\(row, backendRecommendedEmployeeId, requiresPreferenceRationale\)/);
   assert.match(frontend, /window\.alert\(`Assignment was not saved:/);
+  assert.match(frontend, /finiteNumberOrNull\(row\.preference_rank\) !== null/);
+  assert.match(frontend, /Not Requested/);
 });
 
 test("chair workflow displays the same frozen preference source used by allocation", () => {
