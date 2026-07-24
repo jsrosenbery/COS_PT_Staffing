@@ -2014,7 +2014,12 @@ export default function PTFacultyStaffingMVP() {
           if (aPref !== bPref) return aPref - bPref;
           return String(a.faculty_name || a.employee_id || "").localeCompare(String(b.faculty_name || b.employee_id || ""));
         });
-        const eligibleCandidates = candidates.filter((row) => !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict);
+        const eligibleCandidates = candidates.filter((row) =>
+          finiteNumberOrNull(row.preference_rank) !== null &&
+          !row.has_tentative_assignment &&
+          !row.section_assigned_to_other &&
+          !row.has_assignment_conflict
+        );
         const preferenceRanks = [
           finiteNumberOrNull(section.selected_faculty_preference_rank),
           finiteNumberOrNull(section.section_preference_rank),
@@ -4559,6 +4564,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           const requiresPreferenceRationale = Boolean(effectiveRecommendedEmployeeId && row.employee_id !== effectiveRecommendedEmployeeId);
                           const currentAssignment = currentAssignmentByGroup.get(section.assignment_group_id) || section.currentAssignment || null;
                           const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
+                          const isInterestedCandidate = finiteNumberOrNull(row.preference_rank) !== null;
                           const reasonSummary = candidateReasonSummary(section, row, topCandidate, currentAssignment);
                           return (
                             <div key={`${section.assignment_group_id}-${row.employee_id}`} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: row.has_tentative_assignment || isCurrentAssignee ? "rgba(220, 252, 231, 0.22)" : row.has_assignment_conflict ? "rgba(254, 226, 226, 0.22)" : "var(--bg-soft)" }}>
@@ -4603,6 +4609,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                     {isCurrentAssignee || row.has_tentative_assignment ? <span style={workflowStatePillStyle("assigned")}>{isCurrentAssignee ? "Current assignee" : "Assigned"}</span> : null}
                                     {!isCurrentAssignee && !row.has_tentative_assignment && row.section_assigned_to_other ? <span style={workflowStatePillStyle("filled")}>Section filled</span> : null}
                                     {!isCurrentAssignee && !row.has_tentative_assignment && row.has_assignment_conflict ? <span style={workflowStatePillStyle("conflict")}>Time conflict</span> : null}
+                                    {!isCurrentAssignee && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && !isInterestedCandidate ? <span style={workflowStatePillStyle("blocked")}>Not requested</span> : null}
                                     {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isBackendRecommended ? <span style={workflowStatePillStyle("top")}>Seniority recommendation</span> : null}
                                     {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && requiresPreferenceRationale ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
                                     {section.currentAssignment && !isCurrentAssignee && !row.has_assignment_conflict ? <span style={workflowStatePillStyle("bypass")}>Reassign requires rationale</span> : null}
@@ -4611,6 +4618,8 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                     <button style={ui.btn} disabled>{isCurrentAssignee ? "Current" : "Assigned"}</button>
                                   ) : row.has_assignment_conflict ? (
                                     <button style={ui.btn} disabled>Time Conflict</button>
+                                  ) : !isInterestedCandidate ? (
+                                    <button style={ui.btn} disabled>Not Requested</button>
                                   ) : section.currentAssignment ? (
                                     <button style={ui.btn} onClick={() => reassignTentativeAssignment(currentAssignment, row)}>
                                       Reassign
