@@ -2279,10 +2279,11 @@ export default function PTFacultyStaffingMVP() {
     }
   }
 
-  async function loadChairWorkflow() {
+  async function loadChairWorkflow(options = {}) {
+    const { preserveMessage = false, preserveAssignmentsOnError = false } = options;
     if (!activeTerm?.code) return;
     setLoadingChairWorkflow(true);
-    setChairMessage("");
+    if (!preserveMessage) setChairMessage("");
     try {
       const workflowParams = new URLSearchParams({ termCode: activeTerm.code });
       const scopedDiscipline = selectedDisciplineCode && selectedDisciplineCode !== "ALL" ? selectedDisciplineCode : "";
@@ -2309,7 +2310,7 @@ export default function PTFacultyStaffingMVP() {
         setChairMessage(workflowData.error || "Could not load workflow.");
         setChairWorkflowRows([]);
         setChairPreferenceRows([]);
-        setTentativeAssignments([]);
+        if (!preserveAssignmentsOnError) setTentativeAssignments([]);
         setDecisionLogs([]);
         return;
       }
@@ -2317,7 +2318,7 @@ export default function PTFacultyStaffingMVP() {
         setChairMessage(assignmentsData.error || "Could not load tentative assignments.");
         setChairWorkflowRows(workflowData.rows || []);
         setChairPreferenceRows([]);
-        setTentativeAssignments([]);
+        if (!preserveAssignmentsOnError) setTentativeAssignments([]);
         setDecisionLogs([]);
         return;
       }
@@ -2357,7 +2358,7 @@ export default function PTFacultyStaffingMVP() {
       setChairMessage(error.message || "Could not load workflow.");
       setChairWorkflowRows([]);
       setChairPreferenceRows([]);
-      setTentativeAssignments([]);
+      if (!preserveAssignmentsOnError) setTentativeAssignments([]);
       setAllocationAnalysis(null);
       setContractExceptionReasons([]);
       setDecisionLogs([]);
@@ -2416,8 +2417,37 @@ export default function PTFacultyStaffingMVP() {
         setChairMessage(data.error || "Could not record chair decision.");
         return;
       }
-      setChairMessage(isBypass ? "Chair exception decision recorded." : "Recommended candidate selected.");
-      await loadChairWorkflow();
+      const savedAssignment = {
+        id: data.decision?.assignment_id,
+        assignment_group_id: row.assignment_group_id,
+        employee_id: row.employee_id,
+        faculty_name: data.decision?.selected_faculty_name || row.faculty_name || row.employee_id,
+        status: "tentative",
+        decision_status: data.decision?.status || "tentative",
+        reason: exceptionExplanation.trim(),
+        reason_code: exceptionReasonCode,
+        justification: exceptionExplanation.trim(),
+        recommendation_snapshot: data.decision?.recommendation_snapshot || {},
+        decision_snapshot: data.decision?.decision_snapshot || {},
+        discipline_code: row.discipline_code,
+        primary_subject_course: row.primary_subject_course,
+        primary_crn: row.primary_crn,
+        title: row.title,
+        division: row.division,
+        campus: row.campus,
+        instructional_method: row.instructional_method,
+        display_modality: row.display_modality,
+        modality: row.modality,
+        meetings: row.meetings || [],
+        created_at: new Date().toISOString(),
+      };
+      setTentativeAssignments((current) => [
+        savedAssignment,
+        ...current.filter((assignment) => assignment.assignment_group_id !== row.assignment_group_id),
+      ]);
+      setWorkflowView("assigned");
+      setChairMessage(`${isBypass ? "Chair exception decision recorded" : "Recommended candidate selected"}${savedAssignment.id ? ` as assignment #${savedAssignment.id}` : ""}.`);
+      await loadChairWorkflow({ preserveMessage: true, preserveAssignmentsOnError: true });
     } catch (error) {
       setChairMessage(error.message || "Could not record chair decision.");
     }
