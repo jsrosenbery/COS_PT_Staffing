@@ -18,6 +18,7 @@ Keep production and staging values in the hosting platform's encrypted secret/co
 | `API_TOKEN` | Conditional secret | Required only while API-token bootstrap is enabled. Generate at least 32 random characters with an approved secret generator and distribute through a secure channel. Rotate or remove it after bootstrap. | Examples, dictionary words, reused passwords, source control, logs, tickets, email, or browser build variables. |
 | `RATE_LIMIT_STORE` | Required production setting | Set `postgres` so authentication counters are persistent and shared. | `memory` in production; counters reset on restart and are not shared. |
 | `RATE_LIMIT_TRUST_PROXY_HOPS` | Optional security setting | Default `0`. Change only after the hosting owner confirms the exact number of trusted proxies, from `1` through `5`. | Guessing, accepting arbitrary forwarded addresses, or enabling global Express trust proxy without topology review. |
+| `RUN_MIGRATIONS_ON_STARTUP` | Optional deployment control | Default `false`. Set `true` only when the hosting platform should apply pending repository migrations during backend startup before listening for traffic. The migration runner uses a PostgreSQL advisory lock. | Enabling without a current backup or without reviewing pending migrations. Leaving it undocumented in a production change record. |
 | `EMAIL_PROVIDER` | Required feature selection | Use `brevo` or `sendgrid` when staging/production must deliver invitations and resets. `console` is acceptable only for isolated verification where delivery is intentionally disabled. | `console` for a live pilot expecting email delivery, or an unsupported provider name. |
 | `EMAIL_FROM` | Conditional address | Required with Brevo or SendGrid; use a verified institutional sender. | Unverified/spoofed sender or personal mailbox. |
 | `BREVO_API_KEY` | Conditional secret | Required when `EMAIL_PROVIDER=brevo`; store only in the platform secret store and scope it to sending. | Empty, placeholder, source-controlled, browser-exposed, or broadly privileged keys. |
@@ -36,7 +37,7 @@ Production startup validates the most important combinations and refuses to star
 | `MAX_UPLOAD_BYTES` | `5242880` | Maximum schedule upload size. Keep bounded to expected institutional exports. |
 | `ALLOW_TOKEN_URLS_IN_RESPONSES` | Production default `false` | Development/debug feature flag. Keep `false` in staging and production because responses would expose invitation/reset bearer URLs. |
 
-There are no separate migration credentials or migration feature flags. `npm run migrate`, `npm run migrate:status`, `npm run db:integrity-report`, and `npm run db:integrity-precheck` use `DATABASE_URL` and `DATABASE_SSL`.
+There are no separate migration credentials. `npm run migrate`, `npm run migrate:status`, `npm run db:integrity-report`, and `npm run db:integrity-precheck` use `DATABASE_URL` and `DATABASE_SSL`. If `RUN_MIGRATIONS_ON_STARTUP=true`, backend startup also uses the same connection to apply pending migrations before accepting requests.
 
 ## Bootstrap and development-only variables
 

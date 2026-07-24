@@ -56,7 +56,7 @@ Set `CORS_ORIGIN` to exact approved frontend origins. Test an allowed browser re
 
 ## 5. Start and verify services
 
-Deploy the backend only after migrations succeed. `npm start` does not run migrations. Verify:
+Deploy the backend only after migrations succeed. By default, `npm start` does not run migrations. If the hosting platform is configured with `RUN_MIGRATIONS_ON_STARTUP=true`, the backend applies pending migrations before listening; use that option only after the same backup and pending-migration review described above. Verify:
 
 ```sh
 curl --fail --show-error https://backend.example.invalid/api/health

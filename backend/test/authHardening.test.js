@@ -161,9 +161,11 @@ test("security headers and stable public errors are wired into startup", () => {
   assert.match(server, /cleanupExpiredAuthRecords/);
 });
 
-test("production startup does not execute schema migrations", () => {
+test("production startup only executes schema migrations when explicitly enabled", () => {
   const server = read("../server.js");
-  assert.doesNotMatch(server, /schema\.sql|runMigrations|ensureSchema/);
+  assert.doesNotMatch(server, /schema\.sql|ensureSchema/);
+  assert.match(server, /RUN_MIGRATIONS_ON_STARTUP/);
+  assert.match(server, /runMigrations\(\{ pool \}\)/);
   assert.match(server, /app\.listen/);
 });
 
