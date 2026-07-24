@@ -1713,9 +1713,20 @@ export default function PTFacultyStaffingMVP() {
       }
       grouped.get(employeeId).rows.push(row);
     });
-    return Array.from(grouped.values()).sort((a, b) =>
-      `${a.lastName} ${a.firstName}`.trim().localeCompare(`${b.lastName} ${b.firstName}`.trim())
-    );
+    return Array.from(grouped.values())
+      .map((item) => {
+        const ranks = item.rows.map((row) => finiteNumberOrNull(row.seniority_rank || row.seniority_value)).filter((rank) => rank !== null);
+        const seniorityRank = ranks.length ? Math.min(...ranks) : null;
+        return {
+          ...item,
+          seniorityRank,
+          label: `${facultyName(item)} - ${seniorityRank ?? "no seniority"}`,
+        };
+      })
+      .sort((a, b) =>
+        (finiteNumberOrNull(a.seniorityRank) ?? 999999) - (finiteNumberOrNull(b.seniorityRank) ?? 999999) ||
+        `${a.lastName} ${a.firstName}`.trim().localeCompare(`${b.lastName} ${b.firstName}`.trim())
+      );
   }, [ptStaffingRows, ptFacultyDisciplineFilter]);
 
   const authenticatedFacultyId =
@@ -1870,10 +1881,12 @@ export default function PTFacultyStaffingMVP() {
     chairPreferenceRows.forEach((row) => {
       const employeeId = normalize(row.employee_id || row.faculty_id);
       if (!employeeId) return;
+      const rosterOption = previewFacultyOptions.find((item) => item.employeeId === employeeId);
       const rank = finiteNumberOrNull(row.preference_rank);
       const existing = grouped.get(employeeId) || {
         employeeId,
-        facultyName: row.faculty_name || employeeId,
+        facultyName: rosterOption ? facultyName(rosterOption) : row.faculty_name || employeeId,
+        seniorityRank: rosterOption?.seniorityRank ?? null,
         preferenceCount: 0,
         firstPreferenceRank: null,
       };
@@ -1884,15 +1897,16 @@ export default function PTFacultyStaffingMVP() {
       grouped.set(employeeId, existing);
     });
     return Array.from(grouped.values()).sort((a, b) =>
+      (finiteNumberOrNull(a.seniorityRank) ?? 999999) - (finiteNumberOrNull(b.seniorityRank) ?? 999999) ||
       normalize(a.facultyName).localeCompare(normalize(b.facultyName)) ||
       normalize(a.employeeId).localeCompare(normalize(b.employeeId))
     );
-  }, [chairPreferenceRows]);
+  }, [chairPreferenceRows, previewFacultyOptions]);
 
   const selectedReviewFaculty = useMemo(() => {
     const selectedId = normalize(selectedFacultyId || selectedFaculty?.employeeId);
     return submittedFacultyOptions.find((item) => item.employeeId === selectedId) ||
-      (selectedFaculty ? { employeeId: selectedFaculty.employeeId, facultyName: facultyName(selectedFaculty), preferenceCount: 0, firstPreferenceRank: null } : null);
+      (selectedFaculty ? { employeeId: selectedFaculty.employeeId, facultyName: facultyName(selectedFaculty), seniorityRank: selectedFaculty.seniorityRank ?? null, preferenceCount: 0, firstPreferenceRank: null } : null);
   }, [submittedFacultyOptions, selectedFacultyId, selectedFaculty]);
 
   const selectedReviewFacultyName = selectedReviewFaculty?.facultyName || (selectedFaculty ? facultyName(selectedFaculty) : "selected faculty");
@@ -2475,7 +2489,8 @@ export default function PTFacultyStaffingMVP() {
     if (!confirmed) return;
     setChairMessage("");
     try {
-      const scopedDivisions = role === "chair" ? chairDivisions : [];
+      const assignmentDivisions = Array.from(new Set(tentativeAssignments.map((assignment) => canonicalDivisionName(assignment.division)).filter(Boolean)));
+      const scopedDivisions = role === "chair" ? (chairDivisions.length ? chairDivisions : assignmentDivisions) : [];
       const response = await apiFetch(`${API_BASE}/assignments/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2508,7 +2523,8 @@ export default function PTFacultyStaffingMVP() {
     if (!confirmed) return;
     setChairMessage("");
     try {
-      const scopedDivisions = role === "dean" ? deanDivisions : [];
+      const assignmentDivisions = Array.from(new Set(tentativeAssignments.map((assignment) => canonicalDivisionName(assignment.division)).filter(Boolean)));
+      const scopedDivisions = role === "dean" ? (deanDivisions.length ? deanDivisions : assignmentDivisions) : [];
       const response = await apiFetch(`${API_BASE}/assignments/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -4150,7 +4166,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 >
                   {previewFacultyOptions.map((item) => (
                     <option key={item.employeeId} value={item.employeeId}>
-                      {facultyName(item)}
+                      {item.label || `${facultyName(item)} - ${item.seniorityRank ?? "no seniority"}`}
                     </option>
                   ))}
                 </select>
@@ -4183,14 +4199,14 @@ OH,ORNAMENTAL_HORTICULTURE`}
             <div style={{ ...ui.between, marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)" }}>Command Center</div>
-                <div style={{ marginTop: 6, color: "var(--text-muted)" }}>Sharper lanes for controls, workflow, and reference data, so the page reads like a cockpit instead of a cargo hold.</div>
+                <div style={{ marginTop: 6, color: "var(--text-muted)" }}>Refresh the queue, review assignment counts, and export the current staffing scope.</div>
               </div>
             </div>
             <div style={{ display: "grid", gap: 14, gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
               <div style={ui.commandLane}>
                 <div style={ui.miniKicker}>Controls</div>
-                <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>Workflow Controls</h2>
-                <div style={ui.cardDesc}>Refresh the queue, export data, and advance staffing decisions through review.</div>
+                <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>Queue Actions</h2>
+                <div style={ui.cardDesc}>Refresh, submit, approve, and export.</div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
                   <button style={ui.btnPrimary} onClick={loadChairWorkflow}>
                     {loadingChairWorkflow ? "Refreshing..." : "Refresh Workflow"}
@@ -4325,7 +4341,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     >
                       {submittedFacultyOptions.length ? submittedFacultyOptions.map((item) => (
                         <option key={item.employeeId} value={item.employeeId}>
-                          {item.facultyName} ({item.preferenceCount})
+                          {item.facultyName} - {item.seniorityRank ?? "no seniority"} ({item.preferenceCount})
                         </option>
                       )) : (
                         <option value="">No submitted preferences loaded</option>
@@ -4451,10 +4467,10 @@ OH,ORNAMENTAL_HORTICULTURE`}
                             allocationSection?.highestSeniorityCurrentlyEligibleCandidate?.employeeId ||
                             allocationAnalysis?.recommendedNextAssignmentSequence?.find((item) => item.assignmentGroupId === section.assignment_group_id)?.employeeId ||
                             "";
-                          const isBackendRecommended = backendRecommendedEmployeeId === row.employee_id;
+                          const effectiveRecommendedEmployeeId = backendRecommendedEmployeeId || topCandidate?.employee_id || "";
+                          const isBackendRecommended = effectiveRecommendedEmployeeId === row.employee_id;
                           const isHighestRemainingPreference = highestRemainingPreferenceByFaculty.get(row.employee_id) === section.assignment_group_id;
-                          const sectionHasSavedPreference = finiteNumberOrNull(section.bestPreferenceRank) !== null;
-                          const requiresPreferenceRationale = sectionHasSavedPreference && !isBackendRecommended;
+                          const requiresPreferenceRationale = Boolean(effectiveRecommendedEmployeeId && row.employee_id !== effectiveRecommendedEmployeeId);
                           const currentAssignment = currentAssignmentByGroup.get(section.assignment_group_id) || section.currentAssignment || null;
                           const isCurrentAssignee = currentAssignment?.employee_id === row.employee_id;
                           const reasonSummary = candidateReasonSummary(section, row, topCandidate, currentAssignment);
@@ -4516,7 +4532,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                   ) : row.section_assigned_to_other ? (
                                     <button style={ui.btn} disabled>Filled</button>
                                   ) : (
-                                    <button style={isBackendRecommended || !requiresPreferenceRationale ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, backendRecommendedEmployeeId, requiresPreferenceRationale)}>
+                                    <button style={isBackendRecommended || !requiresPreferenceRationale ? ui.btnPrimary : ui.btn} onClick={() => assignSectionToInstructor(row, effectiveRecommendedEmployeeId, requiresPreferenceRationale)}>
                                       {requiresPreferenceRationale ? "Assign with Rationale" : "Assign"}
                                     </button>
                                   )}
