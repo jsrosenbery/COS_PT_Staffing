@@ -136,4 +136,7 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /const candidateLimit = 6/);
   assert.match(frontend, /visibleCandidates\.map/);
   assert.match(frontend, /Show \$\{hiddenCandidateCount\} more/);
+  assert.match(frontend, /setTentativeAssignments\(\(current\) => \[/);
+  assert.match(frontend, /setWorkflowView\("assigned"\)/);
+  assert.match(frontend, /loadChairWorkflow\(\{ preserveMessage: true, preserveAssignmentsOnError: true \}\)/);
 });
