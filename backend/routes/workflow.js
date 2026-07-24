@@ -1574,16 +1574,20 @@ router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req
         AND COALESCE(pt.active_status, 'active') = 'active'
        LEFT JOIN LATERAL (
          SELECT MIN(p.preference_rank) AS preference_rank
-         FROM scope_preferences p
+         FROM scope_preference_submission_items p
+         JOIN scope_preference_submissions sub ON sub.id = p.submission_id
          WHERE p.term_code = s.term_code
            AND p.assignment_group_id = s.assignment_group_id
            AND (p.employee_id = pt.employee_id OR p.faculty_id = pt.employee_id)
+           AND sub.status = 'frozen'
        ) pref ON TRUE
        LEFT JOIN LATERAL (
          SELECT MIN(p.preference_rank) AS section_preference_rank
-         FROM scope_preferences p
+         FROM scope_preference_submission_items p
+         JOIN scope_preference_submissions sub ON sub.id = p.submission_id
          WHERE p.term_code = s.term_code
            AND p.assignment_group_id = s.assignment_group_id
+           AND sub.status = 'frozen'
        ) section_pref ON TRUE
        LEFT JOIN scope_faculty_availability av
          ON av.term_code = s.term_code
