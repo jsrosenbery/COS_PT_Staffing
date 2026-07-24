@@ -119,6 +119,19 @@ test("faculty section display is bound to the authenticated employee roster reco
   assert.match(frontend, /Your account is not linked to an active PT staffing roster record/);
 });
 
+test("chair and dean frontend reads use authenticated division scope", () => {
+  const frontend = fs.readFileSync(
+    new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(frontend, /splitScopeValues\(currentUser\?\.division, currentUser\?\.divisions\)/);
+  assert.match(frontend, /if \(role === "chair" && currentUser\?\.role === "chair"\) return authenticatedDivisionScope/);
+  assert.match(frontend, /if \(role === "dean" && currentUser\?\.role === "dean"\) return authenticatedDivisionScope/);
+  assert.match(frontend, /Your account does not have a division scope assigned/);
+  assert.match(frontend, /canSelectSyntheticScope \? \(/);
+});
+
 test("division-sensitive workflow reads apply scope directly in SQL", () => {
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
 
