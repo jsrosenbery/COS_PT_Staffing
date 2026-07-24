@@ -133,6 +133,7 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /effectiveRecommendedEmployeeId = backendRecommendedEmployeeId \|\| topCandidate\?\.employee_id/);
   assert.match(frontend, /item\.label \|\| `\$\{facultyName\(item\)\} - \$\{item\.seniorityRank \?\? "no seniority"\}`/);
   assert.match(frontend, /\{item\.facultyName\} - \{item\.seniorityRank \?\? "no seniority"\}/);
-  assert.match(frontend, /section\.candidates\.map/);
-  assert.doesNotMatch(frontend, /section\.candidates\.slice\(0, 5\)/);
+  assert.match(frontend, /const candidateLimit = 6/);
+  assert.match(frontend, /visibleCandidates\.map/);
+  assert.match(frontend, /Show \$\{hiddenCandidateCount\} more/);
 });
