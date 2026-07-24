@@ -121,3 +121,15 @@ test("schema and route guard simultaneous conflicting awards", () => {
   assert.match(workflow, /FOR UPDATE/);
   assert.match(workflow, /This staffing unit already has an active chair decision or assignment/);
 });
+
+test("chair review UI separates selected faculty rank from section-level preference rank", () => {
+  const frontend = fs.readFileSync(new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url), "utf8");
+
+  assert.match(frontend, /Submitted faculty list/);
+  assert.match(frontend, /Selected Faculty Preferences/);
+  assert.match(frontend, /selectedReviewFacultyName.*preference #/);
+  assert.match(frontend, /Highest submitted preference #/);
+  assert.match(frontend, /Own preference #/);
+  assert.match(frontend, /section\.candidates\.map/);
+  assert.doesNotMatch(frontend, /section\.candidates\.slice\(0, 5\)/);
+});

@@ -1865,6 +1865,63 @@ export default function PTFacultyStaffingMVP() {
     return { sectionRankByAssignment, candidateRankByAssignmentEmployee, selectedFacultySectionRankByAssignment };
   }, [chairPreferenceRows, selectedFacultyId, selectedFaculty]);
 
+  const submittedFacultyOptions = useMemo(() => {
+    const grouped = new Map();
+    chairPreferenceRows.forEach((row) => {
+      const employeeId = normalize(row.employee_id || row.faculty_id);
+      if (!employeeId) return;
+      const rank = finiteNumberOrNull(row.preference_rank);
+      const existing = grouped.get(employeeId) || {
+        employeeId,
+        facultyName: row.faculty_name || employeeId,
+        preferenceCount: 0,
+        firstPreferenceRank: null,
+      };
+      existing.preferenceCount += 1;
+      if (rank !== null && (existing.firstPreferenceRank === null || rank < existing.firstPreferenceRank)) {
+        existing.firstPreferenceRank = rank;
+      }
+      grouped.set(employeeId, existing);
+    });
+    return Array.from(grouped.values()).sort((a, b) =>
+      normalize(a.facultyName).localeCompare(normalize(b.facultyName)) ||
+      normalize(a.employeeId).localeCompare(normalize(b.employeeId))
+    );
+  }, [chairPreferenceRows]);
+
+  const selectedReviewFaculty = useMemo(() => {
+    const selectedId = normalize(selectedFacultyId || selectedFaculty?.employeeId);
+    return submittedFacultyOptions.find((item) => item.employeeId === selectedId) ||
+      (selectedFaculty ? { employeeId: selectedFaculty.employeeId, facultyName: facultyName(selectedFaculty), preferenceCount: 0, firstPreferenceRank: null } : null);
+  }, [submittedFacultyOptions, selectedFacultyId, selectedFaculty]);
+
+  const selectedReviewFacultyName = selectedReviewFaculty?.facultyName || (selectedFaculty ? facultyName(selectedFaculty) : "selected faculty");
+  const selectedFacultyHasSubmittedPreferences = chairPreferenceLookups.selectedFacultySectionRankByAssignment.size > 0;
+
+  const selectedSubmittedPreferenceRows = useMemo(() => {
+    const selectedId = normalize(selectedFacultyId || selectedFaculty?.employeeId);
+    if (!selectedId) return [];
+    return chairPreferenceRows
+      .filter((row) => normalize(row.employee_id || row.faculty_id) === selectedId)
+      .map((row) => ({
+        ...row,
+        preference_rank: finiteNumberOrNull(row.preference_rank),
+      }))
+      .sort((a, b) =>
+        (finiteNumberOrNull(a.preference_rank) ?? 999999) - (finiteNumberOrNull(b.preference_rank) ?? 999999) ||
+        courseSortKey(a).localeCompare(courseSortKey(b))
+      );
+  }, [chairPreferenceRows, selectedFacultyId, selectedFaculty]);
+
+  useEffect(() => {
+    if (!["chair", "dean"].includes(role)) return;
+    if (!submittedFacultyOptions.length) return;
+    if (!showOnlyPreferenceQueue) setShowOnlyPreferenceQueue(true);
+    if (workflowSort !== "preference") setWorkflowSort("preference");
+    if (submittedFacultyOptions.some((item) => item.employeeId === selectedFacultyId)) return;
+    setSelectedFacultyId(submittedFacultyOptions[0].employeeId);
+  }, [role, submittedFacultyOptions, selectedFacultyId, showOnlyPreferenceQueue, workflowSort]);
+
   const sectionQueue = useMemo(() => {
     const grouped = new Map();
     const activeAssignments = tentativeAssignments.filter((assignment) => assignment.status !== "released");
@@ -4252,7 +4309,33 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 <div>
                   <div style={{ fontWeight: 800 }}>Section Assignment Queue</div>
                   <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
-                    Sort and review the {selectedDisciplineCode === "ALL" ? "currently scoped" : selectedDisciplineCode} section cards below before assigning PT faculty. Preference order follows {selectedFaculty ? facultyName(selectedFaculty) : "the selected faculty member"} first when that person has saved choices.
+                    Review submitted faculty lists in preference order, then open each section card to compare every interested candidate by seniority and that candidate's own rank.
+                  </div>
+                  <div style={{ display: "grid", gap: 6, maxWidth: 360, marginTop: 10 }}>
+                    <label style={ui.small}>Submitted faculty list</label>
+                    <select
+                      style={ui.select}
+                      value={selectedFacultyId}
+                      onChange={(e) => {
+                        setSelectedFacultyId(e.target.value);
+                        setShowOnlyPreferenceQueue(true);
+                        setWorkflowSort("preference");
+                      }}
+                      disabled={!submittedFacultyOptions.length}
+                    >
+                      {submittedFacultyOptions.length ? submittedFacultyOptions.map((item) => (
+                        <option key={item.employeeId} value={item.employeeId}>
+                          {item.facultyName} ({item.preferenceCount})
+                        </option>
+                      )) : (
+                        <option value="">No submitted preferences loaded</option>
+                      )}
+                    </select>
+                    <div style={ui.small}>
+                      {selectedFacultyHasSubmittedPreferences
+                        ? `Showing ${selectedReviewFacultyName}'s selected sections first, in submitted rank order.`
+                        : "Choose a faculty member with saved preferences to review that person's ranked list."}
+                    </div>
                   </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                     <button
@@ -4307,7 +4390,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     <option value="seniority">Top candidate seniority</option>
                   </select>
                   <div style={ui.small}>
-                    {chairPreferenceRows.length} saved preference row(s) loaded for sorting.
+                    {chairPreferenceRows.length} saved preference row(s) loaded across {submittedFacultyOptions.length} submitting faculty.
                   </div>
                 </div>
               </div>
@@ -4340,11 +4423,10 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           ) : (
                             <span style={workflowStatePillStyle("conflict")}>No eligible candidate</span>
                           )}
-                          {section.bestPreferenceRank ? (
-                            <span style={workflowStatePillStyle("advanced")}>Preference #{section.bestPreferenceRank}</span>
-                          ) : null}
                           {section.selectedFacultyPreferenceRank ? (
-                            <span style={workflowStatePillStyle("top")}>{selectedFaculty ? facultyName(selectedFaculty) : "Selected faculty"} #{section.selectedFacultyPreferenceRank}</span>
+                            <span style={workflowStatePillStyle("top")}>{selectedReviewFacultyName} preference #{section.selectedFacultyPreferenceRank}</span>
+                          ) : section.bestPreferenceRank ? (
+                            <span style={workflowStatePillStyle("advanced")}>Highest submitted preference #{section.bestPreferenceRank}</span>
                           ) : null}
                         </div>
                       </div>
@@ -4362,7 +4444,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </div>
 
                       <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                        {section.candidates.slice(0, 5).map((row) => {
+                        {section.candidates.map((row) => {
                           const isTop = topCandidate?.employee_id === row.employee_id;
                           const allocationSection = allocationSectionById.get(section.assignment_group_id);
                           const backendRecommendedEmployeeId =
@@ -4382,7 +4464,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                 <div>
                                   <div style={{ fontWeight: 700 }}>{row.faculty_name}</div>
                                   <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
-                                    Seniority #{row.seniority_rank || "—"} - Preference #{row.preference_rank || "—"}
+                                    Seniority #{row.seniority_rank || "-"} - Own preference #{row.preference_rank || "not selected"}
                                   </div>
                                   <div style={{ marginTop: 6 }}>
                                     <span style={workflowStatePillStyle(row.availabilitySummary?.matches ? "assigned" : "bypass")}>
@@ -4454,6 +4536,33 @@ OH,ORNAMENTAL_HORTICULTURE`}
               </div>
 
               <div style={{ display: "grid", gap: 16 }}>
+                <div style={ui.sectionCard}>
+                  <div style={{ fontWeight: 800 }}>Selected Faculty Preferences</div>
+                  <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
+                    {selectedFacultyHasSubmittedPreferences
+                      ? `${selectedReviewFacultyName}'s submitted list, shown in rank order.`
+                      : "Choose a submitted faculty member to review that person's ranked list."}
+                  </div>
+                  <div style={{ display: "grid", gap: 8, marginTop: 12, maxHeight: 360, overflowY: "auto", paddingRight: 4 }}>
+                    {selectedSubmittedPreferenceRows.length ? selectedSubmittedPreferenceRows.map((item) => (
+                      <button
+                        key={`${item.assignment_group_id}-${item.preference_rank}`}
+                        type="button"
+                        style={{ ...ui.btn, justifyContent: "space-between", textAlign: "left" }}
+                        onClick={() => {
+                          setShowOnlyPreferenceQueue(true);
+                          setWorkflowSort("preference");
+                        }}
+                      >
+                        <span>#{item.preference_rank} {item.primary_subject_course || item.assignment_group_id}</span>
+                        <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{item.primary_crn || ""}</span>
+                      </button>
+                    )) : (
+                      <div style={{ color: "var(--text-subtle)" }}>No saved preferences are loaded for the selected faculty member.</div>
+                    )}
+                  </div>
+                </div>
+
                 {(role === "chair" || role === "dean" || tentativeAssignments.length > 0) ? (
                 <div style={ui.sectionCard}>
                   <div style={{ fontWeight: 800 }}>Staffing Decisions</div>
