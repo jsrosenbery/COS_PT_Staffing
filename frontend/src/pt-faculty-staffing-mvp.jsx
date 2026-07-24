@@ -1032,6 +1032,7 @@ export default function PTFacultyStaffingMVP() {
   const [workflowView, setWorkflowView] = useState("all");
   const [workflowSort, setWorkflowSort] = useState("preference");
   const [showOnlyPreferenceQueue, setShowOnlyPreferenceQueue] = useState(false);
+  const [expandedCandidateGroups, setExpandedCandidateGroups] = useState({});
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
   const apiTokenConfigured = Boolean(apiTokenInput.trim());
@@ -2387,6 +2388,11 @@ export default function PTFacultyStaffingMVP() {
         setChairMessage("A written explanation is required when bypassing the recommended candidate.");
         return;
       }
+    }
+
+    if (!isBypass) {
+      const confirmed = window.confirm(`Assign ${row.faculty_name || row.employee_id} to ${row.primary_subject_course || row.assignment_group_id}?`);
+      if (!confirmed) return;
     }
 
     setChairMessage("");
@@ -4417,6 +4423,10 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 {filteredSectionQueue.length ? filteredSectionQueue.map((section) => {
                   const topCandidate = section.eligibleCandidates[0] || null;
                   const stateSummary = sectionStateSummary(section, topCandidate);
+                  const candidateLimit = 6;
+                  const isCandidateGroupExpanded = Boolean(expandedCandidateGroups[section.assignment_group_id]);
+                  const visibleCandidates = isCandidateGroupExpanded ? section.candidates : section.candidates.slice(0, candidateLimit);
+                  const hiddenCandidateCount = Math.max(0, section.candidates.length - candidateLimit);
                   return (
                     <div key={section.assignment_group_id} style={{ ...ui.sectionCard, borderColor: section.currentAssignment ? "#bbf7d0" : "var(--border-color)", background: section.currentAssignment ? "rgba(220, 252, 231, 0.28)" : "var(--bg-card)" }}>
                       <div style={{ ...ui.between, alignItems: "flex-start" }}>
@@ -4460,7 +4470,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </div>
 
                       <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                        {section.candidates.map((row) => {
+                        {visibleCandidates.map((row) => {
                           const isTop = topCandidate?.employee_id === row.employee_id;
                           const allocationSection = allocationSectionById.get(section.assignment_group_id);
                           const backendRecommendedEmployeeId =
@@ -4541,6 +4551,18 @@ OH,ORNAMENTAL_HORTICULTURE`}
                             </div>
                           );
                         })}
+                        {hiddenCandidateCount ? (
+                          <button
+                            type="button"
+                            style={{ ...ui.btn, justifyContent: "center" }}
+                            onClick={() => setExpandedCandidateGroups((current) => ({
+                              ...current,
+                              [section.assignment_group_id]: !isCandidateGroupExpanded,
+                            }))}
+                          >
+                            {isCandidateGroupExpanded ? "Show top 6 ^" : `Show ${hiddenCandidateCount} more v`}
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   );
