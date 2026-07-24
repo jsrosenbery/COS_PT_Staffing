@@ -122,6 +122,16 @@ test("schema and route guard simultaneous conflicting awards", () => {
   assert.match(workflow, /This staffing unit already has an active chair decision or assignment/);
 });
 
+test("chair decision route derives division scope from the staffing unit", () => {
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+
+  assert.match(workflow, /router\.post\("\/chair-decisions", requireRoles\("chair"\), async/);
+  assert.match(workflow, /WHERE term_code = \$1 AND assignment_group_id = \$2\s+FOR UPDATE/);
+  assert.match(workflow, /const sectionDivision = lockedSection\.rows\[0\]\.division/);
+  assert.match(workflow, /scopeFilterForReq\(req, \[sectionDivision\]\)/);
+  assert.doesNotMatch(workflow, /termCode, division, assignmentGroupId, and selectedEmployeeId are required/);
+});
+
 test("chair review UI separates selected faculty rank from section-level preference rank", () => {
   const frontend = fs.readFileSync(new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url), "utf8");
 

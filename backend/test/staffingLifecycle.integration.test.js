@@ -251,7 +251,6 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
         division: SCIENCE,
         body: {
           termCode: TERM,
-          division: SCIENCE,
           assignmentGroupId: "S-A1",
           selectedEmployeeId: recommendations.get("S-A1"),
           expectedRecommendedEmployeeId: recommendations.get("S-A1"),
