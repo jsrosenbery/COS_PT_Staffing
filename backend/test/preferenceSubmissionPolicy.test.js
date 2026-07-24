@@ -73,6 +73,20 @@ test("missing preference window is reported without throwing", () => {
   assert.match(result.error, /No preference window is configured/i);
 });
 
+test("faculty section and preference reads are hidden until the window opens", () => {
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+  const frontend = fs.readFileSync(new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url), "utf8");
+
+  assert.match(workflow, /router\.get\("\/available-sections"/);
+  assert.match(workflow, /String\(req\.auth\?\.user\?\.role \|\| ""\)\.toLowerCase\(\) === "faculty"/);
+  assert.match(workflow, /windowState\(windowResult\.rows\[0\] \|\| null, new Date\(\)\)/);
+  assert.match(workflow, /return res\.json\(\{\s+sections: \[\],\s+window: state,/);
+  assert.match(workflow, /return res\.json\(\{\s+preferences: \[\],\s+availability: \{ days: \[\], timeBlocks: \[\] \},\s+window: state,/);
+  assert.match(frontend, /Preference Window Not Open/);
+  assert.match(frontend, /role === "faculty" && !facultyPreferenceWindowOpen/);
+  assert.match(frontend, /setFacultyPreferences\(\[\]\)/);
+});
+
 test("preference submission reports an unlinked faculty roster account before checking its window", () => {
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
 
