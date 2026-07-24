@@ -149,4 +149,6 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /setTentativeAssignments\(\(current\) => \[/);
   assert.match(frontend, /setWorkflowView\("assigned"\)/);
   assert.match(frontend, /loadChairWorkflow\(\{ preserveMessage: true, preserveAssignmentsOnError: true \}\)/);
+  assert.match(frontend, /Seniority recommendation/);
+  assert.doesNotMatch(frontend, /Backend recommendation/);
 });
