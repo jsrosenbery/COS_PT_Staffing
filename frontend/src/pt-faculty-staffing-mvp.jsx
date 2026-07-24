@@ -1892,11 +1892,12 @@ export default function PTFacultyStaffingMVP() {
 
   const submittedFacultyOptions = useMemo(() => {
     const grouped = new Map();
-    chairPreferenceRows.forEach((row) => {
+    chairWorkflowRows.forEach((row) => {
       const employeeId = normalize(row.employee_id || row.faculty_id);
       if (!employeeId) return;
-      const rosterOption = previewFacultyOptions.find((item) => item.employeeId === employeeId);
       const rank = finiteNumberOrNull(row.preference_rank);
+      if (rank === null) return;
+      const rosterOption = previewFacultyOptions.find((item) => item.employeeId === employeeId);
       const existing = grouped.get(employeeId) || {
         employeeId,
         facultyName: rosterOption ? facultyName(rosterOption) : row.faculty_name || employeeId,
@@ -1915,7 +1916,7 @@ export default function PTFacultyStaffingMVP() {
       normalize(a.facultyName).localeCompare(normalize(b.facultyName)) ||
       normalize(a.employeeId).localeCompare(normalize(b.employeeId))
     );
-  }, [chairPreferenceRows, previewFacultyOptions]);
+  }, [chairWorkflowRows, previewFacultyOptions]);
 
   const selectedReviewFaculty = useMemo(() => {
     const selectedId = normalize(selectedFacultyId || selectedFaculty?.employeeId);
@@ -1924,13 +1925,16 @@ export default function PTFacultyStaffingMVP() {
   }, [submittedFacultyOptions, selectedFacultyId, selectedFaculty]);
 
   const selectedReviewFacultyName = selectedReviewFaculty?.facultyName || (selectedFaculty ? facultyName(selectedFaculty) : "selected faculty");
-  const selectedFacultyHasSubmittedPreferences = chairPreferenceLookups.selectedFacultySectionRankByAssignment.size > 0;
+  const selectedFacultyHasSubmittedPreferences = Boolean(selectedReviewFaculty?.preferenceCount);
 
   const selectedSubmittedPreferenceRows = useMemo(() => {
     const selectedId = normalize(selectedFacultyId || selectedFaculty?.employeeId);
     if (!selectedId) return [];
-    return chairPreferenceRows
-      .filter((row) => normalize(row.employee_id || row.faculty_id) === selectedId)
+    return chairWorkflowRows
+      .filter((row) =>
+        normalize(row.employee_id || row.faculty_id) === selectedId &&
+        finiteNumberOrNull(row.preference_rank) !== null
+      )
       .map((row) => ({
         ...row,
         preference_rank: finiteNumberOrNull(row.preference_rank),
@@ -1939,7 +1943,7 @@ export default function PTFacultyStaffingMVP() {
         (finiteNumberOrNull(a.preference_rank) ?? 999999) - (finiteNumberOrNull(b.preference_rank) ?? 999999) ||
         courseSortKey(a).localeCompare(courseSortKey(b))
       );
-  }, [chairPreferenceRows, selectedFacultyId, selectedFaculty]);
+  }, [chairWorkflowRows, selectedFacultyId, selectedFaculty]);
 
   useEffect(() => {
     if (!["chair", "dean"].includes(role)) return;
@@ -1961,9 +1965,7 @@ export default function PTFacultyStaffingMVP() {
       const currentAssignment = activeAssignments.find((assignment) => assignment.assignment_group_id === key) || null;
       const employeeAssignments = activeAssignments.filter((assignment) => assignment.employee_id === row.employee_id && assignment.assignment_group_id !== key);
       const conflictingAssignment = employeeAssignments.find((assignment) => hasMeetingConflict(row, assignment)) || null;
-      const rowMatchKeys = sectionPreferenceMatchKeys(row);
-      const exportedPreferenceRank = minRankForKeys(chairPreferenceLookups.candidateRankByAssignmentEmployee, rowMatchKeys, `::${normalize(row.employee_id)}`);
-      const rowPreferenceRank = finiteNumberOrNull(row.preference_rank) ?? exportedPreferenceRank ?? null;
+      const rowPreferenceRank = finiteNumberOrNull(row.preference_rank);
       const enrichedRow = {
         ...row,
         preference_rank: rowPreferenceRank,
@@ -1991,8 +1993,8 @@ export default function PTFacultyStaffingMVP() {
           display_modality: row.display_modality,
           modality: row.modality,
           meetings: row.meetings,
-          selected_faculty_preference_rank: minRankForKeys(chairPreferenceLookups.selectedFacultySectionRankByAssignment, rowMatchKeys),
-          section_preference_rank: finiteNumberOrNull(row.section_preference_rank) ?? minRankForKeys(chairPreferenceLookups.sectionRankByAssignment, rowMatchKeys) ?? null,
+          selected_faculty_preference_rank: null,
+          section_preference_rank: finiteNumberOrNull(row.section_preference_rank),
           candidates: [],
           currentAssignment,
         });
@@ -2000,6 +2002,12 @@ export default function PTFacultyStaffingMVP() {
 
       const entry = grouped.get(key);
       entry.currentAssignment = entry.currentAssignment || currentAssignment;
+      if (normalize(row.employee_id) === normalize(selectedFacultyId || selectedFaculty?.employeeId)) {
+        const currentSelectedRank = finiteNumberOrNull(entry.selected_faculty_preference_rank);
+        if (rowPreferenceRank !== null && (currentSelectedRank === null || rowPreferenceRank < currentSelectedRank)) {
+          entry.selected_faculty_preference_rank = rowPreferenceRank;
+        }
+      }
       entry.candidates.push(enrichedRow);
     });
 
@@ -2036,7 +2044,7 @@ export default function PTFacultyStaffingMVP() {
         if (aPref !== bPref) return aPref - bPref;
         return courseSortKey(a).localeCompare(courseSortKey(b));
       });
-  }, [chairWorkflowRows, chairPreferenceLookups, tentativeAssignments, sectionFilters, selectedDisciplineCode]);
+  }, [chairWorkflowRows, tentativeAssignments, sectionFilters, selectedDisciplineCode, selectedFacultyId, selectedFaculty]);
 
   const workflowMetrics = useMemo(() => {
     const assigned = sectionQueue.filter((section) => Boolean(section.currentAssignment)).length;
@@ -2103,8 +2111,8 @@ export default function PTFacultyStaffingMVP() {
   const filteredSectionQueue = useMemo(() => {
     const preferenceScopedQueue = showOnlyPreferenceQueue
       ? sortedSectionQueue.filter((section) => {
-        const hasSelectedFacultyPrefs = chairPreferenceLookups.selectedFacultySectionRankByAssignment.size > 0;
-        return hasSelectedFacultyPrefs
+        const hasSelectedFacultyScope = Boolean(selectedFacultyId || selectedFaculty?.employeeId);
+        return hasSelectedFacultyScope
           ? finiteNumberOrNull(section.selectedFacultyPreferenceRank) !== null
           : finiteNumberOrNull(section.bestPreferenceRank) !== null;
       })
@@ -2113,14 +2121,14 @@ export default function PTFacultyStaffingMVP() {
     if (workflowView === "ready") return preferenceScopedQueue.filter((section) => !section.currentAssignment && Boolean(section.eligibleCandidates?.length));
     if (workflowView === "blocked") return preferenceScopedQueue.filter((section) => !section.currentAssignment && !section.eligibleCandidates?.length);
     return preferenceScopedQueue;
-  }, [sortedSectionQueue, workflowView, showOnlyPreferenceQueue]);
+  }, [sortedSectionQueue, workflowView, showOnlyPreferenceQueue, selectedFacultyId, selectedFaculty]);
 
   const preferenceQueueCount = useMemo(() => {
-    const hasSelectedFacultyPrefs = chairPreferenceLookups.selectedFacultySectionRankByAssignment.size > 0;
-    return sectionQueue.filter((section) => hasSelectedFacultyPrefs
+    const hasSelectedFacultyScope = Boolean(selectedFacultyId || selectedFaculty?.employeeId);
+    return sectionQueue.filter((section) => hasSelectedFacultyScope
       ? finiteNumberOrNull(section.selectedFacultyPreferenceRank) !== null
       : finiteNumberOrNull(section.bestPreferenceRank) !== null).length;
-  }, [sectionQueue, chairPreferenceLookups]);
+  }, [sectionQueue, selectedFacultyId, selectedFaculty]);
 
   const auditEventOptions = useMemo(() => {
     return Array.from(new Set(decisionLogs.map((entry) => normalize(entry.event_type)).filter(Boolean))).sort();

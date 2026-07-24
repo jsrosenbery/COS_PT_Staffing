@@ -155,6 +155,10 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /window\.alert\(`Assignment was not saved:/);
   assert.match(frontend, /finiteNumberOrNull\(row\.preference_rank\) !== null/);
   assert.match(frontend, /Not Requested/);
+  assert.match(frontend, /chairWorkflowRows\.forEach\(\(row\) =>/);
+  assert.match(frontend, /if \(rank === null\) return/);
+  assert.match(frontend, /return chairWorkflowRows\s+\.filter/);
+  assert.doesNotMatch(frontend, /const rowPreferenceRank = finiteNumberOrNull\(row\.preference_rank\) \?\? exportedPreferenceRank/);
 });
 
 test("chair workflow displays the same frozen preference source used by allocation", () => {
