@@ -6,7 +6,7 @@ import { writeAuditEvent } from "../audit.js";
 import { analyzeAllocation } from "../domain/allocationAnalysis.js";
 import { defaultContractExceptionReasons, validateChairDecision } from "../domain/chairDecision.js";
 import { buildDecisionExplanation, decisionExplanationRows } from "../domain/decisionExplanation.js";
-import { canSavePreferenceVersion, preferenceSubmissionStatuses, preferenceWindowTimezone, validatePreferenceRanks } from "../domain/preferenceSubmissionPolicy.js";
+import { canSavePreferenceVersion, preferenceSubmissionStatuses, preferenceWindowTimezone, validatePreferenceRanks, windowState } from "../domain/preferenceSubmissionPolicy.js";
 import { enforceFacultySelf, isAdmin, requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles, requireScopedRead, scopeFilterForReq } from "../permissions.js";
 import { sendDisseminationEmail } from "../emailService.js";
 
@@ -1003,6 +1003,44 @@ router.get("/available-sections", requireScopedRead, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
+    if (String(req.auth?.user?.role || "").toLowerCase() === "faculty") {
+      const facultyResult = await query(
+        `SELECT division
+         FROM scope_pt_faculty
+         WHERE employee_id = $1
+           AND COALESCE(active_status, 'active') = 'active'
+         ORDER BY COALESCE(active_status, 'active') = 'active' DESC
+         LIMIT 1`,
+        [req.auth.user.employee_id || ""]
+      );
+      const facultyRosterRow = facultyResult.rows[0] || null;
+      if (!facultyRosterRow) {
+        return res.status(409).json({
+          error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID to the roster.",
+          sections: [],
+        });
+      }
+      const windowResult = await query(
+        `SELECT id, term, division, opened_at, closes_at, status
+         FROM scope_staffing_windows
+         WHERE term = $1
+           AND LOWER(division) = LOWER($2)
+         ORDER BY opened_at DESC, id DESC
+         LIMIT 1`,
+        [termCode, facultyRosterRow.division || ""]
+      );
+      const state = windowState(windowResult.rows[0] || null, new Date());
+      if (!state.open) {
+        return res.json({
+          sections: [],
+          window: state,
+          message: state.missing
+            ? "The preference window has not been opened for your division yet."
+            : "The preference window is not open for your division.",
+        });
+      }
+    }
+
     const params = [termCode];
     let where = `WHERE s.term_code = $1 AND COALESCE((s.raw_row->>'staff_eligible')::boolean, true) = true`;
     if (disciplineCode) {
@@ -1877,6 +1915,46 @@ router.get("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated,
   const { termCode = "", facultyId = "" } = req.query;
   if (!termCode || !facultyId) return res.status(400).json({ error: "termCode and facultyId are required." });
   try {
+    if (String(req.auth?.user?.role || "").toLowerCase() === "faculty") {
+      const facultyResult = await query(
+        `SELECT division
+         FROM scope_pt_faculty
+         WHERE employee_id = $1
+           AND COALESCE(active_status, 'active') = 'active'
+         ORDER BY COALESCE(active_status, 'active') = 'active' DESC
+         LIMIT 1`,
+        [req.auth.user.employee_id || facultyId]
+      );
+      const facultyRosterRow = facultyResult.rows[0] || null;
+      if (!facultyRosterRow) {
+        return res.status(409).json({
+          error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID to the roster.",
+          preferences: [],
+          availability: { days: [], timeBlocks: [] },
+        });
+      }
+      const windowResult = await query(
+        `SELECT id, term, division, opened_at, closes_at, status
+         FROM scope_staffing_windows
+         WHERE term = $1
+           AND LOWER(division) = LOWER($2)
+         ORDER BY opened_at DESC, id DESC
+         LIMIT 1`,
+        [termCode, facultyRosterRow.division || ""]
+      );
+      const state = windowState(windowResult.rows[0] || null, new Date());
+      if (!state.open) {
+        return res.json({
+          preferences: [],
+          availability: { days: [], timeBlocks: [] },
+          window: state,
+          message: state.missing
+            ? "The preference window has not been opened for your division yet."
+            : "The preference window is not open for your division.",
+        });
+      }
+    }
+
     const [result, availabilityResult] = await Promise.all([
       query(
       `SELECT p.assignment_group_id, p.preference_rank, p.faculty_id, p.employee_id, p.faculty_name,

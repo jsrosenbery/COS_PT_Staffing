@@ -993,6 +993,8 @@ export default function PTFacultyStaffingMVP() {
   const [availableSections, setAvailableSections] = useState([]);
   const [loadingSections, setLoadingSections] = useState(false);
   const [sectionsError, setSectionsError] = useState("");
+  const [facultyWindowMessage, setFacultyWindowMessage] = useState("");
+  const [facultyPreferenceWindowOpen, setFacultyPreferenceWindowOpen] = useState(false);
   const [selectedDisciplineCode, setSelectedDisciplineCode] = useState("ALL");
   const [ptFacultyDisciplineFilter, setPtFacultyDisciplineFilter] = useState("ALL");
   const [preferenceWipeMessage, setPreferenceWipeMessage] = useState("");
@@ -2107,6 +2109,8 @@ export default function PTFacultyStaffingMVP() {
     if (!activeTerm?.code) return;
     setLoadingSections(true);
     setSectionsError("");
+    setFacultyWindowMessage("");
+    if (role !== "faculty") setFacultyPreferenceWindowOpen(true);
     setAvailableSections([]);
 
     try {
@@ -2132,6 +2136,17 @@ export default function PTFacultyStaffingMVP() {
       }
 
       const fetchedSections = Array.isArray(data.sections) ? data.sections : [];
+      if (role === "faculty") {
+        const windowOpen = data.window ? Boolean(data.window.open) : true;
+        setFacultyPreferenceWindowOpen(windowOpen);
+        setFacultyWindowMessage(data.message || (windowOpen ? "" : "The preference window is not open for your division."));
+        if (!windowOpen) {
+          setFacultyPreferences([]);
+          setFacultyAvailability({ days: [], timeBlocks: [] });
+          setAvailableSections([]);
+          return;
+        }
+      }
       const filteredSections =
         disciplineCode && disciplineCode !== "ALL"
           ? fetchedSections.filter((section) => section.discipline_code === disciplineCode)
@@ -2451,6 +2466,14 @@ export default function PTFacultyStaffingMVP() {
         setFacultyAvailability({ days: [], timeBlocks: [] });
         return;
       }
+      if (role === "faculty" && data.window && !data.window.open) {
+        setFacultyPreferenceWindowOpen(false);
+        setFacultyWindowMessage(data.message || "The preference window is not open for your division.");
+        setPreferencesMessage(data.message || "The preference window is not open for your division.");
+        setFacultyPreferences([]);
+        setFacultyAvailability({ days: [], timeBlocks: [] });
+        return;
+      }
       setFacultyPreferences(data.preferences || []);
       setFacultyAvailability({
         days: Array.isArray(data.availability?.days) ? data.availability.days : [],
@@ -2476,6 +2499,10 @@ export default function PTFacultyStaffingMVP() {
   }
 
   function addPreference(section) {
+    if (role === "faculty" && !facultyPreferenceWindowOpen) {
+      setPreferencesMessage("The preference window is not open yet.");
+      return;
+    }
     if (facultyPreferences.some((item) => item.assignment_group_id === section.assignment_group_id)) return;
     const next = [
       ...facultyPreferences,
@@ -2510,6 +2537,10 @@ export default function PTFacultyStaffingMVP() {
 
   async function savePreferences(action = "submit") {
     if (!selectedFaculty) return;
+    if (role === "faculty" && !facultyPreferenceWindowOpen) {
+      setPreferencesMessage("The preference window is not open yet.");
+      return;
+    }
     setSavingPreferences(true);
     setPreferencesMessage("");
     try {
@@ -4537,7 +4568,16 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           </div>
 
-          <div style={{ ...ui.sectionCard, marginTop: 14 }}>
+          {role === "faculty" && !facultyPreferenceWindowOpen ? (
+            <div style={{ ...ui.sectionCard, marginTop: 14 }}>
+              <div style={{ fontWeight: 800 }}>Preference Window Not Open</div>
+              <div style={{ marginTop: 8, color: "var(--text-muted)" }}>
+                {facultyWindowMessage || "The available sections and preference tools will appear here when your division's preference window opens."}
+              </div>
+            </div>
+          ) : null}
+
+          <div style={{ ...ui.sectionCard, marginTop: 14, display: role === "faculty" && !facultyPreferenceWindowOpen ? "none" : undefined }}>
             <div style={{ ...ui.between, alignItems: "flex-start" }}>
               <div>
                 <div style={{ fontWeight: 800 }}>Display Filters</div>
@@ -4691,7 +4731,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           ) : null}
 
-          {role === "faculty" ? (
+          {role === "faculty" && facultyPreferenceWindowOpen ? (
             <div className="cos-panel-grid" style={ui.panelGrid}>
               <div>
                 <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
@@ -4845,7 +4885,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           ) : null}
 
-          <div style={ui.tableWrap}>
+          <div style={{ ...ui.tableWrap, display: role === "faculty" && !facultyPreferenceWindowOpen ? "none" : undefined }}>
             <table className="cos-table" style={ui.table}>
               <thead>
                 <tr>
