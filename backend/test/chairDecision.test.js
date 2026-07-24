@@ -163,4 +163,8 @@ test("chair workflow displays the same frozen preference source used by allocati
   assert.match(workflow, /FROM scope_preference_submission_items p/);
   assert.match(workflow, /JOIN scope_preference_submissions sub ON sub\.id = p\.submission_id/);
   assert.match(workflow, /AND sub\.status = 'frozen'/);
+  assert.match(workflow, /remapPreferencesToCurrentSections\(preferenceResult\.rows, sections\)/);
+  assert.match(workflow, /original_assignment_group_id: preference\.assignment_group_id/);
+  assert.match(workflow, /run\.slice\(-5\)/);
+  assert.match(workflow, /LIKE '%' \|\| s\.primary_crn/);
 });

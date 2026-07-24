@@ -54,6 +54,89 @@ function stableSectionSignature(row = {}) {
   ].map(normalize).join("|");
 }
 
+function addSectionAliasKeys(keys, ...values) {
+  for (const value of values) {
+    const textValue = normalize(value);
+    const compact = compactKey(textValue);
+    if (compact) keys.add(`key:${compact}`);
+    const digitRuns = textValue.match(/\d{4,}/g) || [];
+    for (const run of digitRuns) {
+      keys.add(`crn:${run}`);
+      if (run.length > 5) keys.add(`crn:${run.slice(-5)}`);
+    }
+  }
+}
+
+function sectionAliasKeys(row = {}) {
+  const raw = row.raw_row && typeof row.raw_row === "object" ? row.raw_row : {};
+  const keys = new Set();
+  addSectionAliasKeys(
+    keys,
+    row.assignment_group_id,
+    row.primary_crn,
+    row.primary_subject_course,
+    [row.primary_subject_course, row.primary_crn].filter(Boolean).join(" "),
+    [row.subject_code, row.course_number, row.primary_crn].filter(Boolean).join(" "),
+    raw.assignment_group_id,
+    raw.primary_crn,
+    raw.CRN,
+    raw.crn,
+    raw.Subject_Course,
+    raw.SUBJECT_COURSE,
+    raw["Subject Course"],
+    raw.REFERENCE_NUMBER,
+    raw["Reference Number"]
+  );
+  return keys;
+}
+
+function preferenceAliasKeys(row = {}) {
+  const snapshot = row.item_snapshot && typeof row.item_snapshot === "object" ? row.item_snapshot : {};
+  const keys = new Set();
+  addSectionAliasKeys(
+    keys,
+    row.assignment_group_id,
+    snapshot.assignment_group_id,
+    snapshot.assignmentGroupId,
+    snapshot.primary_crn,
+    snapshot.primaryCrn,
+    snapshot.crn,
+    snapshot.CRN,
+    snapshot.primary_subject_course,
+    snapshot.primarySubjectCourse,
+    [snapshot.primary_subject_course || snapshot.primarySubjectCourse, snapshot.primary_crn || snapshot.primaryCrn || snapshot.crn].filter(Boolean).join(" "),
+    snapshot.course,
+    snapshot.subject_course,
+    snapshot.Subject_Course
+  );
+  return keys;
+}
+
+function remapPreferencesToCurrentSections(preferences = [], sections = []) {
+  const sectionByAlias = new Map();
+  for (const section of sections) {
+    for (const key of sectionAliasKeys(section)) {
+      if (!sectionByAlias.has(key)) sectionByAlias.set(key, section);
+    }
+  }
+  return preferences.map((preference) => {
+    const exact = sections.find((section) => section.assignment_group_id === preference.assignment_group_id);
+    if (exact) return preference;
+    for (const key of preferenceAliasKeys(preference)) {
+      const section = sectionByAlias.get(key);
+      if (section) {
+        return {
+          ...preference,
+          original_assignment_group_id: preference.assignment_group_id,
+          assignment_group_id: section.assignment_group_id,
+          discipline_code: preference.discipline_code || section.discipline_code || "",
+        };
+      }
+    }
+    return preference;
+  }).filter((preference) => sections.some((section) => section.assignment_group_id === preference.assignment_group_id));
+}
+
 function findValue(row, candidates) {
   const entries = Object.entries(row || {});
   for (const candidate of candidates) {
@@ -609,14 +692,15 @@ async function buildAllocationAnalysisFromDb(db, {
       : Promise.resolve({ rows: [] }),
     sectionIds.length
       ? db.query(
-          `SELECT i.term_code, i.faculty_id, i.employee_id, i.faculty_name, i.assignment_group_id, i.discipline_code, i.preference_rank, i.created_at, i.created_at AS updated_at
+          `SELECT i.term_code, i.faculty_id, i.employee_id, i.faculty_name, i.assignment_group_id, i.discipline_code,
+                  i.preference_rank, i.item_snapshot, i.created_at, i.created_at AS updated_at
            FROM scope_preference_submission_items i
            JOIN scope_preference_submissions s ON s.id = i.submission_id
            WHERE i.term_code = $1
-             AND i.assignment_group_id = ANY($2::text[])
+             AND LOWER(s.division) = ANY($2::text[])
              AND s.status = 'frozen'
            ORDER BY i.faculty_name, i.preference_rank, i.assignment_group_id`,
-          [termCode, sectionIds]
+          [termCode, scopedDivisions.map((value) => value.toLowerCase())]
         )
       : Promise.resolve({ rows: [] }),
     sectionIds.length
@@ -641,7 +725,7 @@ async function buildAllocationAnalysisFromDb(db, {
       disciplineCode,
       sections,
       faculty: facultyResult.rows,
-      preferences: preferenceResult.rows,
+      preferences: remapPreferencesToCurrentSections(preferenceResult.rows, sections),
       assignments: assignmentResult.rows,
       recognizedContractualExceptions: reasonRows.map((row) => row.code),
       loadLimits: {
@@ -1577,17 +1661,25 @@ router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req
          FROM scope_preference_submission_items p
          JOIN scope_preference_submissions sub ON sub.id = p.submission_id
          WHERE p.term_code = s.term_code
-           AND p.assignment_group_id = s.assignment_group_id
            AND (p.employee_id = pt.employee_id OR p.faculty_id = pt.employee_id)
            AND sub.status = 'frozen'
+           AND LOWER(sub.division) = LOWER(s.division)
+           AND (
+             p.assignment_group_id = s.assignment_group_id
+             OR REGEXP_REPLACE(COALESCE(p.assignment_group_id, ''), '[^0-9]', '', 'g') LIKE '%' || s.primary_crn
+           )
        ) pref ON TRUE
        LEFT JOIN LATERAL (
          SELECT MIN(p.preference_rank) AS section_preference_rank
          FROM scope_preference_submission_items p
          JOIN scope_preference_submissions sub ON sub.id = p.submission_id
          WHERE p.term_code = s.term_code
-           AND p.assignment_group_id = s.assignment_group_id
            AND sub.status = 'frozen'
+           AND LOWER(sub.division) = LOWER(s.division)
+           AND (
+             p.assignment_group_id = s.assignment_group_id
+             OR REGEXP_REPLACE(COALESCE(p.assignment_group_id, ''), '[^0-9]', '', 'g') LIKE '%' || s.primary_crn
+           )
        ) section_pref ON TRUE
        LEFT JOIN scope_faculty_availability av
          ON av.term_code = s.term_code
