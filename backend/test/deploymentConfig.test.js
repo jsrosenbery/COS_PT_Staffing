@@ -12,3 +12,11 @@ test("Vercel frontend-root deployments serve authentication routes through the S
     { source: "/reset-password", destination: "/index.html" },
   ]);
 });
+
+test("backend health exposes deploy metadata for production diagnostics", () => {
+  const server = fs.readFileSync(new URL("../server.js", import.meta.url), "utf8");
+
+  assert.match(server, /const DEPLOY_COMMIT/);
+  assert.match(server, /RENDER_GIT_COMMIT/);
+  assert.match(server, /commit: DEPLOY_COMMIT \|\| null/);
+});
