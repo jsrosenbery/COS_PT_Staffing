@@ -502,9 +502,10 @@ async function getContractExceptionReasons(db = { query }) {
   }
 }
 
-async function loadFrozenPreferenceRowsForSections(db, { termCode, sections = [] }) {
+async function loadPreferenceRowsForSections(db, { termCode, sections = [], allowLatestSubmittedFallback = false }) {
   const scopedDivisions = Array.from(new Set(sections.map((row) => row.division).filter(Boolean)));
-  if (!termCode || !sections.length || !scopedDivisions.length) return [];
+  const empty = { rows: [], source: "none", frozenCount: 0, latestSubmittedCount: 0 };
+  if (!termCode || !sections.length || !scopedDivisions.length) return empty;
 
   const preferenceResult = await db.query(
     `SELECT i.term_code, i.faculty_id, i.employee_id, i.faculty_name, i.assignment_group_id, i.discipline_code,
@@ -518,7 +519,37 @@ async function loadFrozenPreferenceRowsForSections(db, { termCode, sections = []
     [termCode, scopedDivisions.map((value) => value.toLowerCase())]
   );
 
-  return remapPreferencesToCurrentSections(preferenceResult.rows, sections);
+  const frozenRows = remapPreferencesToCurrentSections(preferenceResult.rows, sections);
+  if (frozenRows.length || !allowLatestSubmittedFallback) {
+    return { rows: frozenRows, source: frozenRows.length ? "frozen" : "none", frozenCount: frozenRows.length, latestSubmittedCount: 0 };
+  }
+
+  const latestSubmittedResult = await db.query(
+    `WITH latest AS (
+       SELECT id, ROW_NUMBER() OVER (PARTITION BY faculty_id ORDER BY submitted_at DESC NULLS LAST, version_number DESC, id DESC) AS rn
+       FROM scope_preference_submissions
+       WHERE term_code = $1
+         AND LOWER(division) = ANY($2::text[])
+         AND status IN ('submitted', 'corrected')
+     )
+     SELECT i.term_code, i.faculty_id, i.employee_id, i.faculty_name, i.assignment_group_id, i.discipline_code,
+            i.preference_rank, i.item_snapshot, i.created_at, i.created_at AS updated_at
+     FROM scope_preference_submission_items i
+     JOIN latest ON latest.id = i.submission_id AND latest.rn = 1
+     ORDER BY i.faculty_name, i.preference_rank, i.assignment_group_id`,
+    [termCode, scopedDivisions.map((value) => value.toLowerCase())]
+  );
+  const latestSubmittedRows = remapPreferencesToCurrentSections(latestSubmittedResult.rows, sections);
+  return {
+    rows: latestSubmittedRows,
+    source: latestSubmittedRows.length ? "latest_submitted" : "none",
+    frozenCount: 0,
+    latestSubmittedCount: latestSubmittedRows.length,
+  };
+}
+
+async function loadFrozenPreferenceRowsForSections(db, { termCode, sections = [], allowLatestSubmittedFallback = false }) {
+  return loadPreferenceRowsForSections(db, { termCode, sections, allowLatestSubmittedFallback });
 }
 
 async function getActivePreferenceWindow(db, termCode, division) {
@@ -670,6 +701,7 @@ async function buildAllocationAnalysisFromDb(db, {
   oneAssignmentPerPass = true,
   maxAssignments = "",
   maxLoad = "",
+  allowLatestSubmittedFallback = false,
 }) {
   const requestedDivisions = divisions.length ? divisions : parseScopeList(division);
   const params = [termCode];
@@ -695,7 +727,7 @@ async function buildAllocationAnalysisFromDb(db, {
   const sectionIds = sections.map((row) => row.assignment_group_id).filter(Boolean);
   const scopedDivisions = Array.from(new Set(sections.map((row) => row.division).filter(Boolean)));
 
-  const [facultyResult, frozenPreferences, assignmentResult, reasonRows] = await Promise.all([
+  const [facultyResult, preferenceSource, assignmentResult, reasonRows] = await Promise.all([
     scopedDivisions.length
       ? db.query(
           `SELECT employee_id, first_name, last_name, email, division, discipline,
@@ -709,7 +741,9 @@ async function buildAllocationAnalysisFromDb(db, {
           [scopedDivisions.map((value) => value.toLowerCase())]
         )
       : Promise.resolve({ rows: [] }),
-    sectionIds.length ? loadFrozenPreferenceRowsForSections(db, { termCode, sections }) : Promise.resolve([]),
+    sectionIds.length
+      ? loadPreferenceRowsForSections(db, { termCode, sections, allowLatestSubmittedFallback })
+      : Promise.resolve({ rows: [], source: "none", frozenCount: 0, latestSubmittedCount: 0 }),
     sectionIds.length
       ? db.query(
           `SELECT a.id, a.term_code, a.discipline_code, a.assignment_group_id, a.employee_id, a.faculty_name, a.status,
@@ -732,7 +766,7 @@ async function buildAllocationAnalysisFromDb(db, {
       disciplineCode,
       sections,
       faculty: facultyResult.rows,
-      preferences: frozenPreferences,
+      preferences: preferenceSource.rows,
       assignments: assignmentResult.rows,
       recognizedContractualExceptions: reasonRows.map((row) => row.code),
       loadLimits: {
@@ -742,6 +776,7 @@ async function buildAllocationAnalysisFromDb(db, {
       },
     }),
     exceptionReasons: reasonRows,
+    preferenceSource,
   };
 }
 
@@ -1299,7 +1334,7 @@ router.get("/allocation-analysis", requireElevatedRole, requireDivisionScope, as
   }
 
   try {
-    const { analysis, exceptionReasons } = await buildAllocationAnalysisFromDb({ query }, {
+    const { analysis, exceptionReasons, preferenceSource } = await buildAllocationAnalysisFromDb({ query }, {
       termCode,
       division: requestedDivisions.join("|"),
       divisions: requestedDivisions,
@@ -1307,9 +1342,10 @@ router.get("/allocation-analysis", requireElevatedRole, requireDivisionScope, as
       oneAssignmentPerPass: String(oneAssignmentPerPass).toLowerCase() !== "false" && String(oneAssignmentPerPass) !== "0",
       maxAssignments,
       maxLoad,
+      allowLatestSubmittedFallback: true,
     });
 
-    res.json({ analysis, exceptionReasons });
+    res.json({ analysis, exceptionReasons, preferenceSource });
   } catch (error) {
     res.status(500).json({ error: error.message || "Could not build allocation analysis." });
   }
@@ -1494,6 +1530,7 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
       division: sectionDivision,
       divisions: [sectionDivision],
       disciplineCode: sectionDisciplineCode,
+      allowLatestSubmittedFallback: true,
     });
     const decision = validateChairDecision({
       analysis,
@@ -1718,10 +1755,15 @@ router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req
       });
     }
     const sections = Array.from(sectionById.values());
-    const frozenPreferences = await loadFrozenPreferenceRowsForSections({ query }, { termCode, sections });
+    const preferenceSource = await loadPreferenceRowsForSections({ query }, {
+      termCode,
+      sections,
+      allowLatestSubmittedFallback: true,
+    });
+    const effectivePreferences = preferenceSource.rows;
     const sectionRankByAssignment = new Map();
     const candidateRankByAssignmentEmployee = new Map();
-    for (const preference of frozenPreferences) {
+    for (const preference of effectivePreferences) {
       const assignmentGroupId = normalize(preference.assignment_group_id);
       const employeeId = normalize(preference.employee_id || preference.faculty_id);
       const rank = Number(preference.preference_rank);
@@ -1751,7 +1793,7 @@ router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req
       };
     });
 
-    res.json({ rows });
+    res.json({ rows, preferenceSource });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 

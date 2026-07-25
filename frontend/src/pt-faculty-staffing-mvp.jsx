@@ -979,6 +979,7 @@ export default function PTFacultyStaffingMVP() {
   const [ptFacultyDisciplineFilter, setPtFacultyDisciplineFilter] = useState("ALL");
   const [preferenceWipeMessage, setPreferenceWipeMessage] = useState("");
   const [chairWorkflowRows, setChairWorkflowRows] = useState([]);
+  const [chairPreferenceSource, setChairPreferenceSource] = useState(null);
   const [tentativeAssignments, setTentativeAssignments] = useState([]);
   const [allocationAnalysis, setAllocationAnalysis] = useState(null);
   const [contractExceptionReasons, setContractExceptionReasons] = useState([]);
@@ -1866,6 +1867,17 @@ export default function PTFacultyStaffingMVP() {
   const frozenPreferenceRowCount = useMemo(() => {
     return chairWorkflowRows.filter((row) => finiteNumberOrNull(row.preference_rank) !== null).length;
   }, [chairWorkflowRows]);
+  const chairPreferenceSourceLabel = chairPreferenceSource?.source === "frozen"
+    ? "frozen preference"
+    : chairPreferenceSource?.source === "latest_submitted"
+      ? "current submitted preference"
+      : "preference";
+  const chairPreferenceSourceTitle = chairPreferenceSourceLabel.replace(/^./, (letter) => letter.toUpperCase());
+  const chairPreferenceSourceNote = chairPreferenceSource?.source === "latest_submitted"
+    ? "No frozen snapshot exists yet, so this queue is using each faculty member's latest submitted version."
+    : chairPreferenceSource?.source === "frozen"
+      ? "This queue is using the frozen preference snapshot."
+      : "No matched submitted or frozen preference rows were found for this scope.";
 
   const selectedSubmittedPreferenceRows = useMemo(() => {
     const selectedId = normalize(selectedFacultyId || selectedFaculty?.employeeId);
@@ -2295,6 +2307,7 @@ export default function PTFacultyStaffingMVP() {
       if ((role === "chair" || role === "dean") && !scopedDivisions.length) {
         setChairMessage("Your account does not have a division scope assigned. Ask an administrator to update your user record.");
         setChairWorkflowRows([]);
+        setChairPreferenceSource(null);
         setTentativeAssignments([]);
         setAllocationAnalysis(null);
         setContractExceptionReasons([]);
@@ -2318,6 +2331,7 @@ export default function PTFacultyStaffingMVP() {
       if (!workflowResponse.ok) {
         setChairMessage(workflowData.error || "Could not load workflow.");
         setChairWorkflowRows([]);
+        setChairPreferenceSource(null);
         if (!preserveAssignmentsOnError) setTentativeAssignments([]);
         setDecisionLogs([]);
         return;
@@ -2325,6 +2339,7 @@ export default function PTFacultyStaffingMVP() {
       if (!assignmentsResponse.ok) {
         setChairMessage(assignmentsData.error || "Could not load tentative assignments.");
         setChairWorkflowRows(workflowData.rows || []);
+        setChairPreferenceSource(workflowData.preferenceSource || null);
         if (!preserveAssignmentsOnError) setTentativeAssignments([]);
         setDecisionLogs([]);
         return;
@@ -2332,6 +2347,7 @@ export default function PTFacultyStaffingMVP() {
       if (!logsResponse.ok) {
         setChairMessage(logsData.error || "Could not load decision logs.");
         setChairWorkflowRows(workflowData.rows || []);
+        setChairPreferenceSource(workflowData.preferenceSource || null);
         setTentativeAssignments(assignmentsData.assignments || []);
         setDecisionLogs([]);
         return;
@@ -2343,6 +2359,7 @@ export default function PTFacultyStaffingMVP() {
       }
 
       setChairWorkflowRows(Array.isArray(workflowData.rows) ? workflowData.rows : []);
+      setChairPreferenceSource(workflowData.preferenceSource || analysisData.preferenceSource || null);
       setTentativeAssignments(Array.isArray(assignmentsData.assignments) ? assignmentsData.assignments : []);
       setAllocationAnalysis(analysisData.analysis || null);
       setContractExceptionReasons(Array.isArray(analysisData.exceptionReasons) ? analysisData.exceptionReasons : []);
@@ -2351,6 +2368,7 @@ export default function PTFacultyStaffingMVP() {
     } catch (error) {
       setChairMessage(error.message || "Could not load workflow.");
       setChairWorkflowRows([]);
+      setChairPreferenceSource(null);
       if (!preserveAssignmentsOnError) setTentativeAssignments([]);
       setAllocationAnalysis(null);
       setContractExceptionReasons([]);
@@ -4372,7 +4390,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 <div>
                   <div style={{ fontWeight: 800 }}>Section Assignment Queue</div>
                   <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
-                    Review the selected faculty member's frozen list in rank order. Each section shows the selected faculty member, the seniority recommendation, and interested candidates before any non-requesting qualified faculty.
+                    Review the selected faculty member's matched list in rank order. Each section shows the selected faculty member, the seniority recommendation, and interested candidates before any non-requesting qualified faculty.
                   </div>
                   <div style={{ display: "grid", gap: 6, maxWidth: 360, marginTop: 10 }}>
                     <label style={ui.small}>Submitted faculty list</label>
@@ -4396,7 +4414,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     </select>
                     <div style={ui.small}>
                       {selectedFacultyHasSubmittedPreferences
-                        ? `Showing ${selectedReviewFacultyName}'s frozen submitted sections in rank order.`
+                        ? `Showing ${selectedReviewFacultyName}'s ${chairPreferenceSourceLabel} sections in rank order.`
                         : "Choose a faculty member with saved preferences to review that person's ranked list."}
                     </div>
                   </div>
@@ -4460,7 +4478,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     <option value="seniority">Top candidate seniority</option>
                   </select>
                   <div style={ui.small}>
-                    {frozenPreferenceRowCount} frozen preference row(s) matched across {submittedFacultyOptions.length} submitting faculty.
+                    {frozenPreferenceRowCount} {chairPreferenceSourceLabel} row(s) matched across {submittedFacultyOptions.length} submitting faculty. {chairPreferenceSourceNote}
                   </div>
                 </div>
               </div>
@@ -4568,7 +4586,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                 <div>
                                   <div style={{ fontWeight: 700 }}>{row.faculty_name}</div>
                                   <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
-                                    Seniority #{row.seniority_rank || "-"} - {row.preference_rank ? `Frozen preference #${row.preference_rank}` : "Not on frozen submitted list"}
+                                    Seniority #{row.seniority_rank || "-"} - {row.preference_rank ? `${chairPreferenceSourceTitle} #${row.preference_rank}` : "Not on matched submitted list"}
                                   </div>
                                   <div style={{ marginTop: 6 }}>
                                     <span style={workflowStatePillStyle(row.availabilitySummary?.matches ? "assigned" : "bypass")}>
@@ -4680,7 +4698,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </button>
                     )) : (
                       <div style={{ color: "var(--text-subtle)" }}>
-                        No frozen submitted preferences are matched for the selected faculty member in this staffing queue.
+                        No matched submitted preferences are loaded for the selected faculty member in this staffing queue.
                       </div>
                     )}
                   </div>
