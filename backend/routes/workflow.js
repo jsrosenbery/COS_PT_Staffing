@@ -673,11 +673,15 @@ async function createPreferenceSubmissionVersion(client, {
 }
 
 async function resolvePreferenceFacultyRoster(db, { facultyId = "", employeeId = "", authUser = null } = {}) {
+  const runQuery = typeof db === "function" ? db : db?.query?.bind(db);
+  if (typeof runQuery !== "function") {
+    throw new TypeError("A database query function is required to resolve a faculty roster row.");
+  }
   const isFaculty = String(authUser?.role || "").trim().toLowerCase() === "faculty";
   const lookupEmployeeId = String(isFaculty ? authUser?.employee_id || employeeId || facultyId : employeeId || facultyId).trim();
   const lookupEmail = String(isFaculty ? authUser?.email || "" : "").trim();
   const lookupName = String(isFaculty ? authUser?.full_name || "" : "").trim();
-  const result = await db.query(
+  const result = await runQuery(
     `SELECT employee_id, email, CONCAT_WS(' ', first_name, last_name) AS faculty_name, division, discipline
      FROM scope_pt_faculty
      WHERE COALESCE(active_status, 'active') = 'active'
