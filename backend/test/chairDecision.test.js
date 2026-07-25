@@ -146,8 +146,14 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /item\.label \|\| `\$\{facultyName\(item\)\} - \$\{item\.seniorityRank \?\? "no seniority"\}`/);
   assert.match(frontend, /\{item\.facultyName\} - \{item\.seniorityRank \?\? "no seniority"\}/);
   assert.match(frontend, /const candidateLimit = 6/);
+  assert.match(frontend, /const orderedCandidates = \[\.\.\.section\.candidates\]\.sort/);
+  assert.match(frontend, /const primaryCandidates = orderedCandidates\.filter/);
+  assert.match(frontend, /const nonRequestingCandidates = orderedCandidates\.filter/);
   assert.match(frontend, /visibleCandidates\.map/);
-  assert.match(frontend, /Show \$\{hiddenCandidateCount\} more/);
+  assert.match(frontend, /Hide non-requesting faculty/);
+  assert.match(frontend, /including non-requesting faculty/);
+  assert.match(frontend, /duplicateSeniorityWarnings/);
+  assert.match(frontend, /Duplicate seniority ranking detected/);
   assert.match(frontend, /setTentativeAssignments\(\(current\) => \[/);
   assert.match(frontend, /setWorkflowView\("assigned"\)/);
   assert.match(frontend, /loadChairWorkflow\(\{ preserveMessage: true, preserveAssignmentsOnError: true \}\)/);

@@ -2070,6 +2070,35 @@ export default function PTFacultyStaffingMVP() {
       : finiteNumberOrNull(section.bestPreferenceRank) !== null).length;
   }, [sectionQueue, selectedFacultyId, selectedFaculty]);
 
+  const duplicateSeniorityWarnings = useMemo(() => {
+    const groups = new Map();
+    chairWorkflowRows.forEach((row) => {
+      const rank = finiteNumberOrNull(row.seniority_rank);
+      const employeeId = normalize(row.employee_id);
+      if (rank === null || !employeeId) return;
+      const key = [
+        normalize(row.division).toLowerCase(),
+        normalize(row.discipline_code).toLowerCase(),
+        rank,
+      ].join("::");
+      const group = groups.get(key) || {
+        division: row.division || "",
+        disciplineCode: row.discipline_code || "",
+        rank,
+        faculty: new Map(),
+      };
+      group.faculty.set(employeeId, row.faculty_name || employeeId);
+      groups.set(key, group);
+    });
+    return Array.from(groups.values())
+      .filter((group) => group.faculty.size > 1)
+      .sort((a, b) =>
+        normalize(a.division).localeCompare(normalize(b.division)) ||
+        normalize(a.disciplineCode).localeCompare(normalize(b.disciplineCode)) ||
+        a.rank - b.rank
+      );
+  }, [chairWorkflowRows]);
+
   const auditEventOptions = useMemo(() => {
     return Array.from(new Set(decisionLogs.map((entry) => normalize(entry.event_type)).filter(Boolean))).sort();
   }, [decisionLogs]);
@@ -4343,7 +4372,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 <div>
                   <div style={{ fontWeight: 800 }}>Section Assignment Queue</div>
                   <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
-                    Review submitted faculty lists in preference order, then open each section card to compare every interested candidate by seniority and that candidate's own rank.
+                    Review the selected faculty member's frozen list in rank order. Each section shows the selected faculty member, the seniority recommendation, and interested candidates before any non-requesting qualified faculty.
                   </div>
                   <div style={{ display: "grid", gap: 6, maxWidth: 360, marginTop: 10 }}>
                     <label style={ui.small}>Submitted faculty list</label>
@@ -4367,10 +4396,17 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     </select>
                     <div style={ui.small}>
                       {selectedFacultyHasSubmittedPreferences
-                        ? `Showing ${selectedReviewFacultyName}'s selected sections first, in submitted rank order.`
+                        ? `Showing ${selectedReviewFacultyName}'s frozen submitted sections in rank order.`
                         : "Choose a faculty member with saved preferences to review that person's ranked list."}
                     </div>
                   </div>
+                  {duplicateSeniorityWarnings.length ? (
+                    <div style={{ marginTop: 12, color: "#92400e", fontSize: 13, fontWeight: 700 }}>
+                      Duplicate seniority ranking detected: {duplicateSeniorityWarnings.slice(0, 3).map((group) =>
+                        `${group.disciplineCode || group.division || "scope"} rank #${group.rank} (${Array.from(group.faculty.values()).join(", ")})`
+                      ).join("; ")}{duplicateSeniorityWarnings.length > 3 ? `; ${duplicateSeniorityWarnings.length - 3} more` : ""}.
+                    </div>
+                  ) : null}
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
                     <button
                       type="button"
@@ -4437,8 +4473,43 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   const stateSummary = sectionStateSummary(section, topCandidate);
                   const candidateLimit = 6;
                   const isCandidateGroupExpanded = Boolean(expandedCandidateGroups[section.assignment_group_id]);
-                  const visibleCandidates = isCandidateGroupExpanded ? section.candidates : section.candidates.slice(0, candidateLimit);
-                  const hiddenCandidateCount = Math.max(0, section.candidates.length - candidateLimit);
+                  const allocationSection = allocationSectionById.get(section.assignment_group_id);
+                  const backendRecommendedEmployeeId =
+                    allocationSection?.highestSeniorityCurrentlyEligibleCandidate?.employeeId ||
+                    allocationAnalysis?.recommendedNextAssignmentSequence?.find((item) => item.assignmentGroupId === section.assignment_group_id)?.employeeId ||
+                    "";
+                  const effectiveRecommendedEmployeeId = backendRecommendedEmployeeId || topCandidate?.employee_id || "";
+                  const selectedFacultyKey = normalize(selectedFacultyId || selectedFaculty?.employeeId);
+                  const orderedCandidates = [...section.candidates].sort((a, b) => {
+                    const aSelected = selectedFacultyKey && normalize(a.employee_id) === selectedFacultyKey ? 0 : 1;
+                    const bSelected = selectedFacultyKey && normalize(b.employee_id) === selectedFacultyKey ? 0 : 1;
+                    if (aSelected !== bSelected) return aSelected - bSelected;
+                    const aRecommended = effectiveRecommendedEmployeeId && a.employee_id === effectiveRecommendedEmployeeId ? 0 : 1;
+                    const bRecommended = effectiveRecommendedEmployeeId && b.employee_id === effectiveRecommendedEmployeeId ? 0 : 1;
+                    if (aRecommended !== bRecommended) return aRecommended - bRecommended;
+                    const aRequested = finiteNumberOrNull(a.preference_rank) !== null ? 0 : 1;
+                    const bRequested = finiteNumberOrNull(b.preference_rank) !== null ? 0 : 1;
+                    if (aRequested !== bRequested) return aRequested - bRequested;
+                    const aRank = finiteNumberOrNull(a.seniority_rank) ?? 999999;
+                    const bRank = finiteNumberOrNull(b.seniority_rank) ?? 999999;
+                    if (aRank !== bRank) return aRank - bRank;
+                    const aPref = finiteNumberOrNull(a.preference_rank) ?? 999999;
+                    const bPref = finiteNumberOrNull(b.preference_rank) ?? 999999;
+                    if (aPref !== bPref) return aPref - bPref;
+                    return String(a.faculty_name || a.employee_id || "").localeCompare(String(b.faculty_name || b.employee_id || ""));
+                  });
+                  const primaryCandidates = orderedCandidates.filter((row) =>
+                    finiteNumberOrNull(row.preference_rank) !== null ||
+                    (selectedFacultyKey && normalize(row.employee_id) === selectedFacultyKey) ||
+                    (effectiveRecommendedEmployeeId && row.employee_id === effectiveRecommendedEmployeeId) ||
+                    section.currentAssignment?.employee_id === row.employee_id
+                  );
+                  const nonRequestingCandidates = orderedCandidates.filter((row) => !primaryCandidates.some((candidate) => candidate.employee_id === row.employee_id));
+                  const visiblePrimaryCandidates = isCandidateGroupExpanded ? primaryCandidates : primaryCandidates.slice(0, candidateLimit);
+                  const visibleCandidates = isCandidateGroupExpanded
+                    ? [...visiblePrimaryCandidates, ...nonRequestingCandidates]
+                    : visiblePrimaryCandidates;
+                  const hiddenCandidateCount = section.candidates.length - visibleCandidates.length;
                   return (
                     <div key={section.assignment_group_id} style={{ ...ui.sectionCard, borderColor: section.currentAssignment ? "#bbf7d0" : "var(--border-color)", background: section.currentAssignment ? "rgba(220, 252, 231, 0.28)" : "var(--bg-card)" }}>
                       <div style={{ ...ui.between, alignItems: "flex-start" }}>
@@ -4484,12 +4555,6 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                         {visibleCandidates.map((row) => {
                           const isTop = topCandidate?.employee_id === row.employee_id;
-                          const allocationSection = allocationSectionById.get(section.assignment_group_id);
-                          const backendRecommendedEmployeeId =
-                            allocationSection?.highestSeniorityCurrentlyEligibleCandidate?.employeeId ||
-                            allocationAnalysis?.recommendedNextAssignmentSequence?.find((item) => item.assignmentGroupId === section.assignment_group_id)?.employeeId ||
-                            "";
-                          const effectiveRecommendedEmployeeId = backendRecommendedEmployeeId || topCandidate?.employee_id || "";
                           const isBackendRecommended = effectiveRecommendedEmployeeId === row.employee_id;
                           const isHighestRemainingPreference = highestRemainingPreferenceByFaculty.get(row.employee_id) === section.assignment_group_id;
                           const requiresPreferenceRationale = Boolean(effectiveRecommendedEmployeeId && row.employee_id !== effectiveRecommendedEmployeeId);
@@ -4576,7 +4641,9 @@ OH,ORNAMENTAL_HORTICULTURE`}
                               [section.assignment_group_id]: !isCandidateGroupExpanded,
                             }))}
                           >
-                            {isCandidateGroupExpanded ? "Show top 6 ^" : `Show ${hiddenCandidateCount} more v`}
+                            {isCandidateGroupExpanded
+                              ? "Hide non-requesting faculty"
+                              : `Show ${hiddenCandidateCount} more candidate${hiddenCandidateCount === 1 ? "" : "s"}, including non-requesting faculty`}
                           </button>
                         ) : null}
                       </div>
