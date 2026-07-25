@@ -743,10 +743,10 @@ async function buildAllocationAnalysisFromDb(db, {
   const [facultyResult, preferenceSource, assignmentResult, reasonRows] = await Promise.all([
     scopedDivisions.length
       ? db.query(
-          `SELECT employee_id, first_name, last_name, email, division, discipline,
-                  COALESCE(NULLIF(seniority_rank, ''), seniority_value, '') AS seniority_rank,
-                  COALESCE(NULLIF(seniority_value, ''), seniority_rank, '') AS seniority_value,
-                  qualified_disciplines, active_status,
+          `SELECT pt.employee_id, pt.first_name, pt.last_name, pt.email, pt.division, pt.discipline,
+                  COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '') AS seniority_rank,
+                  COALESCE(NULLIF(pt.seniority_value, ''), pt.seniority_rank, '') AS seniority_value,
+                  pt.qualified_disciplines, pt.active_status,
                   COALESCE(fls.status, 'active') AS load_status
            FROM scope_pt_faculty pt
            LEFT JOIN scope_faculty_load_status fls
