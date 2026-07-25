@@ -336,8 +336,8 @@ function normalizeMeetingPattern(meetings) {
 }
 
 function hasMeetingConflict(sectionA, sectionB) {
-  return normalizeMeetingPattern(sectionA?.meetings) === normalizeMeetingPattern(sectionB?.meetings)
-    && normalizeMeetingPattern(sectionA?.meetings) !== "";
+  if (sectionMethodLabel(sectionA) === "ONL" || sectionMethodLabel(sectionB) === "ONL") return false;
+  return meetingsOverlap(sectionA?.meetings, sectionB?.meetings);
 }
 
 function parseClockToMinutes(value) {
@@ -425,6 +425,13 @@ function canonicalMethodCode(value, section = null) {
 
 function sectionMethodLabel(section) {
   return canonicalMethodCode(section?.instructional_method, section) || "TBA";
+}
+
+function sectionConflictLabel(section) {
+  const course = normalize(section?.primary_subject_course) || normalize(section?.assignment_group_id) || "another tentative assignment";
+  const crn = normalize(section?.primary_crn);
+  if (crn && !course.includes(crn)) return `${course} (CRN ${crn})`;
+  return course;
 }
 
 function sectionModalityLabel(section) {
@@ -637,6 +644,19 @@ const codeLegend = [
   { label: "Advanced", meaning: "Chair finalization or dean approval activity has already begun." },
 ];
 
+const chairQueueLegend = [
+  { label: "No availability selected", kind: "assigned", meaning: "The faculty member did not enter day or time availability. This is informational and does not block assignment." },
+  { label: "Highest remaining preference", kind: "top", meaning: "This is the highest-ranked section still available on that faculty member's submitted list." },
+  { label: "Next in line", kind: "top", meaning: "Highest available candidate after seniority, preferences, and current tentative placements are considered." },
+  { label: "Seniority recommendation", kind: "top", meaning: "The system's clean recommendation for this staffing unit. Selecting this person does not require an exception." },
+  { label: "Bypass needs rationale", kind: "bypass", meaning: "Selecting this person would bypass the current seniority recommendation and requires an approved reason and written explanation." },
+  { label: "Already placed elsewhere", kind: "filled", meaning: "The person has another tentative assignment. They remain visible for review, but the current placement is noted." },
+  { label: "Time conflict", kind: "conflict", meaning: "The person has another tentative in-person or hybrid section with an overlapping meeting time. Fully online sections are ignored for conflict checks." },
+  { label: "Not requested", kind: "blocked", meaning: "The person is qualified in the discipline but did not include this section in the matched submitted preference list." },
+  { label: "Section filled", kind: "filled", meaning: "Another faculty member already has a tentative assignment for this staffing unit." },
+  { label: "Linked Sections", kind: "advanced", meaning: "Cross-listed or paired parts move together as one staffing unit." },
+];
+
 function sectionStateSummary(section, topCandidate) {
   if (section?.currentAssignment) {
     return {
@@ -673,7 +693,7 @@ function candidateReasonSummary(section, row, topCandidate, currentAssignment) {
   if (row.has_assignment_conflict) {
     return {
       title: "Blocked by time conflict",
-      detail: `Conflicts with ${row.conflicting_assignment?.primary_subject_course || row.conflicting_assignment?.assignment_group_id || "another tentative assignment"}.`,
+      detail: `Conflicts with ${sectionConflictLabel(row.conflicting_assignment)}.`,
       kind: "conflict",
     };
   }
@@ -4385,6 +4405,36 @@ OH,ORNAMENTAL_HORTICULTURE`}
               {filteredSectionQueue.length} visible queued section(s), {assignmentStatusCounts.tentative || 0} tentative, {assignmentStatusCounts.chair_submitted || 0} submitted, {assignmentStatusCounts.dean_approved || 0} approved, {filteredDecisionLogs.length} visible audit entr{filteredDecisionLogs.length === 1 ? "y" : "ies"}.
             </div>
 
+            <div style={{ ...ui.sectionCard, marginTop: 12 }}>
+              <div style={ui.miniKicker}>Chair Review Guide</div>
+              <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>How to Work This Queue</h2>
+              <div style={ui.cardDesc}>
+                Start with a submitted faculty member, keep the sort on saved preference order, and work down that person's list. The first candidate card shows the selected faculty member when they requested the section, followed by the current seniority recommendation and other interested candidates.
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginTop: 14 }}>
+                <div style={{ border: "1px solid var(--border-soft)", borderRadius: 12, padding: 12, background: "var(--bg-soft)" }}>
+                  <div style={{ fontWeight: 800 }}>Basic Steps</div>
+                  <ol style={{ margin: "8px 0 0 18px", padding: 0, color: "var(--text-muted)", fontSize: 13, lineHeight: 1.55 }}>
+                    <li>Select the faculty member whose submitted preference list you are reviewing.</li>
+                    <li>Review sections in saved preference order and check the seniority recommendation on each card.</li>
+                    <li>Use Assign for the seniority recommendation, or Assign with Rationale when a contractual exception is needed.</li>
+                    <li>After assigning, confirm the section moves into the assigned count and no longer appears as available for that faculty member.</li>
+                  </ol>
+                </div>
+                <div style={{ border: "1px solid var(--border-soft)", borderRadius: 12, padding: 12, background: "var(--bg-soft)" }}>
+                  <div style={{ fontWeight: 800 }}>Legend</div>
+                  <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                    {chairQueueLegend.map((item) => (
+                      <div key={item.label} style={{ display: "grid", gridTemplateColumns: "minmax(135px, max-content) minmax(0, 1fr)", gap: 10, alignItems: "start" }}>
+                        <span style={workflowStatePillStyle(item.kind)}>{item.label}</span>
+                        <div style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.4 }}>{item.meaning}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div style={{ ...ui.sectionCard, marginTop: 12, background: "var(--bg-soft)" }}>
               <div style={{ ...ui.between, alignItems: "flex-end" }}>
                 <div>
@@ -4605,7 +4655,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                   ) : null}
                                   {row.has_assignment_conflict ? (
                                     <div style={{ marginTop: 6, color: "#b91c1c", fontSize: 12, fontWeight: 700 }}>
-                                      Time conflict with {row.conflicting_assignment?.primary_subject_course || row.conflicting_assignment?.assignment_group_id}.
+                                      Time conflict with {sectionConflictLabel(row.conflicting_assignment)}.
                                     </div>
                                   ) : null}
                                   {!row.has_assignment_conflict && row.assigned_elsewhere ? (
