@@ -55,19 +55,33 @@ test("audit-value compatibility migration normalizes legacy json columns to text
   assert.doesNotMatch(migration, /\b(DROP|TRUNCATE|DELETE)\b/i);
 });
 
+test("faculty load status migration adds temporary chair-controlled load completion state", async () => {
+  const migration = await fs.readFile(
+    new URL("../migrations/0006_faculty_load_status.sql", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS scope_faculty_load_status/i);
+  assert.match(migration, /UNIQUE \(term_code, division, employee_id\)/i);
+  assert.match(migration, /CHECK \(status IN \('active', 'complete'\)\)/i);
+  assert.doesNotMatch(migration, /\b(DROP|TRUNCATE|DELETE)\b/i);
+});
+
 integrationTest("applies all ordered migrations to an empty PostgreSQL database", async () => {
   await withEmptyDatabase(async (pool) => {
     const result = await runMigrations({ pool, logger: silentLogger });
-    assert.deepEqual(result.applied, ["0001", "0002", "0003", "0004", "0005"]);
+    assert.deepEqual(result.applied, ["0001", "0002", "0003", "0004", "0005", "0006"]);
 
     const tables = await pool.query(`
       SELECT to_regclass('scope_users') AS users,
              to_regclass('scope_assignments') AS assignments,
-             to_regclass('scope_rate_limits') AS rate_limits
+             to_regclass('scope_rate_limits') AS rate_limits,
+             to_regclass('scope_faculty_load_status') AS faculty_load_status
     `);
     assert.equal(tables.rows[0].users, "scope_users");
     assert.equal(tables.rows[0].assignments, "scope_assignments");
     assert.equal(tables.rows[0].rate_limits, "scope_rate_limits");
+    assert.equal(tables.rows[0].faculty_load_status, "scope_faculty_load_status");
 
     const windowColumns = await pool.query(`
       SELECT column_name, is_nullable, column_default
@@ -81,12 +95,13 @@ integrationTest("applies all ordered migrations to an empty PostgreSQL database"
     assert.match(windowColumns.rows[0].column_default, /now\(\)/i);
 
     const history = await pool.query("SELECT * FROM scope_schema_migrations ORDER BY migration_identifier");
-    assert.equal(history.rowCount, 5);
+    assert.equal(history.rowCount, 6);
     assert.equal(history.rows[0].migration_filename, "0001_baseline.sql");
     assert.equal(history.rows[1].migration_filename, "0002_security_integrity_constraints.sql");
     assert.equal(history.rows[2].migration_filename, "0003_shared_auth_rate_limits.sql");
     assert.equal(history.rows[3].migration_filename, "0004_staffing_windows_updated_at.sql");
     assert.equal(history.rows[4].migration_filename, "0005_audit_values_as_text.sql");
+    assert.equal(history.rows[5].migration_filename, "0006_faculty_load_status.sql");
     assert.ok(history.rows.every((row) => row.applied_at));
   });
 });
@@ -111,9 +126,9 @@ integrationTest("skips migrations that were already applied successfully", async
     const secondRun = await runMigrations({ pool, logger: silentLogger });
 
     assert.deepEqual(secondRun.applied, []);
-    assert.deepEqual(secondRun.skipped, ["0001", "0002", "0003", "0004", "0005"]);
+    assert.deepEqual(secondRun.skipped, ["0001", "0002", "0003", "0004", "0005", "0006"]);
     const history = await pool.query("SELECT COUNT(*)::int AS count FROM scope_schema_migrations");
-    assert.equal(history.rows[0].count, 5);
+    assert.equal(history.rows[0].count, 6);
   });
 });
 

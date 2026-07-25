@@ -163,6 +163,11 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /setTentativeAssignments\(\(current\) => \[/);
   assert.match(frontend, /setWorkflowView\("assigned"\)/);
   assert.match(frontend, /loadChairWorkflow\(\{ preserveMessage: true, preserveAssignmentsOnError: true \}\)/);
+  assert.match(frontend, /faculty-load-status/);
+  assert.match(frontend, /Load complete for now/);
+  assert.match(frontend, /row\.load_complete/);
+  assert.match(frontend, /Meeting days/);
+  assert.match(frontend, /toggleSectionFilter\("days", day\.key\)/);
   assert.match(frontend, /Seniority recommendation/);
   assert.doesNotMatch(frontend, /Backend recommendation/);
   assert.match(frontend, /assignSectionToInstructor\(row, backendRecommendedEmployeeId, requiresPreferenceRationale\)/);
