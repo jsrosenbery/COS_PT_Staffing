@@ -139,7 +139,9 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /Selected Faculty Preferences/);
   assert.match(frontend, /selectedReviewFacultyName.*preference #/);
   assert.match(frontend, /Highest submitted preference #/);
-  assert.match(frontend, /Own preference #/);
+  assert.match(frontend, /Frozen preference #/);
+  assert.match(frontend, /Not on frozen submitted list/);
+  assert.match(frontend, /frozenPreferenceRowCount/);
   assert.match(frontend, /effectiveRecommendedEmployeeId = backendRecommendedEmployeeId \|\| topCandidate\?\.employee_id/);
   assert.match(frontend, /item\.label \|\| `\$\{facultyName\(item\)\} - \$\{item\.seniorityRank \?\? "no seniority"\}`/);
   assert.match(frontend, /\{item\.facultyName\} - \{item\.seniorityRank \?\? "no seniority"\}/);
@@ -159,16 +161,22 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /if \(rank === null\) return/);
   assert.match(frontend, /return chairWorkflowRows\s+\.filter/);
   assert.doesNotMatch(frontend, /const rowPreferenceRank = finiteNumberOrNull\(row\.preference_rank\) \?\? exportedPreferenceRank/);
+  assert.doesNotMatch(frontend, /chairPreferenceRows/);
+  assert.doesNotMatch(frontend, /setChairPreferenceRows/);
 });
 
 test("chair workflow displays the same frozen preference source used by allocation", () => {
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
 
-  assert.match(workflow, /FROM scope_preference_submission_items p/);
-  assert.match(workflow, /JOIN scope_preference_submissions sub ON sub\.id = p\.submission_id/);
-  assert.match(workflow, /AND sub\.status = 'frozen'/);
-  assert.match(workflow, /remapPreferencesToCurrentSections\(preferenceResult\.rows, sections\)/);
+  assert.match(workflow, /async function loadFrozenPreferenceRowsForSections/);
+  assert.match(workflow, /FROM scope_preference_submission_items i/);
+  assert.match(workflow, /JOIN scope_preference_submissions s ON s\.id = i\.submission_id/);
+  assert.match(workflow, /AND s\.status = 'frozen'/);
+  assert.match(workflow, /return remapPreferencesToCurrentSections\(preferenceResult\.rows, sections\)/);
+  assert.match(workflow, /preferences: frozenPreferences/);
+  assert.match(workflow, /candidateRankByAssignmentEmployee\.set\(key, rank\)/);
+  assert.match(workflow, /preference_rank: candidateRankByAssignmentEmployee\.get/);
+  assert.match(workflow, /section_preference_rank: sectionRankByAssignment\.get/);
   assert.match(workflow, /original_assignment_group_id: preference\.assignment_group_id/);
   assert.match(workflow, /run\.slice\(-5\)/);
-  assert.match(workflow, /LIKE '%' \|\| s\.primary_crn/);
 });
