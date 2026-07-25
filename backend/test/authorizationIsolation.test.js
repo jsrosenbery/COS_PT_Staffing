@@ -142,6 +142,14 @@ test("division-sensitive workflow reads apply scope directly in SQL", () => {
   assert.match(workflow, /scopeFilterForReq\(req/);
 });
 
+test("allocation analysis load-status join keeps faculty columns unambiguous", () => {
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+
+  assert.match(workflow, /LEFT JOIN scope_faculty_load_status fls/);
+  assert.match(workflow, /SELECT pt\.employee_id, pt\.first_name, pt\.last_name, pt\.email, pt\.division, pt\.discipline/);
+  assert.doesNotMatch(workflow, /SELECT employee_id, first_name, last_name, email, division, discipline/);
+});
+
 test("division-sensitive writes derive indirect assignment scope from database", () => {
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
 
