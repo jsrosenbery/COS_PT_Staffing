@@ -41,6 +41,28 @@ function compactKey(value) {
   return normUpper(value).replace(/[^A-Z0-9]/g, "");
 }
 
+function personNameTokens(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1);
+}
+
+function compatiblePersonName(left, right) {
+  const leftTokens = Array.from(new Set(personNameTokens(left)));
+  const rightTokens = Array.from(new Set(personNameTokens(right)));
+  if (!leftTokens.length || !rightTokens.length) return false;
+  const leftSet = new Set(leftTokens);
+  const rightSet = new Set(rightTokens);
+  const shared = leftTokens.filter((token) => rightSet.has(token));
+  if (shared.length >= 2) return true;
+  const shorter = leftTokens.length <= rightTokens.length ? leftTokens : rightTokens;
+  const longerSet = leftTokens.length <= rightTokens.length ? rightSet : leftSet;
+  return shorter.length >= 2 && shorter.every((token) => longerSet.has(token));
+}
+
 function stableHash(value) {
   const input = String(value || "");
   let hash = 2166136261;
@@ -575,7 +597,16 @@ async function getActivePreferenceWindow(db, termCode, division) {
      LIMIT 1`,
     [termCode, division || ""]
   );
-  return result.rows[0] || null;
+  if (result.rows[0]) return result.rows[0];
+  if (!lookupName) return null;
+  const fallbackResult = await runQuery(
+    `SELECT employee_id, email, CONCAT_WS(' ', first_name, last_name) AS faculty_name, division, discipline
+     FROM scope_pt_faculty
+     WHERE COALESCE(active_status, 'active') = 'active'
+     ORDER BY employee_id`,
+    []
+  );
+  return (fallbackResult.rows || []).find((row) => compatiblePersonName(lookupName, row.faculty_name)) || null;
 }
 
 async function createPreferenceSubmissionVersion(client, {

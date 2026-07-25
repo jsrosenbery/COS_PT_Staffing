@@ -131,6 +131,8 @@ test("faculty preference reload resolves the authenticated account to the active
 
   assert.match(workflow, /async function resolvePreferenceFacultyRoster/);
   assert.match(workflow, /const runQuery = typeof db === "function" \? db : db\?\.query\?\.bind\(db\)/);
+  assert.match(workflow, /function compatiblePersonName\(left, right\)/);
+  assert.match(workflow, /fallbackResult\.rows \|\| \[\]\)\.find\(\(row\) => compatiblePersonName\(lookupName, row\.faculty_name\)\)/);
   assert.match(workflow, /LOWER\(email\) = LOWER\(\$2\)/);
   assert.match(workflow, /REGEXP_REPLACE\(CONCAT_WS\('', first_name, last_name\)/);
   assert.match(workflow, /LIKE '%' \|\| LOWER\(REGEXP_REPLACE\(\$3/);

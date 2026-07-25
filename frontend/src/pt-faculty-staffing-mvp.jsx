@@ -195,12 +195,23 @@ function employeeIdentityKey(value) {
 }
 
 function compatibleNameKey(left, right) {
-  const leftKey = compactKey(left);
-  const rightKey = compactKey(right);
-  if (!leftKey || !rightKey) return false;
-  if (leftKey === rightKey) return true;
-  if (leftKey.length < 6 || rightKey.length < 6) return false;
-  return leftKey.includes(rightKey) || rightKey.includes(leftKey);
+  const tokens = (value) => Array.from(new Set(
+    normalize(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length > 1)
+  ));
+  const leftTokens = tokens(left);
+  const rightTokens = tokens(right);
+  if (!leftTokens.length || !rightTokens.length) return false;
+  const rightSet = new Set(rightTokens);
+  const shared = leftTokens.filter((token) => rightSet.has(token));
+  if (shared.length >= 2) return true;
+  const shorter = leftTokens.length <= rightTokens.length ? leftTokens : rightTokens;
+  const longerSet = leftTokens.length <= rightTokens.length ? rightSet : new Set(leftTokens);
+  return shorter.length >= 2 && shorter.every((token) => longerSet.has(token));
 }
 
 function splitScopeValues(...values) {
