@@ -121,6 +121,23 @@ test("faculty section display is bound to the authenticated employee roster reco
   assert.doesNotMatch(frontend, /role === "faculty" \? normalize\(currentUser\?\.employee_id\)\.toLowerCase\(\) : ""/);
 });
 
+test("faculty preference reload resolves the authenticated account to the active roster identity", () => {
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+  const frontend = fs.readFileSync(
+    new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(workflow, /async function resolvePreferenceFacultyRoster/);
+  assert.match(workflow, /LOWER\(email\) = LOWER\(\$2\)/);
+  assert.match(workflow, /REGEXP_REPLACE\(CONCAT_WS\('', first_name, last_name\)/);
+  assert.match(workflow, /const canonicalFacultyId = facultyRosterRow\.employee_id/);
+  assert.match(workflow, /p\.faculty_id = ANY\(\$2::text\[\]\) OR p\.employee_id = ANY\(\$2::text\[\]\)/);
+  assert.match(workflow, /faculty_id = ANY\(\$2::text\[\]\) OR employee_id = ANY\(\$2::text\[\]\)/);
+  assert.match(frontend, /lastFacultyPreferenceLoadRef/);
+  assert.match(frontend, /loadFacultyPreferences\(selectedFaculty\.employeeId\)/);
+});
+
 test("chair and dean frontend reads use authenticated division scope", () => {
   const frontend = fs.readFileSync(
     new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url),

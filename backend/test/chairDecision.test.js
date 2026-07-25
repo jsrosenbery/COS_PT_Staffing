@@ -165,6 +165,9 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /loadChairWorkflow\(\{ preserveMessage: true, preserveAssignmentsOnError: true \}\)/);
   assert.match(frontend, /faculty-load-status/);
   assert.match(frontend, /Load complete for now/);
+  assert.match(frontend, /Mark Load Complete/);
+  assert.match(frontend, /Reopen Load/);
+  assert.match(frontend, /removes them from new recommendations until reopened/);
   assert.match(frontend, /row\.load_complete/);
   assert.match(frontend, /renderSectionDisplayFilters/);
   assert.match(frontend, /Filter the assignment queue by section details/);

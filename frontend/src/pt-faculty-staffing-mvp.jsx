@@ -988,6 +988,7 @@ export default function PTFacultyStaffingMVP() {
   const [rosterPersistenceReady, setRosterPersistenceReady] = useState(false);
   const skipNextDirectoryPersistRef = useRef(true);
   const skipNextRosterPersistRef = useRef(true);
+  const lastFacultyPreferenceLoadRef = useRef("");
   const [disciplines] = useState(initialDisciplines);
   const [faculty] = useState(initialFaculty);
   const [seniority] = useState(initialSeniority);
@@ -2883,6 +2884,15 @@ export default function PTFacultyStaffingMVP() {
     }
   }
 
+  useEffect(() => {
+    if (role !== "faculty" || currentUser?.role !== "faculty") return;
+    if (!activeTerm?.code || !facultyPreferenceWindowOpen || !selectedFaculty?.employeeId) return;
+    const loadKey = `${activeTerm.code}:${selectedFaculty.employeeId}`;
+    if (lastFacultyPreferenceLoadRef.current === loadKey) return;
+    lastFacultyPreferenceLoadRef.current = loadKey;
+    loadFacultyPreferences(selectedFaculty.employeeId);
+  }, [role, currentUser?.role, activeTerm?.code, facultyPreferenceWindowOpen, selectedFaculty?.employeeId]);
+
   function toggleAvailabilityValue(kind, value) {
     setFacultyAvailability((current) => {
       const currentValues = Array.isArray(current[kind]) ? current[kind] : [];
@@ -4667,6 +4677,20 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     <button style={ui.btnPrimary} onClick={submitAssignmentsToDean} disabled={!assignmentStatusCounts.tentative}>
                       Submit to Dean ({assignmentStatusCounts.tentative || 0})
                     </button>
+                  ) : null}
+                  {role === "chair" ? (
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <button
+                        style={ui.btn}
+                        onClick={() => updateSelectedFacultyLoadStatus(!selectedReviewFacultyLoadComplete)}
+                        disabled={!selectedReviewFaculty?.employeeId || !selectedReviewFacultyDivision}
+                      >
+                        {selectedReviewFacultyLoadComplete ? "Reopen Load" : "Mark Load Complete"}
+                      </button>
+                      <div style={{ ...ui.small, maxWidth: 260 }}>
+                        Marks the selected faculty member complete for now and removes them from new recommendations until reopened.
+                      </div>
+                    </div>
                   ) : null}
                   {role === "dean" ? (
                     <button style={ui.btnPrimary} onClick={approveSubmittedAssignments} disabled={!assignmentStatusCounts.chair_submitted}>
