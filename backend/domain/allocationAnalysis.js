@@ -559,8 +559,24 @@ function buildFacultyDisposition({ faculty, preferenceMaps, sectionsById, assign
       const currentRecommended = recommendationBySection.get(preference.assignmentGroupId) || null;
       const exception = sectionExceptionById.get(preference.assignmentGroupId) || null;
       const baselineTop = baselineTopBySection.get(preference.assignmentGroupId);
-      const hasRecommendedAssignment = (recommendationByFaculty.get(row.employeeId) || [])
-        .some((recommendation) => recommendation.assignmentGroupId !== preference.assignmentGroupId);
+      const otherRecommendations = (recommendationByFaculty.get(row.employeeId) || [])
+        .filter((recommendation) => recommendation.assignmentGroupId !== preference.assignmentGroupId);
+      const dispositionCounts = {
+        assignmentCount: new Map(counts.assignmentCount),
+        load: new Map(counts.load),
+        assignedInPass: counts.assignedInPass,
+        unavailableSections: counts.unavailableSections,
+      };
+      if (!currentRecommended || currentRecommended.employeeId !== row.employeeId) {
+        dispositionCounts.assignmentCount.set(
+          row.employeeId,
+          (dispositionCounts.assignmentCount.get(row.employeeId) || 0) + otherRecommendations.length
+        );
+        dispositionCounts.load.set(
+          row.employeeId,
+          (dispositionCounts.load.get(row.employeeId) || 0) + otherRecommendations.length
+        );
+      }
       return {
         assignmentGroupId: preference.assignmentGroupId,
         preferenceRank: preference.preferenceRank,
@@ -571,8 +587,8 @@ function buildFacultyDisposition({ faculty, preferenceMaps, sectionsById, assign
           assignment,
           baselineTopCandidate: baselineTop,
           currentRecommended,
-          hasRecommendedAssignment,
-          counts,
+          hasRecommendedAssignment: otherRecommendations.length > 0,
+          counts: dispositionCounts,
           limits,
           exception,
         }),

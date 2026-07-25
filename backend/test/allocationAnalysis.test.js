@@ -66,6 +66,15 @@ test("supports configurable maximum assignments instead of hard-coding one perma
   );
 });
 
+test("explains unawarded preferences blocked by earlier recommendations consuming assignment caps", () => {
+  const result = analyzeAllocation(allocationFixture({
+    loadLimits: { oneAssignmentPerPass: false, maxAssignments: 1, maxLoad: 1 },
+  }));
+
+  assert.equal(prefDisposition(result, "F1", "S2").reasonCode, allocationReasonCodes.AWARDED);
+  assert.equal(prefDisposition(result, "F1", "S1").reasonCode, allocationReasonCodes.LOAD_LIMIT_REACHED);
+});
+
 test("respects current assignments and marks awarded preferences without rewriting originals", () => {
   const input = allocationFixture({
     assignments: [{ assignment_group_id: "S2", employee_id: "F1", faculty_name: "Ava Andrews", status: "tentative" }],
