@@ -196,3 +196,14 @@ test("chair workflow displays the same frozen preference source used by allocati
   assert.match(workflow, /original_assignment_group_id: preference\.assignment_group_id/);
   assert.match(workflow, /run\.slice\(-5\)/);
 });
+
+test("chair conflict display ignores async-only meetings and includes CRNs", () => {
+  const frontend = fs.readFileSync(new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url), "utf8");
+
+  assert.match(frontend, /function hasMeetingConflict\(sectionA, sectionB\) \{\s+return meetingsOverlap\(sectionA\?\.meetings, sectionB\?\.meetings\);/);
+  assert.match(frontend, /if \(isAsyncLikeMeeting\(meetingA\)\) continue;/);
+  assert.match(frontend, /if \(isAsyncLikeMeeting\(meetingB\)\) continue;/);
+  assert.match(frontend, /function sectionConflictLabel\(section\)/);
+  assert.match(frontend, /\(CRN \$\{crn\}\)/);
+  assert.match(frontend, /Time conflict with \{sectionConflictLabel\(row\.conflicting_assignment\)\}\./);
+});

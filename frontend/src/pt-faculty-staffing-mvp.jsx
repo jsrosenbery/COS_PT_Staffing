@@ -336,8 +336,7 @@ function normalizeMeetingPattern(meetings) {
 }
 
 function hasMeetingConflict(sectionA, sectionB) {
-  return normalizeMeetingPattern(sectionA?.meetings) === normalizeMeetingPattern(sectionB?.meetings)
-    && normalizeMeetingPattern(sectionA?.meetings) !== "";
+  return meetingsOverlap(sectionA?.meetings, sectionB?.meetings);
 }
 
 function parseClockToMinutes(value) {
@@ -425,6 +424,13 @@ function canonicalMethodCode(value, section = null) {
 
 function sectionMethodLabel(section) {
   return canonicalMethodCode(section?.instructional_method, section) || "TBA";
+}
+
+function sectionConflictLabel(section) {
+  const course = normalize(section?.primary_subject_course) || normalize(section?.assignment_group_id) || "another tentative assignment";
+  const crn = normalize(section?.primary_crn);
+  if (crn && !course.includes(crn)) return `${course} (CRN ${crn})`;
+  return course;
 }
 
 function sectionModalityLabel(section) {
@@ -673,7 +679,7 @@ function candidateReasonSummary(section, row, topCandidate, currentAssignment) {
   if (row.has_assignment_conflict) {
     return {
       title: "Blocked by time conflict",
-      detail: `Conflicts with ${row.conflicting_assignment?.primary_subject_course || row.conflicting_assignment?.assignment_group_id || "another tentative assignment"}.`,
+      detail: `Conflicts with ${sectionConflictLabel(row.conflicting_assignment)}.`,
       kind: "conflict",
     };
   }
@@ -4605,7 +4611,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                   ) : null}
                                   {row.has_assignment_conflict ? (
                                     <div style={{ marginTop: 6, color: "#b91c1c", fontSize: 12, fontWeight: 700 }}>
-                                      Time conflict with {row.conflicting_assignment?.primary_subject_course || row.conflicting_assignment?.assignment_group_id}.
+                                      Time conflict with {sectionConflictLabel(row.conflicting_assignment)}.
                                     </div>
                                   ) : null}
                                   {!row.has_assignment_conflict && row.assigned_elsewhere ? (
