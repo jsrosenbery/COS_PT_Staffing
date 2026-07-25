@@ -194,6 +194,15 @@ function employeeIdentityKey(value) {
   return compactKey(value);
 }
 
+function compatibleNameKey(left, right) {
+  const leftKey = compactKey(left);
+  const rightKey = compactKey(right);
+  if (!leftKey || !rightKey) return false;
+  if (leftKey === rightKey) return true;
+  if (leftKey.length < 6 || rightKey.length < 6) return false;
+  return leftKey.includes(rightKey) || rightKey.includes(leftKey);
+}
+
 function splitScopeValues(...values) {
   return values
     .flatMap((value) => String(value ?? "").split(/[|,;]/))
@@ -1777,9 +1786,7 @@ export default function PTFacultyStaffingMVP() {
     const userEmail = normalize(currentUser?.email).toLowerCase();
     const rosterEmail = normalize(item.email).toLowerCase();
     if (userEmail && rosterEmail && userEmail === rosterEmail) return true;
-    const userNameKey = compactKey(currentUser?.full_name);
-    const rosterNameKey = compactKey(facultyName(item));
-    return Boolean(userNameKey && rosterNameKey && userNameKey === rosterNameKey);
+    return compatibleNameKey(currentUser?.full_name, facultyName(item));
   };
 
   useEffect(() => {
