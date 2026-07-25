@@ -1855,8 +1855,15 @@ export default function PTFacultyStaffingMVP() {
       modality: row.modality,
       meetings: row.meetings,
     }));
-    return [...roleScopedSections, ...workflowTemplates];
-  }, [roleScopedSections, chairWorkflowRows]);
+    const assignmentTemplates = tentativeAssignments.map((row) => ({
+      campus: row.campus,
+      instructional_method: row.instructional_method,
+      display_modality: row.display_modality,
+      modality: row.modality,
+      meetings: row.meetings,
+    }));
+    return [...roleScopedSections, ...workflowTemplates, ...assignmentTemplates];
+  }, [roleScopedSections, chairWorkflowRows, tentativeAssignments]);
 
   const campusFilterOptions = useMemo(() => {
     return Array.from(new Set(filterOptionSections.map((section) => normalize(section?.campus)).filter(Boolean))).sort();
@@ -2286,6 +2293,7 @@ export default function PTFacultyStaffingMVP() {
 
   const filteredDeanReviewRows = useMemo(() => {
     return deanReviewRows.filter((row) => {
+      if (!matchesSectionFilters(row, sectionFilters)) return false;
       if (deanReviewFilter === "submitted") return row.reviewStatus === "chair_submitted";
       if (deanReviewFilter === "exceptions") return row.hasException;
       if (deanReviewFilter === "attention") return row.needsAttention || row.missingSnapshot;
@@ -2293,7 +2301,7 @@ export default function PTFacultyStaffingMVP() {
       if (deanReviewFilter === "returned") return row.reviewStatus === "returned_for_revision";
       return true;
     });
-  }, [deanReviewRows, deanReviewFilter]);
+  }, [deanReviewRows, deanReviewFilter, sectionFilters]);
 
   const conflictIds = useMemo(() => {
     const ids = new Set();
@@ -2958,6 +2966,146 @@ export default function PTFacultyStaffingMVP() {
 
   function clearSectionFilters() {
     setSectionFilters({ campuses: [], methods: [], modalities: [], days: [], timeBlocks: [], search: "" });
+  }
+
+  function renderSectionDisplayFilters({
+    description = "Filters stay in place while you work on this page, and reset naturally after a refresh or when you come back later.",
+    embedded = false,
+    hidden = false,
+    marginTop = 14,
+  } = {}) {
+    return (
+      <div style={{
+        ...(embedded ? { borderTop: "1px solid var(--border-soft)", paddingTop: 14 } : ui.sectionCard),
+        marginTop,
+        display: hidden ? "none" : undefined,
+      }}>
+        <div style={{ ...ui.between, alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontWeight: 800 }}>Display Filters</div>
+            <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
+              {description}
+            </div>
+          </div>
+          <button style={ui.btn} onClick={clearSectionFilters}>Clear Filters</button>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <label style={{ ...ui.small, display: "block", marginBottom: 8 }}>Search sections</label>
+          <input
+            style={ui.input}
+            value={sectionFilters.search}
+            onChange={(event) => setSectionFilters((current) => ({ ...current, search: event.target.value }))}
+            placeholder="Search course, CRN, title, campus, discipline, modality, or meeting time"
+          />
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+            Days
+          </div>
+          <div style={{ ...ui.row, gap: 8 }}>
+            {availabilityDayOptions.map((day) => {
+              const active = sectionFilters.days.includes(day.key);
+              return (
+                <button
+                  key={day.key}
+                  type="button"
+                  style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
+                  onClick={() => toggleSectionFilter("days", day.key)}
+                >
+                  {day.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+            Time
+          </div>
+          <div style={{ ...ui.row, gap: 8 }}>
+            {availabilityTimeOptions.map((block) => {
+              const active = sectionFilters.timeBlocks.includes(block.key);
+              return (
+                <button
+                  key={block.key}
+                  type="button"
+                  style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
+                  onClick={() => toggleSectionFilter("timeBlocks", block.key)}
+                >
+                  {block.label} ({block.detail})
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+            Campus
+          </div>
+          <div style={{ ...ui.row, gap: 8 }}>
+            {campusFilterOptions.length ? campusFilterOptions.map((campus) => {
+              const active = sectionFilters.campuses.includes(campus);
+              return (
+                <button
+                  key={campus}
+                  type="button"
+                  style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
+                  onClick={() => toggleSectionFilter("campuses", campus)}
+                >
+                  {campus}
+                </button>
+              );
+            }) : <span style={{ color: "var(--text-subtle)" }}>No campus values loaded yet.</span>}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+            Method
+          </div>
+          <div style={{ ...ui.row, gap: 8 }}>
+            {methodFilterOptions.length ? methodFilterOptions.map((method) => {
+              const active = sectionFilters.methods.includes(method);
+              return (
+                <button
+                  key={method}
+                  type="button"
+                  style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
+                  onClick={() => toggleSectionFilter("methods", method)}
+                >
+                  {method}
+                </button>
+              );
+            }) : <span style={{ color: "var(--text-subtle)" }}>No method values loaded yet.</span>}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+            Modality
+          </div>
+          <div style={{ ...ui.row, gap: 8 }}>
+            {modalityFilterOptions.length ? modalityFilterOptions.map((modality) => {
+              const active = sectionFilters.modalities.includes(modality);
+              return (
+                <button
+                  key={modality}
+                  type="button"
+                  style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
+                  onClick={() => toggleSectionFilter("modalities", modality)}
+                >
+                  {modality}
+                </button>
+              );
+            }) : <span style={{ color: "var(--text-subtle)" }}>No modality values loaded yet.</span>}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   async function exportPreferences() {
@@ -4622,6 +4770,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </div>
                 </div>
 
+                {renderSectionDisplayFilters({
+                  description: "Filter submitted packets by section details. These are display filters only; they do not change the chair's saved decisions or dean approval authority.",
+                  embedded: true,
+                })}
+
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
                   {[
                     ["submitted", `Pending review (${deanReviewMetrics.chair_submitted || 0})`],
@@ -4640,6 +4793,9 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       {label}
                     </button>
                   ))}
+                </div>
+                <div style={{ marginTop: 8, color: "var(--text-subtle)", fontSize: 13 }}>
+                  Showing {filteredDeanReviewRows.length} packet(s){activeSectionFilterCount ? ` with ${activeSectionFilterCount} active display filter(s).` : "."}
                 </div>
 
                 <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
@@ -4868,32 +5024,14 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   <div style={ui.small}>
                     {frozenPreferenceRowCount} {chairPreferenceSourceLabel} row(s) matched across {submittedFacultyOptions.length} submitting faculty. {chairPreferenceSourceNote}
                   </div>
-                  <div style={{ marginTop: 8 }}>
-                    <div style={{ ...ui.small, marginBottom: 6 }}>Meeting days</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {availabilityDayOptions.map((day) => {
-                        const active = sectionFilters.days.includes(day.key);
-                        return (
-                          <button
-                            key={day.key}
-                            type="button"
-                            style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
-                            onClick={() => toggleSectionFilter("days", day.key)}
-                          >
-                            {day.label}
-                          </button>
-                        );
-                      })}
-                      {sectionFilters.days.length ? (
-                        <button type="button" style={ui.filterChip} onClick={() => setSectionFilters((current) => ({ ...current, days: [] }))}>
-                          Clear days
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
+
+            {renderSectionDisplayFilters({
+              description: "Filter the assignment queue by section details while preserving the selected faculty member, seniority recommendation, and saved preference order.",
+              marginTop: 12,
+            })}
 
             <div className="cos-panel-grid" style={{ ...ui.panelGrid, marginTop: 16 }}>
               <div style={{ display: "grid", gap: 12 }}>
