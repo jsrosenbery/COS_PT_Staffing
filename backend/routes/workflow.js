@@ -690,12 +690,21 @@ async function resolvePreferenceFacultyRoster(db, { facultyId = "", employeeId =
          OR ($2 <> '' AND LOWER(email) = LOWER($2))
          OR ($3 <> '' AND LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) =
               LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')))
+         OR (
+           LENGTH(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')) >= 6
+           AND (
+             LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) LIKE '%' || LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')) || '%'
+             OR LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')) LIKE '%' || LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) || '%'
+           )
+         )
        )
      ORDER BY
        CASE
          WHEN employee_id = $1 THEN 0
          WHEN $2 <> '' AND LOWER(email) = LOWER($2) THEN 1
-         ELSE 2
+         WHEN $3 <> '' AND LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) =
+              LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')) THEN 2
+         ELSE 3
        END,
        employee_id
      LIMIT 1`,
@@ -2263,7 +2272,7 @@ router.get("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated,
     if (String(req.auth?.user?.role || "").toLowerCase() === "faculty") {
       if (!facultyRosterRow) {
         return res.status(409).json({
-          error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID to the roster.",
+          error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID, email, or name to the roster.",
           preferences: [],
           availability: { days: [], timeBlocks: [] },
         });
@@ -2348,7 +2357,7 @@ router.post("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated
     if (!facultyRosterRow) {
       await client.query("ROLLBACK");
       return res.status(409).json({
-        error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID to the roster.",
+        error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID, email, or name to the roster.",
       });
     }
     const canonicalFacultyId = facultyRosterRow.employee_id || employeeId || facultyId;

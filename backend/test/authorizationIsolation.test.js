@@ -114,6 +114,7 @@ test("faculty section display is bound to the authenticated employee roster reco
   );
 
   assert.match(frontend, /function employeeIdentityKey\(value\)/);
+  assert.match(frontend, /function compatibleNameKey\(left, right\)/);
   assert.match(frontend, /const facultyAccountRosterMatch = \(item\) =>/);
   assert.match(frontend, /currentUser\?\.role === "faculty" && role === "faculty" \? \(/);
   assert.match(frontend, /if \(!facultyScopeKeys\.size\) \{\s+return \[\];/);
@@ -132,6 +133,7 @@ test("faculty preference reload resolves the authenticated account to the active
   assert.match(workflow, /const runQuery = typeof db === "function" \? db : db\?\.query\?\.bind\(db\)/);
   assert.match(workflow, /LOWER\(email\) = LOWER\(\$2\)/);
   assert.match(workflow, /REGEXP_REPLACE\(CONCAT_WS\('', first_name, last_name\)/);
+  assert.match(workflow, /LIKE '%' \|\| LOWER\(REGEXP_REPLACE\(\$3/);
   assert.match(workflow, /const canonicalFacultyId = facultyRosterRow\.employee_id/);
   assert.match(workflow, /p\.faculty_id = ANY\(\$2::text\[\]\) OR p\.employee_id = ANY\(\$2::text\[\]\)/);
   assert.match(workflow, /faculty_id = ANY\(\$2::text\[\]\) OR employee_id = ANY\(\$2::text\[\]\)/);
