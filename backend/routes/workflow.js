@@ -711,7 +711,7 @@ async function buildAllocationAnalysisFromDb(db, {
   division = "",
   divisions = [],
   disciplineCode = "",
-  oneAssignmentPerPass = true,
+  oneAssignmentPerPass = false,
   maxAssignments = "",
   maxLoad = "",
   allowLatestSubmittedFallback = false,
@@ -1335,7 +1335,7 @@ router.get("/allocation-analysis", requireElevatedRole, requireDivisionScope, as
     disciplineCode = "",
     division = "",
     divisions = "",
-    oneAssignmentPerPass = "true",
+    oneAssignmentPerPass = "false",
     maxAssignments = "",
     maxLoad = "",
   } = req.query;
