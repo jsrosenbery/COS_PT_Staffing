@@ -125,6 +125,10 @@ test("faculty section display is bound to the authenticated employee roster reco
   assert.match(persistence, /compatiblePersonName\(fullName, row\.faculty_name\)/);
   assert.match(persistence, /AND employee_id = \$1/);
   assert.match(persistence, /return res\.json\(result\.rows\);\s+\}\s+\s+const where = \[\];/);
+  assert.match(frontend, /faculty-self-dashboard/);
+  assert.match(frontend, /function applyFacultySelfDashboard/);
+  assert.match(frontend, /await loadFacultySelfDashboard\(disciplineCode\)/);
+  assert.match(frontend, /if \(!canUseAdminTools\) return;\s+if \(skipNextRosterPersistRef\.current\)/);
 });
 
 test("faculty preference reload resolves the authenticated account to the active roster identity", () => {
@@ -151,6 +155,11 @@ test("faculty preference reload resolves the authenticated account to the active
 test("faculty section reads use the resolved roster division, not a stale account id alone", () => {
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
 
+  assert.match(workflow, /router\.get\("\/faculty-self-dashboard", async/);
+  assert.match(workflow, /Faculty account access is required/);
+  assert.match(workflow, /rosterRows/);
+  assert.match(workflow, /preferences/);
+  assert.match(workflow, /availability/);
   assert.match(workflow, /router\.get\("\/available-sections", requireScopedRead/);
   assert.match(workflow, /facultyRosterRow = await resolvePreferenceFacultyRoster/);
   assert.match(workflow, /Ask an administrator to match your account employee ID, email, or name to the roster/);
