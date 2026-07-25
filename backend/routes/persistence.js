@@ -1,8 +1,35 @@
 import express from "express";
 import { pool, query } from "../db.js";
-import { requireElevatedRole, requireRoles, requireScopedRead, scopeFilterForReq } from "../permissions.js";
+import { currentRole, requireElevatedRole, requireRoles, requireScopedRead, scopeFilterForReq } from "../permissions.js";
 
 const router = express.Router();
+
+function personNameTokens(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1);
+}
+
+function compatiblePersonName(left, right) {
+  const leftTokens = Array.from(new Set(personNameTokens(left)));
+  const rightTokens = Array.from(new Set(personNameTokens(right)));
+  if (!leftTokens.length || !rightTokens.length) return false;
+  const rightSet = new Set(rightTokens);
+  const shared = leftTokens.filter((token) => rightSet.has(token));
+  if (shared.length >= 2) return true;
+  const shorter = leftTokens.length <= rightTokens.length ? leftTokens : rightTokens;
+  const longerSet = leftTokens.length <= rightTokens.length ? rightSet : new Set(leftTokens);
+  return shorter.length >= 2 && shorter.every((token) => longerSet.has(token));
+}
+
+const ptFacultySelect = `SELECT employee_id, first_name, last_name, email, division, discipline,
+              COALESCE(NULLIF(seniority_rank, ''), seniority_value, '') AS seniority_rank,
+              COALESCE(NULLIF(seniority_value, ''), seniority_rank, '') AS seniority_value,
+              qualified_disciplines, active_status
+       FROM scope_pt_faculty`;
 
 router.get("/roles", requireElevatedRole, requireScopedRead, async (req, res) => {
   try {
@@ -67,6 +94,61 @@ router.post("/roles", requireRoles("admin"), async (req, res) => {
 router.get("/pt-faculty", requireScopedRead, async (req, res) => {
   const includeInactive = String(req.query.includeInactive || "") === "1";
   try {
+    if (currentRole(req) === "faculty") {
+      const user = req.auth?.user || {};
+      const employeeId = String(user.employee_id || "").trim();
+      const email = String(user.email || "").trim().toLowerCase();
+      const fullName = String(user.full_name || "").trim();
+      const statusWhere = includeInactive ? "TRUE" : "COALESCE(active_status, 'active') = 'active'";
+      const directMatch = await query(
+        `SELECT employee_id, CONCAT_WS(' ', first_name, last_name) AS faculty_name
+         FROM scope_pt_faculty
+         WHERE ${statusWhere}
+           AND (
+             employee_id = $1
+             OR ($2 <> '' AND LOWER(email) = $2)
+             OR ($3 <> '' AND LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) =
+                  LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')))
+             OR (
+               LENGTH(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')) >= 6
+               AND (
+                 LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) LIKE '%' || LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')) || '%'
+                 OR LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')) LIKE '%' || LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) || '%'
+               )
+             )
+           )
+         ORDER BY
+           CASE
+             WHEN employee_id = $1 THEN 0
+             WHEN $2 <> '' AND LOWER(email) = $2 THEN 1
+             ELSE 2
+           END,
+           employee_id
+         LIMIT 1`,
+        [employeeId, email, fullName]
+      );
+      let matchedEmployeeId = directMatch.rows[0]?.employee_id || "";
+      if (!matchedEmployeeId && fullName) {
+        const fallback = await query(
+          `SELECT employee_id, CONCAT_WS(' ', first_name, last_name) AS faculty_name
+           FROM scope_pt_faculty
+           WHERE ${statusWhere}
+           ORDER BY employee_id`,
+          []
+        );
+        matchedEmployeeId = (fallback.rows || []).find((row) => compatiblePersonName(fullName, row.faculty_name))?.employee_id || "";
+      }
+      if (!matchedEmployeeId) return res.json([]);
+      const result = await query(
+        `${ptFacultySelect}
+         WHERE ${statusWhere}
+           AND employee_id = $1
+         ORDER BY division, discipline, last_name, first_name`,
+        [matchedEmployeeId]
+      );
+      return res.json(result.rows);
+    }
+
     const where = [];
     const params = [];
     if (!includeInactive) where.push("COALESCE(active_status, 'active') = 'active'");
@@ -76,11 +158,7 @@ router.get("/pt-faculty", requireScopedRead, async (req, res) => {
       where.push(`LOWER(division) = ANY($${params.length}::text[])`);
     }
     const result = await query(
-      `SELECT employee_id, first_name, last_name, email, division, discipline,
-              COALESCE(NULLIF(seniority_rank, ''), seniority_value, '') AS seniority_rank,
-              COALESCE(NULLIF(seniority_value, ''), seniority_rank, '') AS seniority_value,
-              qualified_disciplines, active_status
-       FROM scope_pt_faculty
+      `${ptFacultySelect}
        ${where.length ? "WHERE " + where.join(" AND ") : ""}
        ORDER BY division, discipline, last_name, first_name`,
       params
