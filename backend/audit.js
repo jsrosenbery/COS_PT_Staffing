@@ -5,6 +5,14 @@ function text(value) {
   return String(value ?? "").trim();
 }
 
+function auditValue(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return JSON.stringify({ value: String(value) });
+}
+
 export function requestId(req) {
   const effective = req?.correlationId;
   return validRequestId(effective) ? effective : crypto.randomUUID();
@@ -42,8 +50,8 @@ export async function writeAuditEvent(client, req, event = {}) {
       text(event.term),
       text(event.sectionKey),
       text(event.instructorName),
-      event.oldValue === undefined ? null : String(event.oldValue),
-      event.newValue === undefined ? null : String(event.newValue),
+      auditValue(event.oldValue),
+      auditValue(event.newValue),
       text(event.reasonCode),
       text(event.explanation),
       correlationId,
