@@ -7,7 +7,7 @@ import { analyzeAllocation } from "../domain/allocationAnalysis.js";
 import { defaultContractExceptionReasons, validateChairDecision } from "../domain/chairDecision.js";
 import { buildDecisionExplanation, decisionExplanationRows } from "../domain/decisionExplanation.js";
 import { canSavePreferenceVersion, preferenceSubmissionStatuses, preferenceWindowTimezone, validatePreferenceRanks, windowState } from "../domain/preferenceSubmissionPolicy.js";
-import { enforceFacultySelf, isAdmin, requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles, requireScopedRead, scopeFilterForReq } from "../permissions.js";
+import { enforceFacultySelf, isAdmin, requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles, requireScopedRead, scopeFilterForReq, splitScope } from "../permissions.js";
 import { sendDisseminationEmail } from "../emailService.js";
 
 const router = express.Router();
@@ -1175,20 +1175,22 @@ router.get("/available-sections", requireScopedRead, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   try {
+    let facultyRosterRow = null;
     if (String(req.auth?.user?.role || "").toLowerCase() === "faculty") {
-      const facultyResult = await query(
-        `SELECT division
-         FROM scope_pt_faculty
-         WHERE employee_id = $1
-           AND COALESCE(active_status, 'active') = 'active'
-         ORDER BY COALESCE(active_status, 'active') = 'active' DESC
-         LIMIT 1`,
-        [req.auth.user.employee_id || ""]
-      );
-      const facultyRosterRow = facultyResult.rows[0] || null;
+      facultyRosterRow = await resolvePreferenceFacultyRoster(query, {
+        facultyId: req.auth.user.employee_id || "",
+        authUser: req.auth?.user || null,
+      });
       if (!facultyRosterRow) {
         return res.status(409).json({
-          error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID to the roster.",
+          error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID, email, or name to the roster.",
+          sections: [],
+        });
+      }
+      const facultyDivisions = splitScope(facultyRosterRow.division);
+      if (!facultyDivisions.length) {
+        return res.status(409).json({
+          error: "Your active PT staffing roster record does not have a division assigned. Ask an administrator to update the roster.",
           sections: [],
         });
       }
@@ -1196,10 +1198,10 @@ router.get("/available-sections", requireScopedRead, async (req, res) => {
         `SELECT id, term, division, opened_at, closes_at, status
          FROM scope_staffing_windows
          WHERE term = $1
-           AND LOWER(division) = LOWER($2)
+           AND LOWER(division) = ANY($2::text[])
          ORDER BY opened_at DESC, id DESC
          LIMIT 1`,
-        [termCode, facultyRosterRow.division || ""]
+        [termCode, facultyDivisions]
       );
       const state = windowState(windowResult.rows[0] || null, new Date());
       if (!state.open) {
@@ -1219,7 +1221,9 @@ router.get("/available-sections", requireScopedRead, async (req, res) => {
       params.push(disciplineCode);
       where += ` AND s.discipline_code = $${params.length}`;
     }
-    const divisionList = scopeFilterForReq(req, String(divisions || "").split("|"));
+    const divisionList = facultyRosterRow
+      ? splitScope(facultyRosterRow.division)
+      : scopeFilterForReq(req, String(divisions || "").split("|"));
     if (!isAdmin(req) && !divisionList.length) return res.status(403).json({ error: "No permitted divisions are available for this request." });
     if (divisionList.length) {
       params.push(divisionList);

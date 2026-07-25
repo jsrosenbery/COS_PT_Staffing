@@ -138,6 +138,17 @@ test("faculty preference reload resolves the authenticated account to the active
   assert.match(frontend, /loadFacultyPreferences\(selectedFaculty\.employeeId\)/);
 });
 
+test("faculty section reads use the resolved roster division, not a stale account id alone", () => {
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+
+  assert.match(workflow, /router\.get\("\/available-sections", requireScopedRead/);
+  assert.match(workflow, /facultyRosterRow = await resolvePreferenceFacultyRoster/);
+  assert.match(workflow, /Ask an administrator to match your account employee ID, email, or name to the roster/);
+  assert.match(workflow, /const facultyDivisions = splitScope\(facultyRosterRow\.division\)/);
+  assert.match(workflow, /AND LOWER\(division\) = ANY\(\$2::text\[\]\)/);
+  assert.match(workflow, /const divisionList = facultyRosterRow\s+\? splitScope\(facultyRosterRow\.division\)/);
+});
+
 test("chair and dean frontend reads use authenticated division scope", () => {
   const frontend = fs.readFileSync(
     new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url),
