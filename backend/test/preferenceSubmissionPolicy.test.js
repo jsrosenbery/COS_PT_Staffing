@@ -90,7 +90,9 @@ test("faculty section and preference reads are hidden until the window opens", (
 test("preference submission reports an unlinked faculty roster account before checking its window", () => {
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
 
-  assert.match(workflow, /WHERE employee_id = \$1\s+AND COALESCE\(active_status, 'active'\) = 'active'/);
+  assert.match(workflow, /async function resolvePreferenceFacultyRoster/);
+  assert.match(workflow, /LOWER\(email\) = LOWER\(\$2\)/);
+  assert.match(workflow, /REGEXP_REPLACE\(CONCAT_WS\('', first_name, last_name\)/);
   assert.match(workflow, /if \(!facultyRosterRow\) \{\s+await client\.query\("ROLLBACK"\)/);
   assert.match(workflow, /Your account is not linked to an active PT staffing roster record/);
 });
