@@ -112,6 +112,7 @@ test("faculty section display is bound to the authenticated employee roster reco
     new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url),
     "utf8"
   );
+  const persistence = fs.readFileSync(new URL("../routes/persistence.js", import.meta.url), "utf8");
 
   assert.match(frontend, /function employeeIdentityKey\(value\)/);
   assert.match(frontend, /function compatibleNameKey\(left, right\)/);
@@ -120,6 +121,10 @@ test("faculty section display is bound to the authenticated employee roster reco
   assert.match(frontend, /if \(!facultyScopeKeys\.size\) \{\s+return \[\];/);
   assert.match(frontend, /Your account is not linked to an active PT staffing roster record/);
   assert.doesNotMatch(frontend, /role === "faculty" \? normalize\(currentUser\?\.employee_id\)\.toLowerCase\(\) : ""/);
+  assert.match(persistence, /if \(currentRole\(req\) === "faculty"\)/);
+  assert.match(persistence, /compatiblePersonName\(fullName, row\.faculty_name\)/);
+  assert.match(persistence, /AND employee_id = \$1/);
+  assert.match(persistence, /return res\.json\(result\.rows\);\s+\}\s+\s+const where = \[\];/);
 });
 
 test("faculty preference reload resolves the authenticated account to the active roster identity", () => {
