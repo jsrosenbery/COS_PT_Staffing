@@ -59,6 +59,25 @@ test("audit records ignore unvalidated request identifiers", async () => {
   assert.equal(result.request_id, "validated-request-7");
 });
 
+test("audit old and new values are safe for text or legacy json columns", async () => {
+  let parameters;
+  const client = {
+    async query(_sql, values) {
+      parameters = values;
+      return { rows: [{ id: 1, request_id: values[14] }] };
+    },
+  };
+
+  await writeAuditEvent(client, { auth: { authType: "session", user: {} } }, {
+    eventType: "TEST_EVENT",
+    oldValue: "E-OLD",
+    newValue: "@0663819",
+  });
+
+  assert.deepEqual(JSON.parse(parameters[10]), { value: "E-OLD" });
+  assert.deepEqual(JSON.parse(parameters[11]), { value: "@0663819" });
+});
+
 test("generic client-controlled audit write endpoint is removed", () => {
   const persistence = read("../routes/persistence.js");
 

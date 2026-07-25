@@ -43,10 +43,22 @@ test("staffing-window compatibility migration adds the missing timestamp without
   assert.doesNotMatch(migration, /\b(DROP|TRUNCATE|DELETE)\b/i);
 });
 
+test("audit-value compatibility migration normalizes legacy json columns to text", async () => {
+  const migration = await fs.readFile(
+    new URL("../migrations/0005_audit_values_as_text.sql", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(migration, /ALTER TABLE scope_audit_log/i);
+  assert.match(migration, /ALTER COLUMN old_value TYPE TEXT USING old_value::text/i);
+  assert.match(migration, /ALTER COLUMN new_value TYPE TEXT USING new_value::text/i);
+  assert.doesNotMatch(migration, /\b(DROP|TRUNCATE|DELETE)\b/i);
+});
+
 integrationTest("applies all ordered migrations to an empty PostgreSQL database", async () => {
   await withEmptyDatabase(async (pool) => {
     const result = await runMigrations({ pool, logger: silentLogger });
-    assert.deepEqual(result.applied, ["0001", "0002", "0003", "0004"]);
+    assert.deepEqual(result.applied, ["0001", "0002", "0003", "0004", "0005"]);
 
     const tables = await pool.query(`
       SELECT to_regclass('scope_users') AS users,
@@ -69,11 +81,12 @@ integrationTest("applies all ordered migrations to an empty PostgreSQL database"
     assert.match(windowColumns.rows[0].column_default, /now\(\)/i);
 
     const history = await pool.query("SELECT * FROM scope_schema_migrations ORDER BY migration_identifier");
-    assert.equal(history.rowCount, 4);
+    assert.equal(history.rowCount, 5);
     assert.equal(history.rows[0].migration_filename, "0001_baseline.sql");
     assert.equal(history.rows[1].migration_filename, "0002_security_integrity_constraints.sql");
     assert.equal(history.rows[2].migration_filename, "0003_shared_auth_rate_limits.sql");
     assert.equal(history.rows[3].migration_filename, "0004_staffing_windows_updated_at.sql");
+    assert.equal(history.rows[4].migration_filename, "0005_audit_values_as_text.sql");
     assert.ok(history.rows.every((row) => row.applied_at));
   });
 });
@@ -98,9 +111,9 @@ integrationTest("skips migrations that were already applied successfully", async
     const secondRun = await runMigrations({ pool, logger: silentLogger });
 
     assert.deepEqual(secondRun.applied, []);
-    assert.deepEqual(secondRun.skipped, ["0001", "0002", "0003", "0004"]);
+    assert.deepEqual(secondRun.skipped, ["0001", "0002", "0003", "0004", "0005"]);
     const history = await pool.query("SELECT COUNT(*)::int AS count FROM scope_schema_migrations");
-    assert.equal(history.rows[0].count, 4);
+    assert.equal(history.rows[0].count, 5);
   });
 });
 
