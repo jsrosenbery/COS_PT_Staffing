@@ -1285,6 +1285,134 @@ router.get("/available-sections", requireScopedRead, async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+router.get("/faculty-self-dashboard", async (req, res) => {
+  const { termCode = "", disciplineCode = "" } = req.query;
+  if (!termCode) return res.status(400).json({ error: "termCode is required." });
+  if (String(req.auth?.user?.role || "").trim().toLowerCase() !== "faculty") {
+    return res.status(403).json({ error: "Faculty account access is required." });
+  }
+  try {
+    const authUser = req.auth?.user || {};
+    const facultyRosterRow = await resolvePreferenceFacultyRoster(query, {
+      facultyId: authUser.employee_id || "",
+      authUser,
+    });
+    if (!facultyRosterRow?.employee_id) {
+      return res.status(409).json({
+        error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID, email, or name to the roster.",
+        rosterRows: [],
+        sections: [],
+        preferences: [],
+        availability: { days: [], timeBlocks: [] },
+      });
+    }
+
+    const rosterResult = await query(
+      `SELECT pt.employee_id, pt.first_name, pt.last_name, pt.email, pt.division, pt.discipline,
+              COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '') AS seniority_rank,
+              COALESCE(NULLIF(pt.seniority_value, ''), pt.seniority_rank, '') AS seniority_value,
+              pt.qualified_disciplines, pt.active_status
+       FROM scope_pt_faculty pt
+       WHERE COALESCE(pt.active_status, 'active') = 'active'
+         AND pt.employee_id = $1
+       ORDER BY pt.division, pt.discipline, pt.last_name, pt.first_name`,
+      [facultyRosterRow.employee_id]
+    );
+    const rosterRows = rosterResult.rows || [];
+    const facultyDivisions = Array.from(new Set(rosterRows.flatMap((row) => splitScope(row.division))));
+    const facultyDivisionKeys = facultyDivisions.map((division) => division.toLowerCase());
+    if (!facultyDivisions.length) {
+      return res.status(409).json({
+        error: "Your active PT staffing roster record does not have a division assigned. Ask an administrator to update the roster.",
+        rosterRows,
+        sections: [],
+        preferences: [],
+        availability: { days: [], timeBlocks: [] },
+      });
+    }
+
+    const windowResult = await query(
+      `SELECT id, term, division, opened_at, closes_at, status
+       FROM scope_staffing_windows
+       WHERE term = $1
+         AND LOWER(division) = ANY($2::text[])
+       ORDER BY opened_at DESC, id DESC
+       LIMIT 1`,
+      [termCode, facultyDivisionKeys]
+    );
+    const state = windowState(windowResult.rows[0] || null, new Date());
+    if (!state.open) {
+      return res.json({
+        rosterRows,
+        sections: [],
+        preferences: [],
+        availability: { days: [], timeBlocks: [] },
+        window: state,
+        message: state.missing
+          ? "The preference window has not been opened for your division yet."
+          : "The preference window is not open for your division.",
+      });
+    }
+
+    const sectionParams = [termCode, facultyDivisionKeys];
+    let sectionWhere = `WHERE s.term_code = $1
+      AND LOWER(s.division) = ANY($2::text[])
+      AND COALESCE((s.raw_row->>'staff_eligible')::boolean, true) = true`;
+    if (disciplineCode && disciplineCode !== "ALL") {
+      sectionParams.push(disciplineCode);
+      sectionWhere += ` AND s.discipline_code = $${sectionParams.length}`;
+    }
+    const sectionsResult = await query(
+      `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.subject_code, s.course_number,
+              s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings, s.raw_row
+       FROM scope_sections s
+       ${sectionWhere}
+       ORDER BY s.primary_subject_course, s.primary_crn`,
+      sectionParams
+    );
+
+    const facultyIdentifiers = Array.from(new Set([
+      authUser.employee_id,
+      facultyRosterRow.employee_id,
+    ].map((value) => String(value || "").trim()).filter(Boolean)));
+    const [preferencesResult, availabilityResult] = await Promise.all([
+      query(
+        `SELECT p.assignment_group_id, p.preference_rank, p.faculty_id, p.employee_id, p.faculty_name,
+                s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings
+         FROM scope_preferences p
+         LEFT JOIN scope_sections s ON s.term_code = p.term_code AND s.assignment_group_id = p.assignment_group_id
+         WHERE p.term_code = $1
+           AND (p.faculty_id = ANY($2::text[]) OR p.employee_id = ANY($2::text[]))
+         ORDER BY p.preference_rank ASC`,
+        [termCode, facultyIdentifiers]
+      ),
+      query(
+        `SELECT availability_days, availability_time_blocks
+         FROM scope_faculty_availability
+         WHERE term_code = $1
+           AND (faculty_id = ANY($2::text[]) OR employee_id = ANY($2::text[]))
+         LIMIT 1`,
+        [termCode, facultyIdentifiers]
+      ),
+    ]);
+    const availability = availabilityResult.rows[0] || {};
+
+    res.json({
+      rosterRows,
+      rosterMatch: facultyRosterRow,
+      sections: (sectionsResult.rows || []).map((row) => ({ ...row, meetings: row.meetings || [] })),
+      preferences: (preferencesResult.rows || []).map((row) => ({ ...row, meetings: row.meetings || [] })),
+      availability: {
+        days: Array.isArray(availability.availability_days) ? availability.availability_days : [],
+        timeBlocks: Array.isArray(availability.availability_time_blocks) ? availability.availability_time_blocks : [],
+      },
+      window: state,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not load faculty dashboard." });
+  }
+});
+
 router.get("/division-statuses", requireScopedRead, async (req, res) => {
   const { termCode = "" } = req.query;
   if (!termCode) return res.status(400).json({ error: "termCode is required." });

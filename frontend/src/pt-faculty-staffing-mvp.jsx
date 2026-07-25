@@ -1716,6 +1716,7 @@ export default function PTFacultyStaffingMVP() {
 
   useEffect(() => {
     if (!directoryPersistenceReady) return;
+    if (!canUseAdminTools) return;
     if (skipNextDirectoryPersistRef.current) {
       skipNextDirectoryPersistRef.current = false;
       return;
@@ -1732,10 +1733,11 @@ export default function PTFacultyStaffingMVP() {
         console.warn("Could not persist role directory", error);
       }
     })();
-  }, [directoryPersistenceReady, chairAssignments, deanAssignments]);
+  }, [directoryPersistenceReady, canUseAdminTools, chairAssignments, deanAssignments]);
 
   useEffect(() => {
     if (!rosterPersistenceReady) return;
+    if (!canUseAdminTools) return;
     if (skipNextRosterPersistRef.current) {
       skipNextRosterPersistRef.current = false;
       return;
@@ -1751,7 +1753,7 @@ export default function PTFacultyStaffingMVP() {
         console.warn("Could not persist PT roster", error);
       }
     })();
-  }, [rosterPersistenceReady, ptStaffingRows]);
+  }, [rosterPersistenceReady, canUseAdminTools, ptStaffingRows]);
 
   const previewFacultyOptions = useMemo(() => {
     const grouped = new Map();
@@ -2392,6 +2394,60 @@ export default function PTFacultyStaffingMVP() {
     });
   }, [visibleSections, facultyPreferences, facultyAvailability, showOnlyPreferredSections, showOnlyConflictFree]);
 
+  function applyFacultySelfDashboard(data, disciplineCode = selectedDisciplineCode) {
+    const rosterRows = Array.isArray(data.rosterRows) ? data.rosterRows : [];
+    if (rosterRows.length) {
+      setPtStaffingRows(rosterRows.map((row) => ({
+        ...row,
+        seniority_rank: row.seniority_rank ?? row.seniority_value ?? "",
+      })));
+      setSelectedFacultyId(normalize(rosterRows[0].employee_id || ""));
+    } else {
+      setSelectedFacultyId("");
+    }
+
+    const windowOpen = data.window ? Boolean(data.window.open) : true;
+    setFacultyPreferenceWindowOpen(windowOpen);
+    setFacultyWindowMessage(data.message || (windowOpen ? "" : "The preference window is not open for your division."));
+
+    const fetchedSections = Array.isArray(data.sections) ? data.sections : [];
+    const filteredSections =
+      disciplineCode && disciplineCode !== "ALL"
+        ? fetchedSections.filter((section) => section.discipline_code === disciplineCode)
+        : fetchedSections;
+    setAvailableSections(windowOpen ? filteredSections : []);
+
+    setFacultyPreferences(windowOpen && Array.isArray(data.preferences) ? data.preferences : []);
+    setFacultyAvailability({
+      days: windowOpen && Array.isArray(data.availability?.days) ? data.availability.days : [],
+      timeBlocks: windowOpen && Array.isArray(data.availability?.timeBlocks) ? data.availability.timeBlocks : [],
+    });
+    setPreferencesMessage(windowOpen
+      ? `Loaded ${(data.preferences || []).length} saved preference(s).`
+      : data.message || "The preference window is not open for your division.");
+  }
+
+  async function loadFacultySelfDashboard(disciplineCode = selectedDisciplineCode) {
+    if (!activeTerm?.code) return null;
+    const params = new URLSearchParams({ termCode: activeTerm.code });
+    if (disciplineCode && disciplineCode !== "ALL") params.set("disciplineCode", disciplineCode);
+    const response = await apiFetch(`${API_BASE}/faculty-self-dashboard?${params.toString()}`);
+    const data = await response.json();
+    if (!response.ok) {
+      setSectionsError(data.error || "Could not load faculty staffing data.");
+      setPreferencesMessage(data.error || "Could not load faculty staffing data.");
+      setPtStaffingRows([]);
+      setSelectedFacultyId("");
+      setAvailableSections([]);
+      setFacultyPreferences([]);
+      setFacultyAvailability({ days: [], timeBlocks: [] });
+      return null;
+    }
+    setSectionsError("");
+    applyFacultySelfDashboard(data, disciplineCode);
+    return data;
+  }
+
   async function loadAvailableSections(disciplineCode = selectedDisciplineCode) {
     if (!activeTerm?.code) return;
     setLoadingSections(true);
@@ -2401,6 +2457,10 @@ export default function PTFacultyStaffingMVP() {
     setAvailableSections([]);
 
     try {
+      if (role === "faculty" && currentUser?.role === "faculty") {
+        await loadFacultySelfDashboard(disciplineCode);
+        return;
+      }
       const params = new URLSearchParams({ termCode: activeTerm.code });
       if (disciplineCode && disciplineCode !== "ALL") {
         params.set("disciplineCode", disciplineCode);
@@ -2867,6 +2927,10 @@ export default function PTFacultyStaffingMVP() {
     if (!activeTerm?.code) return;
     try {
       setPreferencesMessage("Loading saved preferences...");
+      if (role === "faculty" && currentUser?.role === "faculty") {
+        await loadFacultySelfDashboard(selectedDisciplineCode);
+        return;
+      }
       const resolvedFacultyId = facultyId || selectedFaculty?.employeeId || "";
       if (!resolvedFacultyId) {
         setPreferencesMessage("Select a faculty member before loading preferences.");
@@ -2904,12 +2968,12 @@ export default function PTFacultyStaffingMVP() {
 
   useEffect(() => {
     if (role !== "faculty" || currentUser?.role !== "faculty") return;
-    if (!activeTerm?.code || !facultyPreferenceWindowOpen || !selectedFaculty?.employeeId) return;
-    const loadKey = `${activeTerm.code}:${selectedFaculty.employeeId}`;
+    if (!activeTerm?.code) return;
+    const loadKey = `${activeTerm.code}:${selectedDisciplineCode}:self`;
     if (lastFacultyPreferenceLoadRef.current === loadKey) return;
     lastFacultyPreferenceLoadRef.current = loadKey;
-    loadFacultyPreferences(selectedFaculty.employeeId);
-  }, [role, currentUser?.role, activeTerm?.code, facultyPreferenceWindowOpen, selectedFaculty?.employeeId]);
+    loadFacultySelfDashboard(selectedDisciplineCode);
+  }, [role, currentUser?.role, activeTerm?.code, selectedDisciplineCode]);
 
   function toggleAvailabilityValue(kind, value) {
     setFacultyAvailability((current) => {
