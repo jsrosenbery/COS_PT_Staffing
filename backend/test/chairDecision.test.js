@@ -166,8 +166,13 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /faculty-load-status/);
   assert.match(frontend, /Load complete for now/);
   assert.match(frontend, /row\.load_complete/);
-  assert.match(frontend, /Meeting days/);
+  assert.match(frontend, /renderSectionDisplayFilters/);
+  assert.match(frontend, /Filter the assignment queue by section details/);
   assert.match(frontend, /toggleSectionFilter\("days", day\.key\)/);
+  assert.match(frontend, /toggleSectionFilter\("timeBlocks", block\.key\)/);
+  assert.match(frontend, /toggleSectionFilter\("campuses", campus\)/);
+  assert.match(frontend, /toggleSectionFilter\("methods", method\)/);
+  assert.match(frontend, /toggleSectionFilter\("modalities", modality\)/);
   assert.match(frontend, /Seniority recommendation/);
   assert.doesNotMatch(frontend, /Backend recommendation/);
   assert.match(frontend, /assignSectionToInstructor\(row, backendRecommendedEmployeeId, requiresPreferenceRationale\)/);
@@ -212,6 +217,9 @@ test("dean review UI uses packet-style approval instead of the chair assignment 
   assert.match(frontend, /Needs attention/);
   assert.match(frontend, /Exception review/);
   assert.match(frontend, /Interested Candidates at Decision Time/);
+  assert.match(frontend, /Filter submitted packets by section details/);
+  assert.match(frontend, /if \(!matchesSectionFilters\(row, sectionFilters\)\) return false/);
+  assert.match(frontend, /assignmentTemplates = tentativeAssignments\.map/);
   assert.match(frontend, /returnSubmittedAssignmentsForRevision/);
   assert.match(frontend, /assignments\/return/);
   assert.match(frontend, /role === "chair" \? \(/);
