@@ -519,6 +519,17 @@ function finiteNumberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function safeObject(value) {
+  if (!value) return {};
+  if (typeof value === "object") return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (_error) {
+    return {};
+  }
+}
+
 function sectionStartMinutes(section) {
   const starts = (section?.meetings || [])
     .map((meeting) => parseClockToMinutes(meeting.start_time))
@@ -649,6 +660,7 @@ const chairQueueLegend = [
   { label: "Highest remaining preference", kind: "top", meaning: "This is the highest-ranked section still available on that faculty member's submitted list." },
   { label: "Next in line", kind: "top", meaning: "Highest available candidate after seniority, preferences, and current tentative placements are considered." },
   { label: "Seniority recommendation", kind: "top", meaning: "The system's clean recommendation for this staffing unit. Selecting this person does not require an exception." },
+  { label: "Load complete", kind: "filled", meaning: "The chair has marked this faculty member complete for now. Their preferences remain visible, but they are skipped in new recommendations until reopened." },
   { label: "Bypass needs rationale", kind: "bypass", meaning: "Selecting this person would bypass the current seniority recommendation and requires an approved reason and written explanation." },
   { label: "Already placed elsewhere", kind: "filled", meaning: "The person has another tentative assignment. They remain visible for review, but the current placement is noted." },
   { label: "Time conflict", kind: "conflict", meaning: "The person has another tentative in-person or hybrid section with an overlapping meeting time. Fully online sections are ignored for conflict checks." },
@@ -688,6 +700,13 @@ function candidateReasonSummary(section, row, topCandidate, currentAssignment) {
       title: "Current tentative holder",
       detail: "This faculty member currently occupies the section in the working queue.",
       kind: "assigned",
+    };
+  }
+  if (row.load_complete) {
+    return {
+      title: "Load complete",
+      detail: "This faculty member has been marked complete for the current review and is skipped for new recommendations until reopened.",
+      kind: "filled",
     };
   }
   if (row.has_assignment_conflict) {
@@ -1032,6 +1051,9 @@ export default function PTFacultyStaffingMVP() {
   const [workflowSort, setWorkflowSort] = useState("preference");
   const [showOnlyPreferenceQueue, setShowOnlyPreferenceQueue] = useState(false);
   const [expandedCandidateGroups, setExpandedCandidateGroups] = useState({});
+  const [deanReviewFilter, setDeanReviewFilter] = useState("submitted");
+  const [expandedDeanPackets, setExpandedDeanPackets] = useState({});
+  const [showDeanScheduleReference, setShowDeanScheduleReference] = useState(false);
 
   const activeTerm = terms.find((t) => t.active) || terms[0] || { code: "SP27", name: "Spring 2027", active: true };
   const apiTokenConfigured = Boolean(apiTokenInput.trim());
@@ -1862,8 +1884,12 @@ export default function PTFacultyStaffingMVP() {
         seniorityRank: rosterOption?.seniorityRank ?? null,
         preferenceCount: 0,
         firstPreferenceRank: null,
+        loadStatus: "active",
+        division: normalize(row.division),
       };
       existing.preferenceCount += 1;
+      if (normalize(row.load_status).toLowerCase() === "complete") existing.loadStatus = "complete";
+      if (!existing.division && row.division) existing.division = normalize(row.division);
       if (rank !== null && (existing.firstPreferenceRank === null || rank < existing.firstPreferenceRank)) {
         existing.firstPreferenceRank = rank;
       }
@@ -1879,11 +1905,16 @@ export default function PTFacultyStaffingMVP() {
   const selectedReviewFaculty = useMemo(() => {
     const selectedId = normalize(selectedFacultyId || selectedFaculty?.employeeId);
     return submittedFacultyOptions.find((item) => item.employeeId === selectedId) ||
-      (selectedFaculty ? { employeeId: selectedFaculty.employeeId, facultyName: facultyName(selectedFaculty), seniorityRank: selectedFaculty.seniorityRank ?? null, preferenceCount: 0, firstPreferenceRank: null } : null);
+      (selectedFaculty ? { employeeId: selectedFaculty.employeeId, facultyName: facultyName(selectedFaculty), seniorityRank: selectedFaculty.seniorityRank ?? null, preferenceCount: 0, firstPreferenceRank: null, loadStatus: "active", division: selectedFaculty.division || "" } : null);
   }, [submittedFacultyOptions, selectedFacultyId, selectedFaculty]);
 
   const selectedReviewFacultyName = selectedReviewFaculty?.facultyName || (selectedFaculty ? facultyName(selectedFaculty) : "selected faculty");
   const selectedFacultyHasSubmittedPreferences = Boolean(selectedReviewFaculty?.preferenceCount);
+  const selectedReviewFacultyLoadComplete = normalize(selectedReviewFaculty?.loadStatus).toLowerCase() === "complete";
+  const selectedReviewFacultyDivision = selectedReviewFaculty?.division ||
+    chairWorkflowRows.find((row) => normalize(row.employee_id || row.faculty_id) === normalize(selectedReviewFaculty?.employeeId))?.division ||
+    chairDivisions[0] ||
+    "";
   const frozenPreferenceRowCount = useMemo(() => {
     return chairWorkflowRows.filter((row) => finiteNumberOrNull(row.preference_rank) !== null).length;
   }, [chairWorkflowRows]);
@@ -1938,9 +1969,12 @@ export default function PTFacultyStaffingMVP() {
       const employeeAssignments = activeAssignments.filter((assignment) => assignment.employee_id === row.employee_id && assignment.assignment_group_id !== key);
       const conflictingAssignment = employeeAssignments.find((assignment) => hasMeetingConflict(row, assignment)) || null;
       const rowPreferenceRank = finiteNumberOrNull(row.preference_rank);
+      const loadComplete = normalize(row.load_status).toLowerCase() === "complete";
       const enrichedRow = {
         ...row,
         preference_rank: rowPreferenceRank,
+        load_status: normalize(row.load_status || "active").toLowerCase(),
+        load_complete: loadComplete,
         availabilitySummary: sectionAvailabilitySummary(row, {
           days: row.availability_days || [],
           timeBlocks: row.availability_time_blocks || [],
@@ -1998,7 +2032,8 @@ export default function PTFacultyStaffingMVP() {
           finiteNumberOrNull(row.preference_rank) !== null &&
           !row.has_tentative_assignment &&
           !row.section_assigned_to_other &&
-          !row.has_assignment_conflict
+          !row.has_assignment_conflict &&
+          !row.load_complete
         );
         const preferenceRanks = [
           finiteNumberOrNull(section.selected_faculty_preference_rank),
@@ -2184,6 +2219,81 @@ export default function PTFacultyStaffingMVP() {
     });
     return map;
   }, [tentativeAssignments]);
+
+  const deanReviewRows = useMemo(() => {
+    return tentativeAssignments
+      .map((assignment) => {
+        const status = normalize(assignment.decision_status || assignment.status || "tentative").toLowerCase();
+        const recommendationSnapshot = safeObject(assignment.recommendation_snapshot);
+        const decisionSnapshot = safeObject(assignment.decision_snapshot);
+        const recommendedEmployeeId = normalize(recommendationSnapshot.recommendedEmployeeId || recommendationSnapshot.recommended_employee_id);
+        const recommendedFacultyName = normalize(recommendationSnapshot.recommendedFacultyName || recommendationSnapshot.recommended_faculty_name);
+        const selectedEmployeeId = normalize(decisionSnapshot.selectedEmployeeId || decisionSnapshot.selected_employee_id || assignment.employee_id);
+        const selectedFacultyName = normalize(decisionSnapshot.selectedFacultyName || decisionSnapshot.selected_faculty_name || assignment.faculty_name || assignment.employee_id);
+        const exceptionReasonCode = normalize(assignment.exception_reason_code || decisionSnapshot.exceptionReasonCode || decisionSnapshot.exception_reason_code || assignment.reason_code);
+        const exceptionExplanation = normalize(assignment.exception_explanation || decisionSnapshot.exceptionExplanation || decisionSnapshot.exception_explanation || assignment.justification || assignment.reason);
+        const matchesRecommendation = recommendedEmployeeId
+          ? recommendedEmployeeId === selectedEmployeeId
+          : decisionSnapshot.isRecommendedSelection === true;
+        const hasException = Boolean(exceptionReasonCode || exceptionExplanation || matchesRecommendation === false);
+        const missingSnapshot = !recommendedEmployeeId && !Array.isArray(recommendationSnapshot.candidateList);
+        const candidateList = Array.isArray(recommendationSnapshot.candidateList)
+          ? recommendationSnapshot.candidateList
+          : [];
+        const needsAttention = status === "chair_submitted" && (hasException || missingSnapshot);
+        return {
+          ...assignment,
+          reviewStatus: status,
+          recommendationSnapshot,
+          decisionSnapshot,
+          recommendedEmployeeId,
+          recommendedFacultyName,
+          recommendedPreferenceRank: recommendationSnapshot.recommendedPreferenceRank ?? recommendationSnapshot.recommended_preference_rank ?? null,
+          recommendedSeniorityRank: recommendationSnapshot.recommendedSeniorityRank ?? recommendationSnapshot.recommended_seniority_rank ?? null,
+          selectedEmployeeId,
+          selectedFacultyName,
+          selectedPreferenceRank: decisionSnapshot.selectedPreferenceRank ?? decisionSnapshot.selected_preference_rank ?? null,
+          selectedSeniorityRank: decisionSnapshot.selectedSeniorityRank ?? decisionSnapshot.selected_seniority_rank ?? null,
+          exceptionReasonCode,
+          exceptionExplanation,
+          matchesRecommendation,
+          hasException,
+          missingSnapshot,
+          needsAttention,
+          candidateList,
+        };
+      })
+      .sort((a, b) => {
+        const statusRank = (value) => ({ chair_submitted: 0, tentative: 1, returned_for_revision: 2, dean_approved: 3 }[value] ?? 4);
+        const attention = Number(b.needsAttention) - Number(a.needsAttention);
+        if (attention) return attention;
+        const statusCompare = statusRank(a.reviewStatus) - statusRank(b.reviewStatus);
+        if (statusCompare) return statusCompare;
+        return courseSortKey(a).localeCompare(courseSortKey(b));
+      });
+  }, [tentativeAssignments]);
+
+  const deanReviewMetrics = useMemo(() => {
+    return deanReviewRows.reduce((counts, row) => {
+      counts.total += 1;
+      counts[row.reviewStatus] = (counts[row.reviewStatus] || 0) + 1;
+      if (row.hasException) counts.exceptions += 1;
+      if (row.needsAttention) counts.attention += 1;
+      if (row.missingSnapshot) counts.warnings += 1;
+      return counts;
+    }, { total: 0, chair_submitted: 0, tentative: 0, dean_approved: 0, returned_for_revision: 0, exceptions: 0, attention: 0, warnings: 0 });
+  }, [deanReviewRows]);
+
+  const filteredDeanReviewRows = useMemo(() => {
+    return deanReviewRows.filter((row) => {
+      if (deanReviewFilter === "submitted") return row.reviewStatus === "chair_submitted";
+      if (deanReviewFilter === "exceptions") return row.hasException;
+      if (deanReviewFilter === "attention") return row.needsAttention || row.missingSnapshot;
+      if (deanReviewFilter === "approved") return row.reviewStatus === "dean_approved";
+      if (deanReviewFilter === "returned") return row.reviewStatus === "returned_for_revision";
+      return true;
+    });
+  }, [deanReviewRows, deanReviewFilter]);
 
   const conflictIds = useMemo(() => {
     const ids = new Set();
@@ -2494,6 +2604,44 @@ export default function PTFacultyStaffingMVP() {
     }
   }
 
+  async function updateSelectedFacultyLoadStatus(loadComplete) {
+    const selectedEmployeeId = normalize(selectedReviewFaculty?.employeeId || selectedFacultyId || selectedFaculty?.employeeId);
+    if (!selectedEmployeeId || !activeTerm?.code) {
+      setChairMessage("Choose a submitted faculty member before updating load status.");
+      return;
+    }
+    if (!selectedReviewFacultyDivision) {
+      setChairMessage("A division scope is required before updating load status.");
+      return;
+    }
+
+    setChairMessage("");
+    try {
+      const response = await apiFetch(`${API_BASE}/faculty-load-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          termCode: activeTerm.code,
+          division: selectedReviewFacultyDivision,
+          employeeId: selectedEmployeeId,
+          facultyName: selectedReviewFacultyName,
+          loadComplete,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setChairMessage(data.error || "Could not update faculty load status.");
+        return;
+      }
+      setChairMessage(loadComplete
+        ? `${selectedReviewFacultyName} is marked load complete for now and will be skipped in new recommendations.`
+        : `${selectedReviewFacultyName} is back in recommendation consideration.`);
+      await loadChairWorkflow({ preserveMessage: true, preserveAssignmentsOnError: true });
+    } catch (error) {
+      setChairMessage(error.message || "Could not update faculty load status.");
+    }
+  }
+
   async function undoTentativeAssignment(assignment) {
     if (!assignment?.id) return;
     const confirmed = window.confirm(`Unassign ${assignment.primary_subject_course || assignment.assignment_group_id} from ${assignment.faculty_name || assignment.employee_id}?`);
@@ -2620,6 +2768,45 @@ export default function PTFacultyStaffingMVP() {
       await loadChairWorkflow();
     } catch (error) {
       setChairMessage(error.message || "Could not approve assignments.");
+    }
+  }
+
+  async function returnSubmittedAssignmentsForRevision() {
+    if (!activeTerm?.code) return;
+    const returnedCount = assignmentStatusCounts.chair_submitted || 0;
+    if (!returnedCount) {
+      setChairMessage("There are no chair-submitted assignments in the current scope to return.");
+      return;
+    }
+    const reason = window.prompt("Enter the reason these submitted assignments are being returned to the chair:", "") || "";
+    if (!reason.trim()) {
+      setChairMessage("A return reason is required before sending assignments back for revision.");
+      return;
+    }
+
+    setChairMessage("");
+    try {
+      const assignmentDivisions = Array.from(new Set(tentativeAssignments.map((assignment) => canonicalDivisionName(assignment.division)).filter(Boolean)));
+      const scopedDivisions = role === "dean" ? (deanDivisions.length ? deanDivisions : assignmentDivisions) : [];
+      const response = await apiFetch(`${API_BASE}/assignments/return`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          termCode: activeTerm.code,
+          disciplineCode: selectedDisciplineCode !== "ALL" ? selectedDisciplineCode : "",
+          divisions: scopedDivisions,
+          reason: reason.trim(),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setChairMessage(data.error || "Could not return assignments.");
+        return;
+      }
+      setChairMessage(data.message || "Assignments returned to chair for revision.");
+      await loadChairWorkflow();
+    } catch (error) {
+      setChairMessage(error.message || "Could not return assignments.");
     }
   }
 
@@ -4306,6 +4493,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       Approve Submitted ({assignmentStatusCounts.chair_submitted || 0})
                     </button>
                   ) : null}
+                  {role === "dean" ? (
+                    <button style={ui.btn} onClick={returnSubmittedAssignmentsForRevision} disabled={!assignmentStatusCounts.chair_submitted}>
+                      Return for Revision
+                    </button>
+                  ) : null}
                   <button style={ui.btn} onClick={exportPreferences}>
                     Export Preferences
                   </button>
@@ -4399,7 +4591,144 @@ OH,ORNAMENTAL_HORTICULTURE`}
               </div>
             ) : null}
 
-            {role !== "admin" ? (
+            {role === "dean" ? (
+              <div style={{ ...ui.sectionCard, marginTop: 12 }}>
+                <div style={ui.miniKicker}>Dean Review</div>
+                <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>Submitted Assignment Packets</h2>
+                <div style={ui.cardDesc}>
+                  Review chair-submitted assignments by exception, recommendation match, and snapshot evidence. Expand a packet only when the summary needs more context.
+                </div>
+
+                <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", marginTop: 14 }}>
+                  <div style={ui.metricTile}>
+                    <div style={ui.miniKicker}>Pending Review</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{deanReviewMetrics.chair_submitted || 0}</div>
+                    <div style={ui.small}>Submitted by chairs.</div>
+                  </div>
+                  <div style={ui.metricTile}>
+                    <div style={ui.miniKicker}>Needs Attention</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{deanReviewMetrics.attention || 0}</div>
+                    <div style={ui.small}>Exceptions or missing snapshots.</div>
+                  </div>
+                  <div style={ui.metricTile}>
+                    <div style={ui.miniKicker}>Exceptions</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{deanReviewMetrics.exceptions || 0}</div>
+                    <div style={ui.small}>Non-seniority or documented rationale.</div>
+                  </div>
+                  <div style={ui.metricTile}>
+                    <div style={ui.miniKicker}>Approved</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, marginTop: 6 }}>{deanReviewMetrics.dean_approved || 0}</div>
+                    <div style={ui.small}>Already approved in this scope.</div>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+                  {[
+                    ["submitted", `Pending review (${deanReviewMetrics.chair_submitted || 0})`],
+                    ["attention", `Needs attention (${deanReviewMetrics.attention || 0})`],
+                    ["exceptions", `Exceptions (${deanReviewMetrics.exceptions || 0})`],
+                    ["approved", `Approved (${deanReviewMetrics.dean_approved || 0})`],
+                    ["returned", `Returned (${deanReviewMetrics.returned_for_revision || 0})`],
+                    ["all", `All packets (${deanReviewMetrics.total || 0})`],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      style={{ ...ui.filterChip, ...(deanReviewFilter === value ? ui.filterChipActive : {}) }}
+                      onClick={() => setDeanReviewFilter(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
+                  {filteredDeanReviewRows.length ? filteredDeanReviewRows.map((packet) => {
+                    const expanded = Boolean(expandedDeanPackets[packet.id]);
+                    const statusKind = assignmentStatusKind(packet.reviewStatus);
+                    return (
+                      <div key={packet.id || packet.assignment_group_id} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 12, background: packet.needsAttention ? "rgba(255, 237, 213, 0.35)" : "var(--bg-soft)" }}>
+                        <div style={{ ...ui.between, gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+                          <div style={{ minWidth: 240 }}>
+                            <div style={{ fontWeight: 800 }}>{packet.primary_subject_course || packet.assignment_group_id} - {packet.primary_crn || "No CRN"}</div>
+                            <div style={{ marginTop: 4 }}>{packet.title || "Untitled section"}</div>
+                            <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                              {packet.division || "No division"} - {packet.discipline_code || "No discipline"} - {formatMeetings(packet.meetings)}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            <span style={workflowStatePillStyle(statusKind)}>{assignmentStatusLabel(packet.reviewStatus)}</span>
+                            {packet.matchesRecommendation ? (
+                              <span style={workflowStatePillStyle("top")}>Matches recommendation</span>
+                            ) : (
+                              <span style={workflowStatePillStyle("bypass")}>Exception review</span>
+                            )}
+                            {packet.missingSnapshot ? <span style={workflowStatePillStyle("conflict")}>Snapshot missing</span> : null}
+                          </div>
+                        </div>
+
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginTop: 12 }}>
+                          <div style={ui.metricTile}>
+                            <div style={ui.small}>Chair selection</div>
+                            <div style={{ fontWeight: 800, marginTop: 6 }}>{packet.selectedFacultyName}</div>
+                            <div style={ui.small}>Seniority #{packet.selectedSeniorityRank ?? "-"} - Preference #{packet.selectedPreferenceRank ?? "-"}</div>
+                          </div>
+                          <div style={ui.metricTile}>
+                            <div style={ui.small}>Seniority recommendation</div>
+                            <div style={{ fontWeight: 800, marginTop: 6 }}>{packet.recommendedFacultyName || "No snapshot recommendation"}</div>
+                            <div style={ui.small}>Seniority #{packet.recommendedSeniorityRank ?? "-"} - Preference #{packet.recommendedPreferenceRank ?? "-"}</div>
+                          </div>
+                          <div style={ui.metricTile}>
+                            <div style={ui.small}>Exception rationale</div>
+                            <div style={{ fontWeight: 800, marginTop: 6 }}>{packet.exceptionReasonCode || (packet.matchesRecommendation ? "None required" : "Missing reason")}</div>
+                            <div style={ui.small}>{packet.exceptionExplanation || "No written explanation recorded."}</div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                          <button
+                            type="button"
+                            style={ui.btn}
+                            onClick={() => setExpandedDeanPackets((current) => ({ ...current, [packet.id]: !expanded }))}
+                          >
+                            {expanded ? "Hide Evidence" : "View Evidence"}
+                          </button>
+                          {packet.reviewStatus === "chair_submitted" ? (
+                            <>
+                              <button style={ui.btnPrimary} onClick={approveSubmittedAssignments}>Approve Scope</button>
+                              <button style={ui.btn} onClick={returnSubmittedAssignmentsForRevision}>Return Scope</button>
+                            </>
+                          ) : null}
+                        </div>
+
+                        {expanded ? (
+                          <div style={{ marginTop: 12, borderTop: "1px solid var(--border-soft)", paddingTop: 12 }}>
+                            <div style={{ fontWeight: 800 }}>Interested Candidates at Decision Time</div>
+                            <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+                              {packet.candidateList.length ? packet.candidateList.slice(0, 10).map((candidate, index) => (
+                                <div key={`${packet.id}-${candidate.employeeId || index}`} style={{ display: "grid", gridTemplateColumns: "40px minmax(0, 1fr) 110px 110px 150px", gap: 8, alignItems: "center", fontSize: 13 }}>
+                                  <div style={{ color: "var(--text-subtle)" }}>#{index + 1}</div>
+                                  <div style={{ fontWeight: 700 }}>{candidate.facultyName || candidate.employeeId}</div>
+                                  <div>Seniority {candidate.seniorityRank ?? "-"}</div>
+                                  <div>Preference {candidate.preferenceRank ?? "-"}</div>
+                                  <div><span style={workflowStatePillStyle(candidate.employeeId === packet.selectedEmployeeId ? "assigned" : candidate.employeeId === packet.recommendedEmployeeId ? "top" : "filled")}>{candidate.employeeId === packet.selectedEmployeeId ? "Selected" : candidate.employeeId === packet.recommendedEmployeeId ? "Recommended" : candidate.reasonCode || "Candidate"}</span></div>
+                                </div>
+                              )) : (
+                                <div style={{ color: "var(--text-subtle)" }}>No candidate snapshot was stored for this packet.</div>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  }) : (
+                    <div style={{ color: "var(--text-subtle)" }}>No dean review packets match the selected filter.</div>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            {role === "chair" ? (
             <>
             <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
               {filteredSectionQueue.length} visible queued section(s), {assignmentStatusCounts.tentative || 0} tentative, {assignmentStatusCounts.chair_submitted || 0} submitted, {assignmentStatusCounts.dean_approved || 0} approved, {filteredDecisionLogs.length} visible audit entr{filteredDecisionLogs.length === 1 ? "y" : "ies"}.
@@ -4456,15 +4785,24 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     >
                       {submittedFacultyOptions.length ? submittedFacultyOptions.map((item) => (
                         <option key={item.employeeId} value={item.employeeId}>
-                          {item.facultyName} - {item.seniorityRank ?? "no seniority"} ({item.preferenceCount})
+                          {item.facultyName} - {item.seniorityRank ?? "no seniority"} ({item.preferenceCount}){item.loadStatus === "complete" ? " - load complete" : ""}
                         </option>
                       )) : (
                         <option value="">No submitted preferences loaded</option>
                       )}
                     </select>
+                    <label style={{ display: "flex", gap: 8, alignItems: "center", color: "var(--text)", fontWeight: 700, fontSize: 13 }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedReviewFacultyLoadComplete}
+                        disabled={!selectedReviewFaculty?.employeeId || !selectedReviewFacultyDivision}
+                        onChange={(event) => updateSelectedFacultyLoadStatus(event.target.checked)}
+                      />
+                      Load complete for now
+                    </label>
                     <div style={ui.small}>
                       {selectedFacultyHasSubmittedPreferences
-                        ? `Showing ${selectedReviewFacultyName}'s ${chairPreferenceSourceLabel} sections in rank order.`
+                        ? `Showing ${selectedReviewFacultyName}'s ${chairPreferenceSourceLabel} sections in rank order.${selectedReviewFacultyLoadComplete ? " This person is skipped for new recommendations until reopened." : ""}`
                         : "Choose a faculty member with saved preferences to review that person's ranked list."}
                     </div>
                   </div>
@@ -4529,6 +4867,29 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </select>
                   <div style={ui.small}>
                     {frozenPreferenceRowCount} {chairPreferenceSourceLabel} row(s) matched across {submittedFacultyOptions.length} submitting faculty. {chairPreferenceSourceNote}
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ ...ui.small, marginBottom: 6 }}>Meeting days</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {availabilityDayOptions.map((day) => {
+                        const active = sectionFilters.days.includes(day.key);
+                        return (
+                          <button
+                            key={day.key}
+                            type="button"
+                            style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
+                            onClick={() => toggleSectionFilter("days", day.key)}
+                          >
+                            {day.label}
+                          </button>
+                        );
+                      })}
+                      {sectionFilters.days.length ? (
+                        <button type="button" style={ui.filterChip} onClick={() => setSectionFilters((current) => ({ ...current, days: [] }))}>
+                          Clear days
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -4631,7 +4992,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                           const isInterestedCandidate = finiteNumberOrNull(row.preference_rank) !== null;
                           const reasonSummary = candidateReasonSummary(section, row, topCandidate, currentAssignment);
                           return (
-                            <div key={`${section.assignment_group_id}-${row.employee_id}`} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: row.has_tentative_assignment || isCurrentAssignee ? "rgba(220, 252, 231, 0.22)" : row.has_assignment_conflict ? "rgba(254, 226, 226, 0.22)" : "var(--bg-soft)" }}>
+                            <div key={`${section.assignment_group_id}-${row.employee_id}`} style={{ border: "1px solid var(--border-soft)", borderRadius: 14, padding: 10, background: row.has_tentative_assignment || isCurrentAssignee ? "rgba(220, 252, 231, 0.22)" : row.load_complete ? "rgba(226, 232, 240, 0.3)" : row.has_assignment_conflict ? "rgba(254, 226, 226, 0.22)" : "var(--bg-soft)" }}>
                               <div style={{ ...ui.between, alignItems: "flex-start" }}>
                                 <div>
                                   <div style={{ fontWeight: 700 }}>{row.faculty_name}</div>
@@ -4647,10 +5008,20 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                         Highest remaining preference
                                       </span>
                                     ) : null}
+                                    {row.load_complete ? (
+                                      <span style={{ ...workflowStatePillStyle("filled"), marginLeft: 6 }}>
+                                        Load complete
+                                      </span>
+                                    ) : null}
                                   </div>
                                   {isCurrentAssignee ? (
                                     <div style={{ marginTop: 6, color: "#166534", fontSize: 12, fontWeight: 700 }}>
                                       Current tentative assignee.
+                                    </div>
+                                  ) : null}
+                                  {row.load_complete ? (
+                                    <div style={{ marginTop: 6, color: "#475569", fontSize: 12, fontWeight: 700 }}>
+                                      Marked complete for the current review; skipped for new recommendations.
                                     </div>
                                   ) : null}
                                   {row.has_assignment_conflict ? (
@@ -4671,15 +5042,18 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                 <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
                                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                                     {isCurrentAssignee || row.has_tentative_assignment ? <span style={workflowStatePillStyle("assigned")}>{isCurrentAssignee ? "Current assignee" : "Assigned"}</span> : null}
+                                    {!isCurrentAssignee && !row.has_tentative_assignment && row.load_complete ? <span style={workflowStatePillStyle("filled")}>Load complete</span> : null}
                                     {!isCurrentAssignee && !row.has_tentative_assignment && row.section_assigned_to_other ? <span style={workflowStatePillStyle("filled")}>Section filled</span> : null}
                                     {!isCurrentAssignee && !row.has_tentative_assignment && row.has_assignment_conflict ? <span style={workflowStatePillStyle("conflict")}>Time conflict</span> : null}
-                                    {!isCurrentAssignee && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && !isInterestedCandidate ? <span style={workflowStatePillStyle("blocked")}>Not requested</span> : null}
-                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && isBackendRecommended ? <span style={workflowStatePillStyle("top")}>Seniority recommendation</span> : null}
-                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.section_assigned_to_other && !row.has_assignment_conflict && requiresPreferenceRationale ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
-                                    {section.currentAssignment && !isCurrentAssignee && !row.has_assignment_conflict ? <span style={workflowStatePillStyle("bypass")}>Reassign requires rationale</span> : null}
+                                    {!isCurrentAssignee && !row.has_tentative_assignment && !row.load_complete && !row.section_assigned_to_other && !row.has_assignment_conflict && !isInterestedCandidate ? <span style={workflowStatePillStyle("blocked")}>Not requested</span> : null}
+                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.load_complete && !row.section_assigned_to_other && !row.has_assignment_conflict && isBackendRecommended ? <span style={workflowStatePillStyle("top")}>Seniority recommendation</span> : null}
+                                    {!section.currentAssignment && !row.has_tentative_assignment && !row.load_complete && !row.section_assigned_to_other && !row.has_assignment_conflict && requiresPreferenceRationale ? <span style={workflowStatePillStyle("bypass")}>Bypass needs rationale</span> : null}
+                                    {section.currentAssignment && !isCurrentAssignee && !row.load_complete && !row.has_assignment_conflict ? <span style={workflowStatePillStyle("bypass")}>Reassign requires rationale</span> : null}
                                   </div>
                                   {isCurrentAssignee || row.has_tentative_assignment ? (
                                     <button style={ui.btn} disabled>{isCurrentAssignee ? "Current" : "Assigned"}</button>
+                                  ) : row.load_complete ? (
+                                    <button style={ui.btn} disabled>Load Complete</button>
                                   ) : row.has_assignment_conflict ? (
                                     <button style={ui.btn} disabled>Time Conflict</button>
                                   ) : !isInterestedCandidate ? (
@@ -4857,7 +5231,24 @@ OH,ORNAMENTAL_HORTICULTURE`}
           </div>
         ) : null}
 
-        <div style={ui.card}>
+        {role === "dean" && !showDeanScheduleReference ? (
+          <div style={ui.card}>
+            <div style={{ ...ui.between, gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <div style={ui.miniKicker}>Schedule Reference</div>
+                <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>Available Sections Hidden</h2>
+                <div style={ui.cardDesc}>
+                  The full section table is available for lookup, but it stays collapsed so dean review starts with submitted assignments and exceptions.
+                </div>
+              </div>
+              <button style={ui.btn} onClick={() => setShowDeanScheduleReference(true)}>
+                Show Schedule Reference
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <div style={{ ...ui.card, display: role === "dean" && !showDeanScheduleReference ? "none" : undefined }}>
           <div style={ui.between}>
             <div>
               <h2 style={ui.cardTitle}>Available Sections</h2>
@@ -4893,6 +5284,11 @@ OH,ORNAMENTAL_HORTICULTURE`}
               <button style={ui.btnPrimary} onClick={() => loadAvailableSections(selectedDisciplineCode)}>
                 Refresh Sections
               </button>
+              {role === "dean" ? (
+                <button style={ui.btn} onClick={() => setShowDeanScheduleReference(false)}>
+                  Hide Schedule Reference
+                </button>
+              ) : null}
               {(role === "admin" || role === "chair" || role === "dean") ? (
                 <button style={ui.btn} onClick={exportPreferences}>
                   Export Preferences

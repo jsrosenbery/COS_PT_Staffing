@@ -133,6 +133,7 @@ function normalizeSection(section = {}, index) {
 function normalizeFaculty(row = {}, index) {
   const id = employeeId(row);
   const seniorityRank = numericValue(row.seniority_rank ?? row.seniorityRank ?? row.seniority_value ?? row.seniorityValue);
+  const loadStatus = textLower(row.load_status || row.loadStatus || (row.load_complete || row.loadComplete ? "complete" : ""));
   const disciplines = splitList([
     row.discipline,
     row.discipline_code,
@@ -149,6 +150,7 @@ function normalizeFaculty(row = {}, index) {
     qualifiedDisciplines: disciplines,
     seniorityRank,
     senioritySort: seniorityRank ?? Number.POSITIVE_INFINITY,
+    loadComplete: ["complete", "completed", "done", "true", "yes"].includes(loadStatus),
     sourceIndex: index,
   };
 }
@@ -221,6 +223,7 @@ function facultyLoadLimit(faculty, limits) {
 }
 
 function hasLoadCapacity({ faculty, counts, load, limits }) {
+  if (faculty.loadComplete) return false;
   const assignmentLimit = facultyAssignmentLimit(faculty, limits);
   const loadLimit = facultyLoadLimit(faculty, limits);
   const currentCount = counts.assignmentCount.get(faculty.employeeId) || 0;

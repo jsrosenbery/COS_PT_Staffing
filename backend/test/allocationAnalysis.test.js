@@ -75,6 +75,20 @@ test("explains unawarded preferences blocked by earlier recommendations consumin
   assert.equal(prefDisposition(result, "F1", "S1").reasonCode, allocationReasonCodes.LOAD_LIMIT_REACHED);
 });
 
+test("skips faculty marked load complete while preserving their submitted preferences", () => {
+  const input = allocationFixture({
+    faculty: fixtureFaculty.map((row) => row.employee_id === "F1" ? { ...row, load_status: "complete" } : row),
+  });
+  const originalPreferences = JSON.parse(JSON.stringify(input.preferences));
+  const result = analyzeAllocation(input);
+
+  assert.deepEqual(input.preferences, originalPreferences);
+  assert.equal(section(result, "S1").highestSeniorityCurrentlyEligibleCandidate.employeeId, "F2");
+  assert.equal(section(result, "S1").candidateList.find((candidate) => candidate.employeeId === "F1").reasonCode, allocationReasonCodes.LOAD_LIMIT_REACHED);
+  assert.equal(prefDisposition(result, "F1", "S1").reasonCode, allocationReasonCodes.LOAD_LIMIT_REACHED);
+  assert.ok(result.recommendedNextAssignmentSequence.every((item) => item.employeeId !== "F1"));
+});
+
 test("respects current assignments and marks awarded preferences without rewriting originals", () => {
   const input = allocationFixture({
     assignments: [{ assignment_group_id: "S2", employee_id: "F1", faculty_name: "Ava Andrews", status: "tentative" }],

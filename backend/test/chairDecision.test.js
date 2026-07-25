@@ -163,6 +163,11 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /setTentativeAssignments\(\(current\) => \[/);
   assert.match(frontend, /setWorkflowView\("assigned"\)/);
   assert.match(frontend, /loadChairWorkflow\(\{ preserveMessage: true, preserveAssignmentsOnError: true \}\)/);
+  assert.match(frontend, /faculty-load-status/);
+  assert.match(frontend, /Load complete for now/);
+  assert.match(frontend, /row\.load_complete/);
+  assert.match(frontend, /Meeting days/);
+  assert.match(frontend, /toggleSectionFilter\("days", day\.key\)/);
   assert.match(frontend, /Seniority recommendation/);
   assert.doesNotMatch(frontend, /Backend recommendation/);
   assert.match(frontend, /assignSectionToInstructor\(row, backendRecommendedEmployeeId, requiresPreferenceRationale\)/);
@@ -195,6 +200,24 @@ test("chair workflow displays the same frozen preference source used by allocati
   assert.match(workflow, /section_preference_rank: sectionRankByAssignment\.get/);
   assert.match(workflow, /original_assignment_group_id: preference\.assignment_group_id/);
   assert.match(workflow, /run\.slice\(-5\)/);
+});
+
+test("dean review UI uses packet-style approval instead of the chair assignment queue", () => {
+  const frontend = fs.readFileSync(new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url), "utf8");
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+
+  assert.match(frontend, /const \[deanReviewFilter, setDeanReviewFilter\]/);
+  assert.match(frontend, /const deanReviewRows = useMemo/);
+  assert.match(frontend, /Submitted Assignment Packets/);
+  assert.match(frontend, /Needs attention/);
+  assert.match(frontend, /Exception review/);
+  assert.match(frontend, /Interested Candidates at Decision Time/);
+  assert.match(frontend, /returnSubmittedAssignmentsForRevision/);
+  assert.match(frontend, /assignments\/return/);
+  assert.match(frontend, /role === "chair" \? \(/);
+  assert.match(frontend, /Show Schedule Reference/);
+  assert.match(frontend, /Hide Schedule Reference/);
+  assert.match(workflow, /router\.post\("\/assignments\/return", requireRoles\("dean"\), requireDivisionScope/);
 });
 
 test("chair conflict display ignores online sections, includes CRNs, and explains queue labels", () => {
