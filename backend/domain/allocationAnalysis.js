@@ -198,7 +198,7 @@ function qualifiesForSection(faculty, section) {
 
 function buildLoadLimits(input = {}) {
   const raw = input.loadLimits || input.assignmentLimits || {};
-  const oneAssignmentPerPass = raw.oneAssignmentPerPass !== undefined ? Boolean(raw.oneAssignmentPerPass) : true;
+  const oneAssignmentPerPass = raw.oneAssignmentPerPass !== undefined ? Boolean(raw.oneAssignmentPerPass) : false;
   const defaultMaxAssignments = numericValue(raw.defaultMaxAssignments ?? raw.maxAssignments);
   const defaultMaxLoad = numericValue(raw.defaultMaxLoad ?? raw.maxLoad);
   const maxAssignmentsByFaculty = new Map(Object.entries(raw.maxAssignmentsByFaculty || {}).map(([id, value]) => [text(id), numericValue(value)]));

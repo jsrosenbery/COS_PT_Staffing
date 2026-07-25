@@ -223,7 +223,7 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
     });
 
     let analysis;
-    await t.test("allocation is deterministic, scoped, seniority-aware, and pass-limited", async () => {
+    await t.test("allocation is deterministic, scoped, seniority-aware, and assignment-cap limited", async () => {
       const query = `/api/allocation-analysis?termCode=${TERM}&division=${encodeURIComponent(SCIENCE)}&maxAssignments=1&maxLoad=1`;
       const first = await api(query, { role: "chair", division: SCIENCE });
       const second = await api(query, { role: "chair", division: SCIENCE });
@@ -235,7 +235,7 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
       assert.deepEqual(sequence.map((item) => item.employeeId), ["F1", "F2", "F3"]);
       assert.equal(new Set(sequence.map((item) => item.employeeId)).size, sequence.length);
       assert.ok(analysis.warnings.some((warning) => warning.reasonCode === "MISSING_SENIORITY" && warning.employeeId === "F4"));
-      assert.ok(analysis.faculty.find((row) => row.employeeId === "F1").rankedPreferences.some((pref) => pref.reasonCode === "ALREADY_ASSIGNED_IN_THIS_PASS"));
+      assert.ok(analysis.faculty.find((row) => row.employeeId === "F1").rankedPreferences.some((pref) => pref.reasonCode === "LOAD_LIMIT_REACHED"));
       assert.equal(analysis.faculty.some((row) => row.employeeId === "F5"), false);
 
       const outsideScope = await api(query, { role: "chair", division: ARTS });

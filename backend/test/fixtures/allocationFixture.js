@@ -56,7 +56,6 @@ export function allocationFixture(overrides = {}) {
     faculty: fixtureFaculty,
     preferences: fixturePreferences,
     assignments: [],
-    loadLimits: { oneAssignmentPerPass: true },
     ...overrides,
   };
 }

@@ -31,8 +31,21 @@ test("reports highest-seniority currently eligible candidate for open sections",
   assert.equal(section(result, "S5").highestSeniorityCurrentlyEligibleCandidate.employeeId, "F3");
 });
 
-test("recommends sequential allocation by seniority with one-assignment-per-pass behavior", () => {
+test("recommends senior faculty preferences first without a default one-assignment cap", () => {
   const result = analyzeAllocation(allocationFixture());
+
+  assert.deepEqual(
+    result.recommendedNextAssignmentSequence.map((item) => `${item.employeeId}:${item.assignmentGroupId}`),
+    ["F1:S2", "F1:S1", "F1:S3", "F1:S4", "F3:S5", "F4:S6"]
+  );
+  assert.equal(prefDisposition(result, "F1", "S1").reasonCode, allocationReasonCodes.AWARDED);
+  assert.equal(prefDisposition(result, "F2", "S1").reasonCode, allocationReasonCodes.AWARDED_TO_MORE_SENIOR_CANDIDATE);
+});
+
+test("supports configurable one-assignment-per-pass behavior", () => {
+  const result = analyzeAllocation(allocationFixture({
+    loadLimits: { oneAssignmentPerPass: true },
+  }));
 
   assert.deepEqual(
     result.recommendedNextAssignmentSequence.map((item) => `${item.employeeId}:${item.assignmentGroupId}`),
@@ -63,12 +76,22 @@ test("respects current assignments and marks awarded preferences without rewriti
   assert.deepEqual(input.preferences, originalPreferences);
   assert.deepEqual(result.originalSubmissions, originalPreferences);
   assert.equal(prefDisposition(result, "F1", "S2").reasonCode, allocationReasonCodes.AWARDED);
-  assert.equal(prefDisposition(result, "F1", "S1").reasonCode, allocationReasonCodes.ALREADY_ASSIGNED_IN_THIS_PASS);
+  assert.equal(prefDisposition(result, "F1", "S1").reasonCode, allocationReasonCodes.AWARDED);
 });
 
-test("passes a section to next-highest interested candidate when senior candidate is already assigned", () => {
+test("keeps a senior candidate eligible for another preference after a current assignment by default", () => {
   const result = analyzeAllocation(allocationFixture({
     assignments: [{ assignment_group_id: "S2", employee_id: "F1", faculty_name: "Ava Andrews", status: "chair_submitted" }],
+  }));
+
+  assert.equal(section(result, "S1").highestSeniorityCurrentlyEligibleCandidate.employeeId, "F1");
+  assert.equal(section(result, "S1").candidateList.find((candidate) => candidate.employeeId === "F1").reasonCode, allocationReasonCodes.NOT_YET_REACHED);
+});
+
+test("passes a section to next-highest interested candidate when one-assignment-per-pass is configured", () => {
+  const result = analyzeAllocation(allocationFixture({
+    assignments: [{ assignment_group_id: "S2", employee_id: "F1", faculty_name: "Ava Andrews", status: "chair_submitted" }],
+    loadLimits: { oneAssignmentPerPass: true },
   }));
 
   assert.equal(section(result, "S1").highestSeniorityCurrentlyEligibleCandidate.employeeId, "F2");
