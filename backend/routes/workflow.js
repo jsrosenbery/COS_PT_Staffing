@@ -746,12 +746,17 @@ async function buildAllocationAnalysisFromDb(db, {
           `SELECT employee_id, first_name, last_name, email, division, discipline,
                   COALESCE(NULLIF(seniority_rank, ''), seniority_value, '') AS seniority_rank,
                   COALESCE(NULLIF(seniority_value, ''), seniority_rank, '') AS seniority_value,
-                  qualified_disciplines, active_status
-           FROM scope_pt_faculty
-           WHERE COALESCE(active_status, 'active') = 'active'
-             AND LOWER(division) = ANY($1::text[])
-           ORDER BY division, discipline, seniority_rank, last_name, first_name`,
-          [scopedDivisions.map((value) => value.toLowerCase())]
+                  qualified_disciplines, active_status,
+                  COALESCE(fls.status, 'active') AS load_status
+           FROM scope_pt_faculty pt
+           LEFT JOIN scope_faculty_load_status fls
+             ON fls.term_code = $2
+            AND LOWER(fls.division) = LOWER(pt.division)
+            AND fls.employee_id = pt.employee_id
+           WHERE COALESCE(pt.active_status, 'active') = 'active'
+             AND LOWER(pt.division) = ANY($1::text[])
+           ORDER BY pt.division, pt.discipline, pt.seniority_rank, pt.last_name, pt.first_name`,
+          [scopedDivisions.map((value) => value.toLowerCase()), termCode]
         )
       : Promise.resolve({ rows: [] }),
     sectionIds.length
@@ -1696,7 +1701,9 @@ router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req
               pref.preference_rank,
               section_pref.section_preference_rank,
               COALESCE(av.availability_days, '[]'::jsonb) AS availability_days,
-              COALESCE(av.availability_time_blocks, '[]'::jsonb) AS availability_time_blocks
+              COALESCE(av.availability_time_blocks, '[]'::jsonb) AS availability_time_blocks,
+              COALESCE(fls.status, 'active') AS load_status,
+              fls.updated_at AS load_status_updated_at
        FROM scope_sections s
        JOIN scope_pt_faculty pt
          ON pt.division = s.division
@@ -1745,6 +1752,10 @@ router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req
        LEFT JOIN scope_faculty_availability av
          ON av.term_code = s.term_code
         AND (av.faculty_id = pt.employee_id OR av.employee_id = pt.employee_id)
+       LEFT JOIN scope_faculty_load_status fls
+         ON fls.term_code = s.term_code
+        AND LOWER(fls.division) = LOWER(s.division)
+        AND fls.employee_id = pt.employee_id
        ${where}
        ORDER BY section_pref.section_preference_rank NULLS LAST, s.primary_subject_course, s.primary_crn,
                 COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '999999') NULLS LAST,
@@ -1812,6 +1823,74 @@ router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req
 
     res.json({ rows, preferenceSource });
   } catch (error) { res.status(500).json({ error: error.message }); }
+});
+
+router.post("/faculty-load-status", requireRoles("chair"), async (req, res) => {
+  const {
+    termCode = "",
+    division = "",
+    employeeId = "",
+    facultyName = "",
+    loadComplete = false,
+    note = "",
+  } = req.body || {};
+  const targetDivision = normalize(division);
+  const targetEmployee = normalize(employeeId);
+  if (!termCode || !targetDivision || !targetEmployee) {
+    return res.status(400).json({ error: "termCode, division, and employeeId are required." });
+  }
+  const scoped = scopeFilterForReq(req, [targetDivision]);
+  if (!scoped.length) return res.status(403).json({ error: "This action is outside your assigned division scope." });
+
+  try {
+    const actor = req.auth?.user || {};
+    const status = loadComplete ? "complete" : "active";
+    const result = await query(
+      `INSERT INTO scope_faculty_load_status
+        (term_code, division, employee_id, faculty_name, status, note,
+         actor_user_id, actor_email, actor_name, actor_role, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+       ON CONFLICT (term_code, division, employee_id)
+       DO UPDATE SET
+         faculty_name = EXCLUDED.faculty_name,
+         status = EXCLUDED.status,
+         note = EXCLUDED.note,
+         actor_user_id = EXCLUDED.actor_user_id,
+         actor_email = EXCLUDED.actor_email,
+         actor_name = EXCLUDED.actor_name,
+         actor_role = EXCLUDED.actor_role,
+         updated_at = NOW()
+       RETURNING term_code, division, employee_id, faculty_name, status, note, updated_at`,
+      [
+        termCode,
+        targetDivision,
+        targetEmployee,
+        normalize(facultyName),
+        status,
+        normalize(note),
+        actor.id || null,
+        actor.email || "",
+        actor.full_name || actor.email || "",
+        actor.role || "",
+      ]
+    );
+    await writeAuditEvent({ query }, req, {
+      eventType: status === "complete" ? "FACULTY_LOAD_COMPLETED" : "FACULTY_LOAD_REOPENED",
+      division: targetDivision,
+      term: termCode,
+      instructorName: normalize(facultyName) || targetEmployee,
+      oldValue: "",
+      newValue: status,
+      reasonCode: status === "complete" ? "LOAD_COMPLETE" : "LOAD_REOPENED",
+      explanation: normalize(note),
+      note: status === "complete"
+        ? `${normalize(facultyName) || targetEmployee} marked load complete for the current review.`
+        : `${normalize(facultyName) || targetEmployee} returned to assignment consideration.`,
+    });
+    res.json({ status: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ error: error.message || "Could not update faculty load status." });
+  }
 });
 
 router.get("/assignments", requireElevatedRole, requireScopedRead, async (req, res) => {

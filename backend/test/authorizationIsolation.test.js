@@ -147,6 +147,8 @@ test("division-sensitive writes derive indirect assignment scope from database",
 
   assert.match(workflow, /SELECT division FROM scope_sections WHERE term_code = \$1 AND assignment_group_id = \$2/);
   assert.match(workflow, /FROM scope_assignments a\s+LEFT JOIN scope_sections s/);
+  assert.match(workflow, /router\.post\("\/faculty-load-status", requireRoles\("chair"\)/);
+  assert.match(workflow, /const scoped = scopeFilterForReq\(req, \[targetDivision\]\)/);
   assert.match(workflow, /This action is outside your assigned division scope/);
 });
 
