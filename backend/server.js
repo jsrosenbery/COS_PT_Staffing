@@ -19,6 +19,13 @@ const AUTH_DISABLED = String(process.env.AUTH_DISABLED || "").toLowerCase() === 
 const CORS_ORIGIN = (process.env.CORS_ORIGIN || "").trim();
 const API_TOKEN_AUTH_ENABLED = String(process.env.API_TOKEN_AUTH_ENABLED ?? (process.env.NODE_ENV === "production" ? "false" : "true")).toLowerCase() === "true";
 const RUN_MIGRATIONS_ON_STARTUP = String(process.env.RUN_MIGRATIONS_ON_STARTUP || "").trim().toLowerCase() === "true";
+const DEPLOY_COMMIT = (
+  process.env.RENDER_GIT_COMMIT ||
+  process.env.VERCEL_GIT_COMMIT_SHA ||
+  process.env.COMMIT_SHA ||
+  process.env.GIT_COMMIT ||
+  ""
+).trim();
 const authConfigured = (API_TOKEN_AUTH_ENABLED && Boolean(API_TOKEN)) || AUTH_DISABLED;
 
 if (!authConfigured && API_TOKEN_AUTH_ENABLED) {
@@ -55,7 +62,11 @@ app.use(async (req, res, next) => {
 app.get("/api/health", async (_req, res) => {
   try {
     await query("SELECT 1");
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      commit: DEPLOY_COMMIT || null,
+      nodeEnv: process.env.NODE_ENV || "",
+    });
   } catch (e) {
     logError("health", e, { originalUrl: "/api/health" });
     res.status(500).json({ error: "Health check failed." });

@@ -129,8 +129,9 @@ test("chair decision route derives division scope from the staffing unit", () =>
   assert.match(workflow, /WHERE term_code = \$1 AND assignment_group_id = \$2\s+FOR UPDATE/);
   assert.match(workflow, /const sectionDivision = lockedSection\.rows\[0\]\.division/);
   assert.match(workflow, /scopeFilterForReq\(req, \[sectionDivision\]\)/);
-  assert.match(workflow, /const recommendationSnapshot = jsonObjectParam\(decision\.recommendationSnapshot\)/);
-  assert.match(workflow, /const decisionSnapshot = jsonObjectParam\(decision\.decisionSnapshot\)/);
+  assert.match(workflow, /const recommendationSnapshot = jsonObjectTextParam\(decision\.recommendationSnapshot\)/);
+  assert.match(workflow, /const decisionSnapshot = jsonObjectTextParam\(decision\.decisionSnapshot\)/);
+  assert.match(workflow, /recommendation_snapshot: recommendationSnapshotResponse/);
   assert.doesNotMatch(workflow, /JSON\.stringify\(decision\.recommendationSnapshot\)/);
   assert.doesNotMatch(workflow, /JSON\.stringify\(decision\.decisionSnapshot\)/);
   assert.doesNotMatch(workflow, /termCode, division, assignmentGroupId, and selectedEmployeeId are required/);

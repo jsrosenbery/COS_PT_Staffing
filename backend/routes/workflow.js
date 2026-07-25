@@ -29,6 +29,10 @@ function jsonObjectParam(value) {
   }
 }
 
+function jsonObjectTextParam(value) {
+  return JSON.stringify(jsonObjectParam(value));
+}
+
 function normUpper(value) {
   return normalize(value).toUpperCase();
 }
@@ -1573,14 +1577,16 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
     const selectedFacultyName = decision.selectedCandidate.facultyName || selectedEmployeeId;
     const reasonCode = decision.exceptionReason?.code || "";
     const justification = decision.exceptionExplanation || "";
-    const recommendationSnapshot = jsonObjectParam(decision.recommendationSnapshot);
-    const decisionSnapshot = jsonObjectParam(decision.decisionSnapshot);
+    const recommendationSnapshot = jsonObjectTextParam(decision.recommendationSnapshot);
+    const decisionSnapshot = jsonObjectTextParam(decision.decisionSnapshot);
+    const recommendationSnapshotResponse = JSON.parse(recommendationSnapshot);
+    const decisionSnapshotResponse = JSON.parse(decisionSnapshot);
     const decisionResult = await client.query(
       `INSERT INTO scope_chair_decisions
         (term_code, division, discipline_code, assignment_group_id, recommended_employee_id, selected_employee_id, selected_faculty_name,
          decision_status, exception_reason_code, exception_explanation, recommendation_snapshot, decision_snapshot,
          decided_by_user_id, decided_by_email, decided_by_name, decided_by_role, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13,$14,$15,$16,NOW())
        RETURNING id, decided_at`,
       [
         termCode,
@@ -1606,7 +1612,7 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
       `INSERT INTO scope_assignments
         (term_code, discipline_code, assignment_group_id, employee_id, faculty_name, status, actor_name, reason,
          reason_code, justification, recommendation_snapshot, decision_snapshot, updated_at)
-       VALUES ($1,$2,$3,$4,$5,'tentative',$6,$7,$8,$9,$10,$11,NOW())
+       VALUES ($1,$2,$3,$4,$5,'tentative',$6,$7,$8,$9,$10::jsonb,$11::jsonb,NOW())
        RETURNING id`,
       [
         termCode,
@@ -1651,8 +1657,8 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
         recommended_employee_id: decision.recommendedCandidate.employeeId,
         selected_employee_id: selectedEmployeeId,
         selected_faculty_name: selectedFacultyName,
-        recommendation_snapshot: recommendationSnapshot,
-        decision_snapshot: decisionSnapshot,
+        recommendation_snapshot: recommendationSnapshotResponse,
+        decision_snapshot: decisionSnapshotResponse,
       },
     });
   } catch (error) {
