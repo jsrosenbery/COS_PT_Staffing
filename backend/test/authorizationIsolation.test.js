@@ -113,10 +113,12 @@ test("faculty section display is bound to the authenticated employee roster reco
     "utf8"
   );
 
-  assert.match(frontend, /role === "faculty" \? normalize\(currentUser\?\.employee_id\)\.toLowerCase\(\) : ""/);
-  assert.match(frontend, /ownRosterRow\?\.employeeId \|\| ""/);
+  assert.match(frontend, /function employeeIdentityKey\(value\)/);
+  assert.match(frontend, /const facultyAccountRosterMatch = \(item\) =>/);
+  assert.match(frontend, /currentUser\?\.role === "faculty" && role === "faculty" \? \(/);
   assert.match(frontend, /if \(!facultyScopeKeys\.size\) \{\s+return \[\];/);
   assert.match(frontend, /Your account is not linked to an active PT staffing roster record/);
+  assert.doesNotMatch(frontend, /role === "faculty" \? normalize\(currentUser\?\.employee_id\)\.toLowerCase\(\) : ""/);
 });
 
 test("chair and dean frontend reads use authenticated division scope", () => {
@@ -130,6 +132,9 @@ test("chair and dean frontend reads use authenticated division scope", () => {
   assert.match(frontend, /if \(role === "dean" && currentUser\?\.role === "dean"\) return authenticatedDivisionScope/);
   assert.match(frontend, /Your account does not have a division scope assigned/);
   assert.match(frontend, /canSelectSyntheticScope \? \(/);
+  assert.match(frontend, /const currentScopeLabel = role === "admin"/);
+  assert.match(frontend, /currentUser\?\.role === "dean" \? currentUser\?\.full_name/);
+  assert.match(frontend, /\{`Scoped to \$\{currentScopeLabel\}`\}/);
 });
 
 test("division-sensitive workflow reads apply scope directly in SQL", () => {

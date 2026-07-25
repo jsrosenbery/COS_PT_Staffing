@@ -190,6 +190,10 @@ function compactKey(value) {
   return normalize(value).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function employeeIdentityKey(value) {
+  return compactKey(value);
+}
+
 function splitScopeValues(...values) {
   return values
     .flatMap((value) => String(value ?? "").split(/[|,;]/))
@@ -1764,31 +1768,53 @@ export default function PTFacultyStaffingMVP() {
       );
   }, [ptStaffingRows, ptFacultyDisciplineFilter]);
 
-  const authenticatedFacultyId =
-    role === "faculty" ? normalize(currentUser?.employee_id).toLowerCase() : "";
+  const facultyAccountRosterMatch = (item) => {
+    if (!item || role !== "faculty" || currentUser?.role !== "faculty") return false;
+    const userEmployeeKey = employeeIdentityKey(currentUser?.employee_id);
+    const rosterEmployeeKey = employeeIdentityKey(item.employeeId);
+    if (userEmployeeKey && rosterEmployeeKey && userEmployeeKey === rosterEmployeeKey) return true;
+    const userEmail = normalize(currentUser?.email).toLowerCase();
+    const rosterEmail = normalize(item.email).toLowerCase();
+    if (userEmail && rosterEmail && userEmail === rosterEmail) return true;
+    const userNameKey = compactKey(currentUser?.full_name);
+    const rosterNameKey = compactKey(facultyName(item));
+    return Boolean(userNameKey && rosterNameKey && userNameKey === rosterNameKey);
+  };
 
   useEffect(() => {
-    if (authenticatedFacultyId) {
-      const ownRosterRow = previewFacultyOptions.find(
-        (item) => normalize(item.employeeId).toLowerCase() === authenticatedFacultyId
-      );
+    if (role === "faculty" && currentUser?.role === "faculty") {
+      const ownRosterRow = previewFacultyOptions.find(facultyAccountRosterMatch);
       setSelectedFacultyId(ownRosterRow?.employeeId || "");
+      if (!ownRosterRow) {
+        setFacultyPreferences([]);
+        setFacultyAvailability({ days: [], timeBlocks: [] });
+      }
       return;
     }
     if (!previewFacultyOptions.length) return;
     if (!previewFacultyOptions.some((item) => item.employeeId === selectedFacultyId)) {
       setSelectedFacultyId(previewFacultyOptions[0].employeeId);
     }
-  }, [authenticatedFacultyId, previewFacultyOptions, selectedFacultyId]);
+  }, [role, currentUser, previewFacultyOptions, selectedFacultyId]);
 
   const selectedFaculty = useMemo(() => {
-    if (authenticatedFacultyId) {
-      return previewFacultyOptions.find(
-        (item) => normalize(item.employeeId).toLowerCase() === authenticatedFacultyId
-      ) || null;
+    if (role === "faculty" && currentUser?.role === "faculty") {
+      return previewFacultyOptions.find(facultyAccountRosterMatch) || null;
     }
     return previewFacultyOptions.find((item) => item.employeeId === selectedFacultyId) || previewFacultyOptions[0] || null;
-  }, [authenticatedFacultyId, previewFacultyOptions, selectedFacultyId]);
+  }, [role, currentUser, previewFacultyOptions, selectedFacultyId]);
+
+  const currentScopeLabel = role === "admin"
+    ? "College-wide administrative view"
+    : role === "chair"
+      ? (currentUser?.role === "chair" ? currentUser?.full_name || currentUser?.email || "Authenticated chair" : selectedChairName)
+      : role === "dean"
+        ? (currentUser?.role === "dean" ? currentUser?.full_name || currentUser?.email || "Authenticated dean" : selectedDeanName)
+        : selectedFaculty
+          ? facultyName(selectedFaculty)
+          : currentUser?.role === "faculty"
+            ? currentUser?.full_name || currentUser?.email || "Signed-in faculty"
+            : "selected faculty";
 
   const facultySeniorityRows = useMemo(() => {
     if (!selectedFaculty) return [];
@@ -4556,40 +4582,46 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <select
-                  style={ui.alphaSelect}
-                  value={ptFacultyDisciplineFilter}
-                  onChange={(e) => {
-                      setPtFacultyDisciplineFilter(e.target.value);
-                      setSelectedFacultyId("");
-                      setFacultyPreferences([]);
-                      setFacultyAvailability({ days: [], timeBlocks: [] });
-                    }}
-                >
-                  <option value="ALL">All PT disciplines</option>
-                  {Array.from(new Set((ptStaffingRows || []).map((row) => normalize(row.discipline || row.qualified_disciplines || "")).filter(Boolean))).sort().map((code) => (
-                    <option key={code} value={code}>
-                      {code}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  style={ui.alphaSelect}
-                  value={selectedFacultyId}
-                  onChange={(e) => {
-                      setSelectedFacultyId(e.target.value);
-                      setSelectedDisciplineCode("ALL");
-                      setFacultyPreferences([]);
-                      setFacultyAvailability({ days: [], timeBlocks: [] });
-                      setTimeout(() => loadFacultyPreferences(e.target.value), 0);
-                    }}
-                >
-                  {previewFacultyOptions.map((item) => (
-                    <option key={item.employeeId} value={item.employeeId}>
-                      {item.label || `${facultyName(item)} - ${item.seniorityRank ?? "no seniority"}`}
-                    </option>
-                  ))}
-                </select>
+                {currentUser?.role === "faculty" && role === "faculty" ? (
+                  <span style={ui.chip}>{selectedFaculty ? facultyName(selectedFaculty) : currentUser?.full_name || currentUser?.email || "Signed-in faculty"}</span>
+                ) : (
+                  <>
+                    <select
+                      style={ui.alphaSelect}
+                      value={ptFacultyDisciplineFilter}
+                      onChange={(e) => {
+                          setPtFacultyDisciplineFilter(e.target.value);
+                          setSelectedFacultyId("");
+                          setFacultyPreferences([]);
+                          setFacultyAvailability({ days: [], timeBlocks: [] });
+                        }}
+                    >
+                      <option value="ALL">All PT disciplines</option>
+                      {Array.from(new Set((ptStaffingRows || []).map((row) => normalize(row.discipline || row.qualified_disciplines || "")).filter(Boolean))).sort().map((code) => (
+                        <option key={code} value={code}>
+                          {code}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      style={ui.alphaSelect}
+                      value={selectedFacultyId}
+                      onChange={(e) => {
+                          setSelectedFacultyId(e.target.value);
+                          setSelectedDisciplineCode("ALL");
+                          setFacultyPreferences([]);
+                          setFacultyAvailability({ days: [], timeBlocks: [] });
+                          setTimeout(() => loadFacultyPreferences(e.target.value), 0);
+                        }}
+                    >
+                      {previewFacultyOptions.map((item) => (
+                        <option key={item.employeeId} value={item.employeeId}>
+                          {item.label || `${facultyName(item)} - ${item.seniorityRank ?? "no seniority"}`}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
                 <button style={ui.btn} onClick={() => loadFacultyPreferences(selectedFacultyId || selectedFaculty?.employeeId)}>
                   Load Saved Preferences
                 </button>
@@ -4708,7 +4740,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   <div style={ui.metricTile}>
                     <div style={ui.small}>Current role scope</div>
                     <div style={{ fontWeight: 800, marginTop: 6 }}>
-                      {role === "admin" ? "College-wide administrative view" : role === "chair" ? selectedChairName : role === "dean" ? selectedDeanName : facultyName(selectedFaculty || {})}
+                      {currentScopeLabel}
                     </div>
                   </div>
                   <div style={ui.metricTile}>
@@ -5590,11 +5622,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           </div>
           {role !== "admin" ? (
             <div style={{ marginTop: 8, color: "var(--text-subtle)", fontSize: 13 }}>
-              {role === "chair"
-                ? `Scoped to ${selectedChairName}`
-                : role === "dean"
-                ? `Scoped to ${selectedDeanName}`
-                : `Scoped to ${selectedFaculty ? facultyName(selectedFaculty) : "selected faculty"}`}
+              {`Scoped to ${currentScopeLabel}`}
             </div>
           ) : null}
 
