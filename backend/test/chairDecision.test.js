@@ -139,8 +139,9 @@ test("chair review UI separates selected faculty rank from section-level prefere
   assert.match(frontend, /Selected Faculty Preferences/);
   assert.match(frontend, /selectedReviewFacultyName.*preference #/);
   assert.match(frontend, /Highest submitted preference #/);
-  assert.match(frontend, /Frozen preference #/);
-  assert.match(frontend, /Not on frozen submitted list/);
+  assert.match(frontend, /chairPreferenceSourceLabel/);
+  assert.match(frontend, /current submitted preference/);
+  assert.match(frontend, /Not on matched submitted list/);
   assert.match(frontend, /frozenPreferenceRowCount/);
   assert.match(frontend, /effectiveRecommendedEmployeeId = backendRecommendedEmployeeId \|\| topCandidate\?\.employee_id/);
   assert.match(frontend, /item\.label \|\| `\$\{facultyName\(item\)\} - \$\{item\.seniorityRank \?\? "no seniority"\}`/);
@@ -175,11 +176,15 @@ test("chair workflow displays the same frozen preference source used by allocati
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
 
   assert.match(workflow, /async function loadFrozenPreferenceRowsForSections/);
+  assert.match(workflow, /async function loadPreferenceRowsForSections/);
   assert.match(workflow, /FROM scope_preference_submission_items i/);
   assert.match(workflow, /JOIN scope_preference_submissions s ON s\.id = i\.submission_id/);
   assert.match(workflow, /AND s\.status = 'frozen'/);
-  assert.match(workflow, /return remapPreferencesToCurrentSections\(preferenceResult\.rows, sections\)/);
-  assert.match(workflow, /preferences: frozenPreferences/);
+  assert.match(workflow, /allowLatestSubmittedFallback/);
+  assert.match(workflow, /status IN \('submitted', 'corrected'\)/);
+  assert.match(workflow, /source: latestSubmittedRows\.length \? "latest_submitted" : "none"/);
+  assert.match(workflow, /preferences: preferenceSource\.rows/);
+  assert.match(workflow, /res\.json\(\{ rows, preferenceSource \}\)/);
   assert.match(workflow, /candidateRankByAssignmentEmployee\.set\(key, rank\)/);
   assert.match(workflow, /preference_rank: candidateRankByAssignmentEmployee\.get/);
   assert.match(workflow, /section_preference_rank: sectionRankByAssignment\.get/);
