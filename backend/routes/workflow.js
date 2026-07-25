@@ -502,6 +502,25 @@ async function getContractExceptionReasons(db = { query }) {
   }
 }
 
+async function loadFrozenPreferenceRowsForSections(db, { termCode, sections = [] }) {
+  const scopedDivisions = Array.from(new Set(sections.map((row) => row.division).filter(Boolean)));
+  if (!termCode || !sections.length || !scopedDivisions.length) return [];
+
+  const preferenceResult = await db.query(
+    `SELECT i.term_code, i.faculty_id, i.employee_id, i.faculty_name, i.assignment_group_id, i.discipline_code,
+            i.preference_rank, i.item_snapshot, i.created_at, i.created_at AS updated_at
+     FROM scope_preference_submission_items i
+     JOIN scope_preference_submissions s ON s.id = i.submission_id
+     WHERE i.term_code = $1
+       AND LOWER(s.division) = ANY($2::text[])
+       AND s.status = 'frozen'
+     ORDER BY i.faculty_name, i.preference_rank, i.assignment_group_id`,
+    [termCode, scopedDivisions.map((value) => value.toLowerCase())]
+  );
+
+  return remapPreferencesToCurrentSections(preferenceResult.rows, sections);
+}
+
 async function getActivePreferenceWindow(db, termCode, division) {
   const result = await db.query(
     `SELECT id, term, division, opened_at, closes_at, status
@@ -676,7 +695,7 @@ async function buildAllocationAnalysisFromDb(db, {
   const sectionIds = sections.map((row) => row.assignment_group_id).filter(Boolean);
   const scopedDivisions = Array.from(new Set(sections.map((row) => row.division).filter(Boolean)));
 
-  const [facultyResult, preferenceResult, assignmentResult, reasonRows] = await Promise.all([
+  const [facultyResult, frozenPreferences, assignmentResult, reasonRows] = await Promise.all([
     scopedDivisions.length
       ? db.query(
           `SELECT employee_id, first_name, last_name, email, division, discipline,
@@ -690,19 +709,7 @@ async function buildAllocationAnalysisFromDb(db, {
           [scopedDivisions.map((value) => value.toLowerCase())]
         )
       : Promise.resolve({ rows: [] }),
-    sectionIds.length
-      ? db.query(
-          `SELECT i.term_code, i.faculty_id, i.employee_id, i.faculty_name, i.assignment_group_id, i.discipline_code,
-                  i.preference_rank, i.item_snapshot, i.created_at, i.created_at AS updated_at
-           FROM scope_preference_submission_items i
-           JOIN scope_preference_submissions s ON s.id = i.submission_id
-           WHERE i.term_code = $1
-             AND LOWER(s.division) = ANY($2::text[])
-             AND s.status = 'frozen'
-           ORDER BY i.faculty_name, i.preference_rank, i.assignment_group_id`,
-          [termCode, scopedDivisions.map((value) => value.toLowerCase())]
-        )
-      : Promise.resolve({ rows: [] }),
+    sectionIds.length ? loadFrozenPreferenceRowsForSections(db, { termCode, sections }) : Promise.resolve([]),
     sectionIds.length
       ? db.query(
           `SELECT a.id, a.term_code, a.discipline_code, a.assignment_group_id, a.employee_id, a.faculty_name, a.status,
@@ -725,7 +732,7 @@ async function buildAllocationAnalysisFromDb(db, {
       disciplineCode,
       sections,
       faculty: facultyResult.rows,
-      preferences: remapPreferencesToCurrentSections(preferenceResult.rows, sections),
+      preferences: frozenPreferences,
       assignments: assignmentResult.rows,
       recognizedContractualExceptions: reasonRows.map((row) => row.code),
       loadLimits: {
@@ -1629,7 +1636,7 @@ router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req
     }
     const result = await query(
       `SELECT s.assignment_group_id, s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus,
-              s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings,
+              s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings, s.raw_row,
               pt.employee_id, CONCAT_WS(' ', pt.first_name, pt.last_name) AS faculty_name,
               COALESCE(NULLIF(pt.seniority_rank, ''), pt.seniority_value, '') AS seniority_rank,
               pref.preference_rank,
@@ -1690,7 +1697,61 @@ router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req
                 pref.preference_rank NULLS LAST, faculty_name`,
       params
     );
-    res.json({ rows: result.rows.map((r) => ({ ...r, meetings: r.meetings || [] })) });
+
+    const sectionById = new Map();
+    for (const row of result.rows) {
+      if (!row.assignment_group_id || sectionById.has(row.assignment_group_id)) continue;
+      sectionById.set(row.assignment_group_id, {
+        term_code: termCode,
+        assignment_group_id: row.assignment_group_id,
+        primary_subject_course: row.primary_subject_course,
+        primary_crn: row.primary_crn,
+        title: row.title,
+        division: row.division,
+        campus: row.campus,
+        discipline_code: row.discipline_code,
+        instructional_method: row.instructional_method,
+        display_modality: row.display_modality,
+        modality: row.modality,
+        meetings: row.meetings || [],
+        raw_row: row.raw_row || {},
+      });
+    }
+    const sections = Array.from(sectionById.values());
+    const frozenPreferences = await loadFrozenPreferenceRowsForSections({ query }, { termCode, sections });
+    const sectionRankByAssignment = new Map();
+    const candidateRankByAssignmentEmployee = new Map();
+    for (const preference of frozenPreferences) {
+      const assignmentGroupId = normalize(preference.assignment_group_id);
+      const employeeId = normalize(preference.employee_id || preference.faculty_id);
+      const rank = Number(preference.preference_rank);
+      if (!assignmentGroupId || !Number.isFinite(rank)) continue;
+
+      const sectionRank = sectionRankByAssignment.get(assignmentGroupId);
+      if (!Number.isFinite(sectionRank) || rank < sectionRank) {
+        sectionRankByAssignment.set(assignmentGroupId, rank);
+      }
+      if (employeeId) {
+        const key = `${assignmentGroupId}::${employeeId}`;
+        const candidateRank = candidateRankByAssignmentEmployee.get(key);
+        if (!Number.isFinite(candidateRank) || rank < candidateRank) {
+          candidateRankByAssignmentEmployee.set(key, rank);
+        }
+      }
+    }
+
+    const rows = result.rows.map((row) => {
+      const assignmentGroupId = normalize(row.assignment_group_id);
+      const employeeId = normalize(row.employee_id);
+      return {
+        ...row,
+        meetings: row.meetings || [],
+        preference_rank: candidateRankByAssignmentEmployee.get(`${assignmentGroupId}::${employeeId}`) ?? null,
+        section_preference_rank: sectionRankByAssignment.get(assignmentGroupId) ?? null,
+      };
+    });
+
+    res.json({ rows });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 

@@ -512,27 +512,6 @@ function finiteNumberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function sectionPreferenceMatchKeys(item = {}) {
-  const keys = new Set();
-  [item.assignment_group_id, item.primary_crn].forEach((value) => {
-    const compact = compactKey(value);
-    if (compact) keys.add(compact);
-    const crns = String(value ?? "").match(/\d{4,}/g) || [];
-    crns.forEach((crn) => keys.add(`crn:${crn}`));
-    if (crns.length > 1) keys.add(`crns:${[...crns].sort().join("|")}`);
-  });
-  return Array.from(keys);
-}
-
-function minRankForKeys(map, keys, suffix = "") {
-  let best = null;
-  keys.forEach((key) => {
-    const rank = map.get(`${key}${suffix}`);
-    if (rank !== undefined && (best === null || rank < best)) best = rank;
-  });
-  return best;
-}
-
 function sectionStartMinutes(section) {
   const starts = (section?.meetings || [])
     .map((meeting) => parseClockToMinutes(meeting.start_time))
@@ -1000,7 +979,6 @@ export default function PTFacultyStaffingMVP() {
   const [ptFacultyDisciplineFilter, setPtFacultyDisciplineFilter] = useState("ALL");
   const [preferenceWipeMessage, setPreferenceWipeMessage] = useState("");
   const [chairWorkflowRows, setChairWorkflowRows] = useState([]);
-  const [chairPreferenceRows, setChairPreferenceRows] = useState([]);
   const [tentativeAssignments, setTentativeAssignments] = useState([]);
   const [allocationAnalysis, setAllocationAnalysis] = useState(null);
   const [contractExceptionReasons, setContractExceptionReasons] = useState([]);
@@ -1849,47 +1827,6 @@ export default function PTFacultyStaffingMVP() {
     return Array.from(new Set(filterOptionSections.map((section) => sectionModalityLabel(section)).filter(Boolean))).sort();
   }, [filterOptionSections]);
 
-  const chairPreferenceLookups = useMemo(() => {
-    const sectionRankByAssignment = new Map();
-    const candidateRankByAssignmentEmployee = new Map();
-    const selectedFacultySectionRankByAssignment = new Map();
-    const selectedFacultyKey = normalize(selectedFacultyId || selectedFaculty?.employeeId);
-
-    chairPreferenceRows.forEach((row) => {
-      const matchKeys = sectionPreferenceMatchKeys(row);
-      if (!matchKeys.length) return;
-      const rank = finiteNumberOrNull(row.preference_rank);
-      if (rank === null) return;
-      const employeeId = normalize(row.employee_id || row.faculty_id);
-      const isSelectedFacultyPreference = selectedFacultyKey && employeeId === selectedFacultyKey;
-
-      matchKeys.forEach((matchKey) => {
-        const currentSectionRank = sectionRankByAssignment.get(matchKey);
-        if (!Number.isFinite(currentSectionRank) || rank < currentSectionRank) {
-          sectionRankByAssignment.set(matchKey, rank);
-        }
-        if (isSelectedFacultyPreference) {
-          const currentSelectedRank = selectedFacultySectionRankByAssignment.get(matchKey);
-          if (!Number.isFinite(currentSelectedRank) || rank < currentSelectedRank) {
-            selectedFacultySectionRankByAssignment.set(matchKey, rank);
-          }
-        }
-      });
-
-      if (employeeId) {
-        matchKeys.forEach((matchKey) => {
-          const key = `${matchKey}::${employeeId}`;
-          const currentCandidateRank = candidateRankByAssignmentEmployee.get(key);
-          if (!Number.isFinite(currentCandidateRank) || rank < currentCandidateRank) {
-            candidateRankByAssignmentEmployee.set(key, rank);
-          }
-        });
-      }
-    });
-
-    return { sectionRankByAssignment, candidateRankByAssignmentEmployee, selectedFacultySectionRankByAssignment };
-  }, [chairPreferenceRows, selectedFacultyId, selectedFaculty]);
-
   const submittedFacultyOptions = useMemo(() => {
     const grouped = new Map();
     chairWorkflowRows.forEach((row) => {
@@ -1926,6 +1863,9 @@ export default function PTFacultyStaffingMVP() {
 
   const selectedReviewFacultyName = selectedReviewFaculty?.facultyName || (selectedFaculty ? facultyName(selectedFaculty) : "selected faculty");
   const selectedFacultyHasSubmittedPreferences = Boolean(selectedReviewFaculty?.preferenceCount);
+  const frozenPreferenceRowCount = useMemo(() => {
+    return chairWorkflowRows.filter((row) => finiteNumberOrNull(row.preference_rank) !== null).length;
+  }, [chairWorkflowRows]);
 
   const selectedSubmittedPreferenceRows = useMemo(() => {
     const selectedId = normalize(selectedFacultyId || selectedFaculty?.employeeId);
@@ -2326,7 +2266,6 @@ export default function PTFacultyStaffingMVP() {
       if ((role === "chair" || role === "dean") && !scopedDivisions.length) {
         setChairMessage("Your account does not have a division scope assigned. Ask an administrator to update your user record.");
         setChairWorkflowRows([]);
-        setChairPreferenceRows([]);
         setTentativeAssignments([]);
         setAllocationAnalysis(null);
         setContractExceptionReasons([]);
@@ -2350,7 +2289,6 @@ export default function PTFacultyStaffingMVP() {
       if (!workflowResponse.ok) {
         setChairMessage(workflowData.error || "Could not load workflow.");
         setChairWorkflowRows([]);
-        setChairPreferenceRows([]);
         if (!preserveAssignmentsOnError) setTentativeAssignments([]);
         setDecisionLogs([]);
         return;
@@ -2358,7 +2296,6 @@ export default function PTFacultyStaffingMVP() {
       if (!assignmentsResponse.ok) {
         setChairMessage(assignmentsData.error || "Could not load tentative assignments.");
         setChairWorkflowRows(workflowData.rows || []);
-        setChairPreferenceRows([]);
         if (!preserveAssignmentsOnError) setTentativeAssignments([]);
         setDecisionLogs([]);
         return;
@@ -2366,7 +2303,6 @@ export default function PTFacultyStaffingMVP() {
       if (!logsResponse.ok) {
         setChairMessage(logsData.error || "Could not load decision logs.");
         setChairWorkflowRows(workflowData.rows || []);
-        setChairPreferenceRows([]);
         setTentativeAssignments(assignmentsData.assignments || []);
         setDecisionLogs([]);
         return;
@@ -2377,19 +2313,7 @@ export default function PTFacultyStaffingMVP() {
         setContractExceptionReasons([]);
       }
 
-      let exportedPreferences = [];
-      try {
-        const preferenceResponse = await apiFetch(`${API_BASE}/preferences/export?termCode=${encodeURIComponent(activeTerm.code)}`);
-        if (preferenceResponse.ok) {
-          const preferenceCsv = await preferenceResponse.text();
-          exportedPreferences = Papa.parse(preferenceCsv, { header: true, skipEmptyLines: true }).data || [];
-        }
-      } catch (_error) {
-        exportedPreferences = [];
-      }
-
       setChairWorkflowRows(Array.isArray(workflowData.rows) ? workflowData.rows : []);
-      setChairPreferenceRows(exportedPreferences);
       setTentativeAssignments(Array.isArray(assignmentsData.assignments) ? assignmentsData.assignments : []);
       setAllocationAnalysis(analysisData.analysis || null);
       setContractExceptionReasons(Array.isArray(analysisData.exceptionReasons) ? analysisData.exceptionReasons : []);
@@ -2398,7 +2322,6 @@ export default function PTFacultyStaffingMVP() {
     } catch (error) {
       setChairMessage(error.message || "Could not load workflow.");
       setChairWorkflowRows([]);
-      setChairPreferenceRows([]);
       if (!preserveAssignmentsOnError) setTentativeAssignments([]);
       setAllocationAnalysis(null);
       setContractExceptionReasons([]);
@@ -4501,7 +4424,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     <option value="seniority">Top candidate seniority</option>
                   </select>
                   <div style={ui.small}>
-                    {chairPreferenceRows.length} saved preference row(s) loaded across {submittedFacultyOptions.length} submitting faculty.
+                    {frozenPreferenceRowCount} frozen preference row(s) matched across {submittedFacultyOptions.length} submitting faculty.
                   </div>
                 </div>
               </div>
@@ -4580,7 +4503,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                                 <div>
                                   <div style={{ fontWeight: 700 }}>{row.faculty_name}</div>
                                   <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
-                                    Seniority #{row.seniority_rank || "-"} - Own preference #{row.preference_rank || "not selected"}
+                                    Seniority #{row.seniority_rank || "-"} - {row.preference_rank ? `Frozen preference #${row.preference_rank}` : "Not on frozen submitted list"}
                                   </div>
                                   <div style={{ marginTop: 6 }}>
                                     <span style={workflowStatePillStyle(row.availabilitySummary?.matches ? "assigned" : "bypass")}>
@@ -4689,7 +4612,9 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{item.primary_crn || ""}</span>
                       </button>
                     )) : (
-                      <div style={{ color: "var(--text-subtle)" }}>No saved preferences are loaded for the selected faculty member.</div>
+                      <div style={{ color: "var(--text-subtle)" }}>
+                        No frozen submitted preferences are matched for the selected faculty member in this staffing queue.
+                      </div>
                     )}
                   </div>
                 </div>
