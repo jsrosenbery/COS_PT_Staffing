@@ -202,6 +202,24 @@ test("chair workflow displays the same frozen preference source used by allocati
   assert.match(workflow, /run\.slice\(-5\)/);
 });
 
+test("dean review UI uses packet-style approval instead of the chair assignment queue", () => {
+  const frontend = fs.readFileSync(new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url), "utf8");
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+
+  assert.match(frontend, /const \[deanReviewFilter, setDeanReviewFilter\]/);
+  assert.match(frontend, /const deanReviewRows = useMemo/);
+  assert.match(frontend, /Submitted Assignment Packets/);
+  assert.match(frontend, /Needs attention/);
+  assert.match(frontend, /Exception review/);
+  assert.match(frontend, /Interested Candidates at Decision Time/);
+  assert.match(frontend, /returnSubmittedAssignmentsForRevision/);
+  assert.match(frontend, /assignments\/return/);
+  assert.match(frontend, /role === "chair" \? \(/);
+  assert.match(frontend, /Show Schedule Reference/);
+  assert.match(frontend, /Hide Schedule Reference/);
+  assert.match(workflow, /router\.post\("\/assignments\/return", requireRoles\("dean"\), requireDivisionScope/);
+});
+
 test("chair conflict display ignores online sections, includes CRNs, and explains queue labels", () => {
   const frontend = fs.readFileSync(new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url), "utf8");
 
