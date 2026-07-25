@@ -672,6 +672,34 @@ async function createPreferenceSubmissionVersion(client, {
   return { ...submissionResult.rows[0], division: facultyRosterRow.division || "", discipline: facultyRosterRow.discipline || "" };
 }
 
+async function resolvePreferenceFacultyRoster(db, { facultyId = "", employeeId = "", authUser = null } = {}) {
+  const isFaculty = String(authUser?.role || "").trim().toLowerCase() === "faculty";
+  const lookupEmployeeId = String(isFaculty ? authUser?.employee_id || employeeId || facultyId : employeeId || facultyId).trim();
+  const lookupEmail = String(isFaculty ? authUser?.email || "" : "").trim();
+  const lookupName = String(isFaculty ? authUser?.full_name || "" : "").trim();
+  const result = await db.query(
+    `SELECT employee_id, email, CONCAT_WS(' ', first_name, last_name) AS faculty_name, division, discipline
+     FROM scope_pt_faculty
+     WHERE COALESCE(active_status, 'active') = 'active'
+       AND (
+         employee_id = $1
+         OR ($2 <> '' AND LOWER(email) = LOWER($2))
+         OR ($3 <> '' AND LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) =
+              LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')))
+       )
+     ORDER BY
+       CASE
+         WHEN employee_id = $1 THEN 0
+         WHEN $2 <> '' AND LOWER(email) = LOWER($2) THEN 1
+         ELSE 2
+       END,
+       employee_id
+     LIMIT 1`,
+    [lookupEmployeeId, lookupEmail, lookupName]
+  );
+  return result.rows[0] || null;
+}
+
 async function freezeLatestSubmittedVersions(client, { termCode, division, actor, auditReason = "Preference window closed; latest valid submitted versions frozen." }) {
   await client.query(
     `UPDATE scope_preference_submissions
@@ -2220,17 +2248,11 @@ router.get("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated,
   const { termCode = "", facultyId = "" } = req.query;
   if (!termCode || !facultyId) return res.status(400).json({ error: "termCode and facultyId are required." });
   try {
+    const facultyRosterRow = await resolvePreferenceFacultyRoster(query, {
+      facultyId,
+      authUser: req.auth?.user || null,
+    });
     if (String(req.auth?.user?.role || "").toLowerCase() === "faculty") {
-      const facultyResult = await query(
-        `SELECT division
-         FROM scope_pt_faculty
-         WHERE employee_id = $1
-           AND COALESCE(active_status, 'active') = 'active'
-         ORDER BY COALESCE(active_status, 'active') = 'active' DESC
-         LIMIT 1`,
-        [req.auth.user.employee_id || facultyId]
-      );
-      const facultyRosterRow = facultyResult.rows[0] || null;
       if (!facultyRosterRow) {
         return res.status(409).json({
           error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID to the roster.",
@@ -2260,22 +2282,25 @@ router.get("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated,
       }
     }
 
+    const facultyIdentifiers = Array.from(new Set([facultyId, facultyRosterRow?.employee_id].map((value) => String(value || "").trim()).filter(Boolean)));
     const [result, availabilityResult] = await Promise.all([
       query(
       `SELECT p.assignment_group_id, p.preference_rank, p.faculty_id, p.employee_id, p.faculty_name,
               s.primary_subject_course, s.primary_crn, s.title, s.division, s.campus, s.discipline_code, s.instructional_method, s.display_modality, s.modality, s.meetings
        FROM scope_preferences p
        LEFT JOIN scope_sections s ON s.term_code = p.term_code AND s.assignment_group_id = p.assignment_group_id
-       WHERE p.term_code = $1 AND p.faculty_id = $2
+       WHERE p.term_code = $1
+         AND (p.faculty_id = ANY($2::text[]) OR p.employee_id = ANY($2::text[]))
        ORDER BY p.preference_rank ASC`,
-      [termCode, facultyId]
+      [termCode, facultyIdentifiers]
       ),
       query(
         `SELECT availability_days, availability_time_blocks
          FROM scope_faculty_availability
-         WHERE term_code = $1 AND faculty_id = $2
+         WHERE term_code = $1
+           AND (faculty_id = ANY($2::text[]) OR employee_id = ANY($2::text[]))
          LIMIT 1`,
-        [termCode, facultyId]
+        [termCode, facultyIdentifiers]
       ),
     ]);
     const availability = availabilityResult.rows[0] || {};
@@ -2307,22 +2332,21 @@ router.post("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const facultyResult = await client.query(
-      `SELECT division, discipline
-       FROM scope_pt_faculty
-       WHERE employee_id = $1
-         AND COALESCE(active_status, 'active') = 'active'
-       ORDER BY COALESCE(active_status, 'active') = 'active' DESC
-       LIMIT 1`,
-      [employeeId || facultyId]
-    );
-    const facultyRosterRow = facultyResult.rows[0] || null;
+    const facultyRosterRow = await resolvePreferenceFacultyRoster(client, {
+      facultyId,
+      employeeId,
+      authUser: req.auth?.user || null,
+    });
     if (!facultyRosterRow) {
       await client.query("ROLLBACK");
       return res.status(409).json({
         error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID to the roster.",
       });
     }
+    const canonicalFacultyId = facultyRosterRow.employee_id || employeeId || facultyId;
+    const canonicalEmployeeId = facultyRosterRow.employee_id || employeeId || facultyId;
+    const canonicalFacultyName = facultyRosterRow.faculty_name || facultyName;
+    const facultyIdentifiers = Array.from(new Set([facultyId, employeeId, canonicalFacultyId].map((value) => String(value || "").trim()).filter(Boolean)));
     const windowResult = await client.query(
       `SELECT id, term, division, opened_at, closes_at, status
        FROM scope_staffing_windows
@@ -2350,9 +2374,9 @@ router.post("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated
     }
     const submissionResult = await createPreferenceSubmissionVersion(client, {
       termCode,
-      facultyId,
-      employeeId,
-      facultyName,
+      facultyId: canonicalFacultyId,
+      employeeId: canonicalEmployeeId,
+      facultyName: canonicalFacultyName,
       preferences,
       availabilityDays,
       availabilityTimeBlocks,
@@ -2362,13 +2386,18 @@ router.post("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated
       actor,
     });
     const submissionId = submissionResult.id;
-    await client.query(`DELETE FROM scope_preferences WHERE term_code = $1 AND faculty_id = $2`, [termCode, facultyId]);
+    await client.query(
+      `DELETE FROM scope_preferences
+       WHERE term_code = $1
+         AND (faculty_id = ANY($2::text[]) OR employee_id = ANY($2::text[]))`,
+      [termCode, facultyIdentifiers]
+    );
     for (const pref of preferences) {
       await client.query(
         `INSERT INTO scope_preferences
           (term_code, faculty_id, employee_id, faculty_name, assignment_group_id, discipline_code, preference_rank, updated_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
-        [termCode, facultyId, employeeId, facultyName, pref.assignment_group_id, pref.discipline_code || "", pref.preference_rank || 1]
+        [termCode, canonicalFacultyId, canonicalEmployeeId, canonicalFacultyName, pref.assignment_group_id, pref.discipline_code || "", pref.preference_rank || 1]
       );
     }
     await client.query(
@@ -2381,7 +2410,7 @@ router.post("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated
          availability_days = EXCLUDED.availability_days,
          availability_time_blocks = EXCLUDED.availability_time_blocks,
          updated_at = NOW()`,
-      [termCode, facultyId, employeeId, facultyName, JSON.stringify(availabilityDays), JSON.stringify(availabilityTimeBlocks)]
+      [termCode, canonicalFacultyId, canonicalEmployeeId, canonicalFacultyName, JSON.stringify(availabilityDays), JSON.stringify(availabilityTimeBlocks)]
     );
     await client.query(
       `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, division, term, instructor_name, new_value, note, source)
@@ -2392,7 +2421,7 @@ router.post("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated
         actor.role || "",
         facultyRosterRow.division || "",
         termCode,
-        facultyName,
+        canonicalFacultyName,
         String(submissionId || ""),
         targetStatus === preferenceSubmissionStatuses.CORRECTED ? `Admin correction: ${auditReason}` : `Preference ${targetStatus} version ${submissionResult.version_number}.`,
       ]
