@@ -147,3 +147,37 @@ test("workflow uses server-authored explanation and export endpoints", () => {
   assert.match(workflow, /router\.get\("\/decision-explanations\/print"/);
   assert.match(workflow, /submitted_by_email/);
 });
+
+test("workflow exposes staged exports with frozen source gates and audit records", () => {
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+
+  assert.match(workflow, /workflowExportStages = new Set\(\["preference-review", "chair-submission", "final-approved"\]\)/);
+  assert.match(workflow, /workflowExportFormats = new Set\(\["xlsx", "pdf", "csv"\]\)/);
+  assert.match(workflow, /router\.get\("\/workflow-exports\/:stage\.:format", requireElevatedRole, requireScopedRead/);
+  assert.match(workflow, /allowLatestSubmittedFallback: false/);
+  assert.match(workflow, /Preference review export is available after the preference window is frozen/);
+  assert.match(workflow, /Chair submission export is available after the chair submits the staffing packet/);
+  assert.match(workflow, /Final approved staffing export is available after dean approval/);
+  assert.match(workflow, /WORKFLOW_EXPORT_GENERATED/);
+  assert.match(workflow, /writeAuditEvent\(client, req/);
+});
+
+test("workflow export files include readable names, headers, legends, and formats", () => {
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+
+  assert.match(workflow, /function workflowExportFilename/);
+  assert.match(workflow, /SHERMAN_/);
+  assert.match(workflow, /safeFilePart\(termCode\)/);
+  assert.match(workflow, /safeFilePart\(divisionLabel\)/);
+  assert.match(workflow, /safeFilePart\(humanStageLabel\(stage\)\)/);
+  assert.match(workflow, /exportDateStamp\(generatedAt\)/);
+  assert.match(workflow, /Preference Review/);
+  assert.match(workflow, /Chair Submission/);
+  assert.match(workflow, /Final Approved Staffing/);
+  assert.match(workflow, /Content-Type", "application\/pdf"/);
+  assert.match(workflow, /Content-Type", "application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet"/);
+  assert.match(workflow, /Legend: Seniority rank is the roster order/);
+  assert.match(workflow, /"System Seniority Recommendation"/);
+  assert.match(workflow, /"Contractual Exception Code"/);
+  assert.match(workflow, /"Dean Approval Date"/);
+});

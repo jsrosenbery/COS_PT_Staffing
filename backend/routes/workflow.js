@@ -887,6 +887,236 @@ function csvFromRows(rows, headers) {
   return [headers.join(","), ...rows.map((row) => headers.map((header) => escapeCell(row[header])).join(","))].join("\n");
 }
 
+function safeFilePart(value) {
+  return String(value || "")
+    .trim()
+    .replace(/&/g, "and")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80) || "All_Divisions";
+}
+
+function exportDateStamp(date = new Date()) {
+  return date.toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+function formatMeetingSummary(meetings = []) {
+  const list = Array.isArray(meetings) ? meetings : [];
+  return list.map((meeting) => [
+    meeting.days,
+    [meeting.start_time, meeting.end_time].filter(Boolean).join("-"),
+    [meeting.building, meeting.room].filter(Boolean).join(" "),
+  ].filter(Boolean).join(" ")).filter(Boolean).join("; ");
+}
+
+function humanStageLabel(stage) {
+  if (stage === "preference-review") return "Preference Review";
+  if (stage === "chair-submission") return "Chair Submission";
+  if (stage === "final-approved") return "Final Approved Staffing";
+  return "Workflow Export";
+}
+
+function workflowExportFilename({ termCode, divisionLabel, stage, format, generatedAt = new Date() }) {
+  return `SHERMAN_${safeFilePart(termCode)}_${safeFilePart(divisionLabel)}_${safeFilePart(humanStageLabel(stage))}_${exportDateStamp(generatedAt)}.${format}`;
+}
+
+function xlsxColumnName(index) {
+  let column = "";
+  let value = index + 1;
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    column = String.fromCharCode(65 + remainder) + column;
+    value = Math.floor((value - 1) / 26);
+  }
+  return column;
+}
+
+function xlsxSheetXml(rows = []) {
+  const xmlRows = rows.map((values, rowIndex) => {
+    const cells = values.map((value, columnIndex) => {
+      const ref = `${xlsxColumnName(columnIndex)}${rowIndex + 1}`;
+      return `<c r="${ref}" t="inlineStr"><is><t>${escapeHtml(value)}</t></is></c>`;
+    }).join("");
+    return `<row r="${rowIndex + 1}">${cells}</row>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${xmlRows}</sheetData></worksheet>`;
+}
+
+const crcTable = Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  return value >>> 0;
+});
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = (crc >>> 8) ^ crcTable[(crc ^ byte) & 0xff];
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function dosDateTime(date = new Date()) {
+  const year = Math.max(date.getFullYear(), 1980);
+  const dosTime = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { dosTime, dosDate };
+}
+
+function zipStore(files, date = new Date()) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  const { dosTime, dosDate } = dosDateTime(date);
+  for (const file of files) {
+    const name = Buffer.from(file.name, "utf8");
+    const data = Buffer.isBuffer(file.data) ? file.data : Buffer.from(String(file.data), "utf8");
+    const checksum = crc32(data);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(dosTime, 10);
+    local.writeUInt16LE(dosDate, 12);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    localParts.push(local, name, data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(dosTime, 12);
+    central.writeUInt16LE(dosDate, 14);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, name);
+    offset += local.length + name.length + data.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(files.length, 8);
+  end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+  return Buffer.concat([...localParts, centralDirectory, end]);
+}
+
+function workbookXlsx({ title, generatedAt, summaryRows = [], detailRows = [], headers = [] }) {
+  const summary = [
+    [title],
+    ["Generated", generatedAt.toISOString()],
+    ...summaryRows.map((item) => [item.label, item.value]),
+  ];
+  const details = [
+    headers,
+    ...detailRows.map((item) => headers.map((header) => item[header] ?? "")),
+  ];
+  const files = [
+    {
+      name: "[Content_Types].xml",
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+    },
+    {
+      name: "_rels/.rels",
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+    },
+    {
+      name: "xl/workbook.xml",
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Summary" sheetId="1" r:id="rId1"/><sheet name="Detail" sheetId="2" r:id="rId2"/></sheets></workbook>`,
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>`,
+    },
+    { name: "xl/worksheets/sheet1.xml", data: xlsxSheetXml(summary) },
+    { name: "xl/worksheets/sheet2.xml", data: xlsxSheetXml(details) },
+  ];
+  return zipStore(files, generatedAt);
+}
+
+function pdfEscape(value) {
+  return String(value ?? "").replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+}
+
+function simplePdf({ title, generatedAt, summaryRows = [], detailRows = [], headers = [] }) {
+  const lines = [
+    title,
+    `Generated: ${generatedAt.toISOString()}`,
+    "",
+    ...summaryRows.map((row) => `${row.label}: ${row.value}`),
+    "",
+    "Legend: Seniority rank is the roster order; preference rank is the faculty submitted order; recommendation is the system seniority recommendation; exception status reflects documented contractual rationale.",
+    "",
+    headers.join(" | "),
+    ...detailRows.slice(0, 90).map((row) => headers.map((header) => row[header] ?? "").join(" | ")),
+  ].map((line) => pdfEscape(String(line).slice(0, 170)));
+  const content = [
+    "BT",
+    "/F1 10 Tf",
+    "36 760 Td",
+    ...lines.flatMap((line, index) => index === 0 ? [`(${line}) Tj`] : ["0 -14 Td", `(${line}) Tj`]),
+    "ET",
+  ].join("\n");
+  const objects = [
+    "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+    "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
+    "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj",
+    "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
+    `5 0 obj << /Length ${Buffer.byteLength(content)} >> stream\n${content}\nendstream endobj`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const object of objects) {
+    offsets.push(Buffer.byteLength(pdf));
+    pdf += `${object}\n`;
+  }
+  const xref = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i < offsets.length; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return Buffer.from(pdf, "utf8");
+}
+
+function sendWorkflowExport(res, { format, filename, title, generatedAt, summaryRows, detailRows, headers }) {
+  if (format === "csv") {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(csvFromRows(detailRows, headers));
+  }
+  if (format === "pdf") {
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.send(simplePdf({ title, generatedAt, summaryRows, detailRows, headers }));
+  }
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  return res.send(workbookXlsx({ title, generatedAt, summaryRows, detailRows, headers }));
+}
+
 async function buildDecisionExplanationFromDb(db, { termCode, division = "", divisions = [], disciplineCode = "" }) {
   const requestedDivisions = divisions.length ? divisions : parseScopeList(division);
   const { analysis } = await buildAllocationAnalysisFromDb(db, {
@@ -954,6 +1184,213 @@ async function buildDecisionExplanationFromDb(db, { termCode, division = "", div
     submissionItems: submissionItemsResult.rows,
     currentAnalysis: analysis,
   });
+}
+
+const workflowExportStages = new Set(["preference-review", "chair-submission", "final-approved"]);
+const workflowExportFormats = new Set(["xlsx", "pdf", "csv"]);
+
+function sectionExportFields(section = {}) {
+  return {
+    subject_course: section.primary_subject_course || [section.subject_code, section.course_number].filter(Boolean).join(" "),
+    crn: section.primary_crn || "",
+    title: section.title || "",
+    campus: section.campus || "",
+    modality: section.display_modality || section.modality || section.instructional_method || "",
+    meetings: formatMeetingSummary(section.meetings),
+    discipline: section.discipline_code || "",
+  };
+}
+
+function stageSummaryRows({ stage, termCode, divisionLabel, generatedAt, sourceLabel, rowCount, snapshotDate = "", packetVersion = "" }) {
+  return [
+    { label: "Stage", value: humanStageLabel(stage) },
+    { label: "Term", value: termCode },
+    { label: "Division", value: divisionLabel },
+    { label: "Source snapshot", value: sourceLabel },
+    { label: "Snapshot date", value: snapshotDate || generatedAt.toISOString() },
+    { label: "Packet version", value: packetVersion || "N/A" },
+    { label: "Detail rows", value: String(rowCount) },
+    { label: "Legend", value: "Seniority rank is roster order; preference rank is faculty submitted order; recommendation is the system seniority recommendation; exception status shows contractual rationale." },
+  ];
+}
+
+async function workflowExportSource(db, { termCode, divisions }) {
+  const divisionKeys = divisions.map((value) => value.toLowerCase());
+  const { analysis, preferenceSource } = await buildAllocationAnalysisFromDb(db, {
+    termCode,
+    divisions,
+    allowLatestSubmittedFallback: false,
+  });
+  const assignmentResult = await db.query(
+    `SELECT a.id, a.term_code, a.assignment_group_id, a.employee_id, a.faculty_name, a.status,
+            a.reason, a.reason_code, a.justification, a.recommendation_snapshot, a.decision_snapshot,
+            a.version, a.created_at, a.updated_at,
+            d.selected_employee_id, d.selected_faculty_name, d.recommended_employee_id, d.decision_status,
+            d.exception_reason_code, d.exception_explanation, d.decided_by_email, d.decided_by_name,
+            d.decided_by_role, d.version AS decision_version, d.decided_at,
+            s.division, s.primary_subject_course, s.primary_crn, s.title, s.campus, s.display_modality,
+            s.modality, s.instructional_method, s.discipline_code, s.meetings
+     FROM scope_assignments a
+     JOIN scope_sections s ON s.term_code = a.term_code AND s.assignment_group_id = a.assignment_group_id
+     LEFT JOIN LATERAL (
+       SELECT *
+       FROM scope_chair_decisions d
+       WHERE d.term_code = a.term_code AND d.assignment_group_id = a.assignment_group_id
+       ORDER BY d.decided_at DESC, d.id DESC
+       LIMIT 1
+     ) d ON TRUE
+     WHERE a.term_code = $1
+       AND LOWER(s.division) = ANY($2::text[])
+       AND COALESCE(a.status, 'tentative') NOT IN ('released', 'deleted', 'void', 'returned_for_revision')
+     ORDER BY s.division, s.discipline_code, s.primary_subject_course, s.primary_crn`,
+    [termCode, divisionKeys]
+  );
+  return { analysis, preferenceSource, assignments: assignmentResult.rows.map((row) => ({ ...row, meetings: row.meetings || [] })) };
+}
+
+function preferenceReviewRows({ termCode, analysis }) {
+  return (analysis.sections || []).flatMap((entry) => {
+    const section = entry.section || {};
+    const fields = sectionExportFields(section);
+    const candidates = entry.candidateList?.length ? entry.candidateList : [{}];
+    const recommendation = entry.highestSeniorityCurrentlyEligibleCandidate || {};
+    return candidates.map((candidate) => ({
+      Term: termCode,
+      Division: section.division || "",
+      "Staffing Unit": entry.assignmentGroupId,
+      "Subject and Course": fields.subject_course,
+      CRN: fields.crn,
+      Title: fields.title,
+      Campus: fields.campus,
+      Modality: fields.modality,
+      "Days and Times": fields.meetings,
+      "Interested Faculty": candidate.facultyName || "",
+      "Employee ID": candidate.employeeId || "",
+      "Seniority Rank": candidate.seniorityRank ?? "",
+      "Preference Rank": candidate.preferenceRank ?? "",
+      "Qualification Status": candidate.qualified === undefined ? "No interested candidate" : (candidate.qualified ? "Qualified" : "Not qualified"),
+      "Current Availability Status": candidate.reasonCode || "NO_INTERESTED_CANDIDATE",
+      "Load Status": candidate.reasonCode === "LOAD_LIMIT_REACHED" ? "Load limit reached" : "",
+      "System Seniority Recommendation": recommendation.facultyName || "",
+      "Recommendation Rationale": recommendation.employeeId ? "Highest-seniority currently eligible interested faculty." : "No eligible interested faculty available.",
+      "Missing Seniority Flag": candidate.reasonCode === "MISSING_SENIORITY" ? "Yes" : "",
+      "No Request Flag": candidate.reasonCode === "NOT_SELECTED_BY_FACULTY" ? "Yes" : "",
+      "No Qualified Candidate Flag": !recommendation.employeeId ? "Yes" : "",
+      "Unresolved Data Warnings": (analysis.warnings || []).filter((warning) => warning.assignmentGroupId === entry.assignmentGroupId || warning.employeeId === candidate.employeeId).map((warning) => warning.reasonCode || warning.code || warning.message).join("; "),
+    }));
+  });
+}
+
+function chairSubmissionRows({ termCode, analysis, assignments }) {
+  const analysisBySection = new Map((analysis.sections || []).map((row) => [row.assignmentGroupId, row]));
+  const assignmentBySection = new Map(assignments.filter((row) => ["chair_submitted", "dean_approved"].includes(String(row.status || "").toLowerCase())).map((row) => [row.assignment_group_id, row]));
+  return (analysis.sections || []).map((entry) => {
+    const section = entry.section || {};
+    const fields = sectionExportFields(section);
+    const assignment = assignmentBySection.get(entry.assignmentGroupId) || {};
+    const recommendation = entry.highestSeniorityCurrentlyEligibleCandidate || {};
+    const selectedCandidate = (analysisBySection.get(entry.assignmentGroupId)?.candidateList || []).find((candidate) => candidate.employeeId === assignment.employee_id) || {};
+    const followed = assignment.employee_id && recommendation.employeeId ? assignment.employee_id === recommendation.employeeId : false;
+    return {
+      Term: termCode,
+      Division: section.division || assignment.division || "",
+      "Staffing Unit": entry.assignmentGroupId,
+      "Subject and Course": fields.subject_course,
+      CRN: fields.crn,
+      Title: fields.title,
+      "Selected Faculty": assignment.faculty_name || "",
+      "Employee ID": assignment.employee_id || "",
+      "Selected Seniority Rank": selectedCandidate.seniorityRank ?? "",
+      "Selected Preference Rank": selectedCandidate.preferenceRank ?? "",
+      "Original System Recommendation": recommendation.facultyName || "",
+      "Followed Recommendation": assignment.employee_id ? (followed ? "Yes" : "No") : "Unstaffed",
+      "Contractual Exception Code": assignment.exception_reason_code || assignment.reason_code || "",
+      "Chair Explanation": assignment.exception_explanation || assignment.justification || assignment.reason || "",
+      "Current Load": assignment.employee_id ? "Assigned in packet" : "Unstaffed",
+      "Submission Date": assignment.updated_at || assignment.created_at || "",
+      "Submitted By": assignment.decided_by_name || assignment.decided_by_email || assignment.actor_name || "",
+      "Packet Version": assignment.version || assignment.decision_version || "",
+      "Packet Status": assignment.status || "unstaffed",
+    };
+  });
+}
+
+function finalApprovedRows({ termCode, analysis, assignments }) {
+  const approvedBySection = new Map(assignments.filter((row) => String(row.status || "").toLowerCase() === "dean_approved").map((row) => [row.assignment_group_id, row]));
+  return (analysis.sections || []).map((entry) => {
+    const section = entry.section || {};
+    const fields = sectionExportFields(section);
+    const assignment = approvedBySection.get(entry.assignmentGroupId) || {};
+    return {
+      Term: termCode,
+      Division: section.division || assignment.division || "",
+      "Subject and Course": fields.subject_course,
+      CRN: fields.crn,
+      Title: fields.title,
+      "Assigned Faculty": assignment.faculty_name || "",
+      "Employee ID": assignment.employee_id || "",
+      "Assignment Load": assignment.employee_id ? "1" : "",
+      Campus: fields.campus,
+      Modality: fields.modality,
+      "Days and Times": fields.meetings,
+      "Chair Submission Date": assignment.created_at || "",
+      "Dean Approval Date": assignment.updated_at || "",
+      "Approved By": assignment.decided_by_name || assignment.decided_by_email || "",
+      "Exception Code": assignment.exception_reason_code || assignment.reason_code || "",
+      "Packet/Snapshot Version": assignment.version || assignment.decision_version || "",
+      "Final Status": assignment.status || "unstaffed",
+    };
+  });
+}
+
+async function buildWorkflowExport(db, { termCode, divisions, stage }) {
+  const generatedAt = new Date();
+  const divisionLabel = divisions.join("_") || "All Divisions";
+  const source = await workflowExportSource(db, { termCode, divisions });
+  const frozenReady = (source.preferenceSource?.source || "") === "frozen";
+  const submittedReady = source.assignments.some((row) => ["chair_submitted", "dean_approved"].includes(String(row.status || "").toLowerCase()));
+  const approvedReady = source.assignments.some((row) => String(row.status || "").toLowerCase() === "dean_approved");
+  if (stage === "preference-review" && !frozenReady) {
+    const error = new Error("Preference review export is available after the preference window is frozen.");
+    error.status = 409;
+    throw error;
+  }
+  if (stage === "chair-submission" && !submittedReady) {
+    const error = new Error("Chair submission export is available after the chair submits the staffing packet.");
+    error.status = 409;
+    throw error;
+  }
+  if (stage === "final-approved" && !approvedReady) {
+    const error = new Error("Final approved staffing export is available after dean approval.");
+    error.status = 409;
+    throw error;
+  }
+
+  const rows = stage === "preference-review"
+    ? preferenceReviewRows({ termCode, analysis: source.analysis })
+    : stage === "chair-submission"
+      ? chairSubmissionRows({ termCode, analysis: source.analysis, assignments: source.assignments })
+      : finalApprovedRows({ termCode, analysis: source.analysis, assignments: source.assignments });
+  const headers = Object.keys(rows[0] || { Term: "", Division: "", "No Data": "" });
+  const snapshotDates = source.assignments.map((row) => row.updated_at || row.created_at).filter(Boolean).sort();
+  const snapshotDate = snapshotDates.length ? snapshotDates[snapshotDates.length - 1] : generatedAt.toISOString();
+  return {
+    title: `${humanStageLabel(stage)} - ${termCode} - ${divisionLabel}`,
+    generatedAt,
+    divisionLabel,
+    rows,
+    headers,
+    summaryRows: stageSummaryRows({
+      stage,
+      termCode,
+      divisionLabel,
+      generatedAt,
+      sourceLabel: stage === "preference-review" ? "Frozen preference snapshot" : "Chair/dean assignment snapshots",
+      snapshotDate,
+      packetVersion: source.assignments.map((row) => row.version).filter(Boolean).sort((a, b) => Number(b) - Number(a))[0] || "",
+      rowCount: rows.length,
+    }),
+  };
 }
 
 async function getProtectedWork(termCode, division) {
@@ -1691,6 +2128,59 @@ router.get("/decision-explanations/print", requireRoles("admin"), async (req, re
       </html>`);
   } catch (error) {
     res.status(500).send(escapeHtml(error.message || "Could not render decision explanations."));
+  }
+});
+
+router.get("/workflow-exports/:stage.:format", requireElevatedRole, requireScopedRead, async (req, res) => {
+  const { termCode = "", divisions = "" } = req.query;
+  const stage = normalize(req.params.stage).toLowerCase();
+  const format = normalize(req.params.format).toLowerCase();
+  if (!termCode) return res.status(400).json({ error: "termCode is required." });
+  if (!workflowExportStages.has(stage)) return res.status(400).json({ error: "Unknown workflow export stage." });
+  if (!workflowExportFormats.has(format)) return res.status(400).json({ error: "Export format must be xlsx, pdf, or csv." });
+
+  const scopedDivisions = scopeFilterForReq(req, String(divisions || "").split("|"));
+  if (!isAdmin(req) && !scopedDivisions.length) return res.status(403).json({ error: "No permitted divisions are available for this export." });
+  if (!scopedDivisions.length) return res.status(400).json({ error: "Select at least one division for this export." });
+
+  const client = await pool.connect();
+  try {
+    const report = await buildWorkflowExport(client, { termCode, divisions: scopedDivisions, stage });
+    const filename = workflowExportFilename({
+      termCode,
+      divisionLabel: report.divisionLabel,
+      stage,
+      format,
+      generatedAt: report.generatedAt,
+    });
+    await writeAuditEvent(client, req, {
+      eventType: "WORKFLOW_EXPORT_GENERATED",
+      division: report.divisionLabel,
+      term: termCode,
+      reasonCode: stage.toUpperCase().replace(/-/g, "_"),
+      newValue: {
+        workflow_stage: stage,
+        snapshot_or_packet_id: report.summaryRows.find((row) => row.label === "Source snapshot")?.value || "",
+        version_number: report.summaryRows.find((row) => row.label === "Packet version")?.value || "",
+        generated_at: report.generatedAt.toISOString(),
+        filename,
+        format,
+      },
+      note: `${humanStageLabel(stage)} export generated as ${format}.`,
+    });
+    return sendWorkflowExport(res, {
+      format,
+      filename,
+      title: report.title,
+      generatedAt: report.generatedAt,
+      summaryRows: report.summaryRows,
+      detailRows: report.rows,
+      headers: report.headers,
+    });
+  } catch (error) {
+    return res.status(error.status || 500).json({ error: error.message || "Could not generate workflow export." });
+  } finally {
+    client.release();
   }
 });
 

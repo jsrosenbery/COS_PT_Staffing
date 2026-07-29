@@ -19,7 +19,7 @@ function headers(role, division = "", employeeId = "") {
   };
 }
 
-integrationTest("draft preference timestamps and division reset workflow are PostgreSQL-safe", { timeout: 120_000 }, async () => {
+integrationTest("draft preference timestamps and division reset workflow are PostgreSQL-safe", { timeout: 120_000 }, async (t) => {
   const previousNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = "test";
   const schema = `division_reset_${Date.now()}_${Math.random().toString(16).slice(2)}`;
