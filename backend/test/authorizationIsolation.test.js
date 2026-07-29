@@ -245,4 +245,32 @@ test("permission matrix documents API-token behavior and endpoint classes", () =
   assert.match(doc, /GET \/api\/available-sections/);
   assert.match(doc, /POST \/api\/preferences/);
   assert.match(doc, /own-record-only/);
+  assert.match(doc, /GET \/api\/workflow-exports\/:stage\.:format/);
+  assert.match(doc, /server-authored audit event recorded/);
+});
+
+test("workflow export route is elevated, division-scoped, and not browser-authored", () => {
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+
+  assert.match(workflow, /router\.get\("\/workflow-exports\/:stage\.:format", requireElevatedRole, requireScopedRead/);
+  assert.match(workflow, /const scopedDivisions = scopeFilterForReq\(req, String\(divisions \|\| ""\)\.split\("\|"\)\)/);
+  assert.match(workflow, /if \(!isAdmin\(req\) && !scopedDivisions\.length\) return res\.status\(403\)/);
+  assert.match(workflow, /workflow_stage: stage/);
+  assert.match(workflow, /generated_at: report\.generatedAt\.toISOString\(\)/);
+  assert.doesNotMatch(workflow, /req\.body\.actor/);
+});
+
+test("frontend exposes progressive workflow export controls with stage availability", () => {
+  const frontend = fs.readFileSync(
+    new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(frontend, /Workflow Exports/);
+  assert.match(frontend, /Preference Review Export/);
+  assert.match(frontend, /Chair Submission Export/);
+  assert.match(frontend, /Final Approved Staffing Export/);
+  assert.match(frontend, /chairPreferenceSource\?\.source === "frozen"/);
+  assert.match(frontend, /downloadWorkflowExport\(option\.stage, format\)/);
+  assert.match(frontend, /workflow-exports\/\$\{stage\}\.\$\{format\}/);
 });

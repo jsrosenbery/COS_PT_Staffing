@@ -35,6 +35,7 @@ Division-scoped users must have an assigned division list. Chairs and deans with
 | `GET /api/decision-explanations` | chair/dean/admin | Division-scoped read derived from user divisions |
 | `GET /api/decision-explanations/export.csv` | admin | Admin/API-token export |
 | `GET /api/decision-explanations/print` | admin | Admin/API-token printable export |
+| `GET /api/workflow-exports/:stage.:format` | chair/dean/admin | Division-scoped export generated from frozen workflow stage data; server-authored audit event recorded |
 | `POST /api/chair-decisions` | chair | Division-scoped write; target section division validated from DB |
 | `GET /api/chair-workflow` | chair/dean/admin | Division-scoped read derived from user divisions |
 | `POST /api/faculty-load-status` | chair | Division-scoped write; marks a faculty member active/complete for current chair review |

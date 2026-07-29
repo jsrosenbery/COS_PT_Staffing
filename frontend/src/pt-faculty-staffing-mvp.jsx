@@ -804,6 +804,20 @@ function downloadCsvFromRows(rows, fileName, headers) {
   URL.revokeObjectURL(url);
 }
 
+async function downloadResponseBlob(response, fallbackFileName) {
+  const disposition = response.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = match?.[1] || fallbackFileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 const ui = {
   page: {
     minHeight: "100vh",
@@ -1055,6 +1069,8 @@ export default function PTFacultyStaffingMVP() {
   const [decisionLogs, setDecisionLogs] = useState([]);
   const [chairMessage, setChairMessage] = useState("");
   const [loadingChairWorkflow, setLoadingChairWorkflow] = useState(false);
+  const [workflowExportMessage, setWorkflowExportMessage] = useState("");
+  const [workflowExportBusy, setWorkflowExportBusy] = useState("");
   const [facultyPreferences, setFacultyPreferences] = useState([]);
   const [facultyAvailability, setFacultyAvailability] = useState({ days: [], timeBlocks: [] });
   const [savingPreferences, setSavingPreferences] = useState(false);
@@ -2329,6 +2345,55 @@ export default function PTFacultyStaffingMVP() {
       });
   }, [divisionStatuses]);
 
+  const workflowExportDivisions = useMemo(() => {
+    if (role === "chair") return chairDivisions.filter(Boolean);
+    if (role === "dean") return deanDivisions.filter(Boolean);
+    if (role === "admin") {
+      if (selectedUploadDivision) return [selectedUploadDivision];
+      return divisionReportRows.map((row) => row.division_name).filter(Boolean);
+    }
+    return [];
+  }, [role, chairDivisions, deanDivisions, selectedUploadDivision, divisionReportRows]);
+
+  const workflowExportScopeLabel = workflowExportDivisions.length
+    ? workflowExportDivisions.join(", ")
+    : "No division scope selected";
+
+  const workflowExportOptions = useMemo(() => {
+    const preferenceFrozen = chairPreferenceSource?.source === "frozen";
+    const submittedCount = (assignmentStatusCounts.chair_submitted || 0) + (assignmentStatusCounts.dean_approved || 0);
+    const approvedCount = assignmentStatusCounts.dean_approved || 0;
+    return [
+      {
+        stage: "preference-review",
+        label: "Preference Review Export",
+        description: "Full frozen faculty preference, seniority, qualification, recommendation, and warning context for chair review.",
+        source: preferenceFrozen ? "Frozen preference snapshot" : "Waiting for frozen preference snapshot",
+        enabled: preferenceFrozen,
+        disabledReason: "Available after the preference window is frozen.",
+        formats: ["xlsx", "pdf", "csv"],
+      },
+      {
+        stage: "chair-submission",
+        label: "Chair Submission Export",
+        description: "The chair-forwarded staffing packet, including selections, recommendation matches, exceptions, and explanations.",
+        source: submittedCount ? `${submittedCount} submitted or approved assignment(s)` : "No chair-submitted packet yet",
+        enabled: submittedCount > 0,
+        disabledReason: "Available after the chair submits assignments to the dean.",
+        formats: ["xlsx", "pdf", "csv"],
+      },
+      {
+        stage: "final-approved",
+        label: "Final Approved Staffing Export",
+        description: "Clean final roster of dean-approved assignments suitable for downstream administrative processing.",
+        source: approvedCount ? `${approvedCount} dean-approved assignment(s)` : "No dean-approved packet yet",
+        enabled: approvedCount > 0,
+        disabledReason: "Available after dean approval.",
+        formats: ["xlsx", "pdf", "csv"],
+      },
+    ];
+  }, [chairPreferenceSource, assignmentStatusCounts]);
+
   const visibleSections = useMemo(() => {
     return roleScopedSections.filter((section) => {
       if (selectedDisciplineCode !== "ALL" && section.discipline_code !== selectedDisciplineCode) return false;
@@ -3312,6 +3377,39 @@ export default function PTFacultyStaffingMVP() {
       URL.revokeObjectURL(url);
     } catch (error) {
       setPreferencesMessage(error.message || "Could not export preferences.");
+    }
+  }
+
+  async function downloadWorkflowExport(stage, format) {
+    setWorkflowExportMessage("");
+    if (!workflowExportDivisions.length) {
+      setWorkflowExportMessage("Select a division scope before exporting.");
+      return;
+    }
+    const busyKey = `${stage}:${format}`;
+    setWorkflowExportBusy(busyKey);
+    try {
+      const params = new URLSearchParams({
+        termCode: activeTerm.code,
+        divisions: workflowExportDivisions.join("|"),
+      });
+      const response = await apiFetch(`${API_BASE}/workflow-exports/${stage}.${format}?${params.toString()}`);
+      if (!response.ok) {
+        const text = await response.text();
+        try {
+          const data = text ? JSON.parse(text) : {};
+          throw new Error(data.error || data.message || `Export failed with status ${response.status}.`);
+        } catch (error) {
+          if (error instanceof SyntaxError) throw new Error(text || `Export failed with status ${response.status}.`);
+          throw error;
+        }
+      }
+      await downloadResponseBlob(response, `SHERMAN_${activeTerm.code}_${stage}.${format}`);
+      setWorkflowExportMessage("Export downloaded.");
+    } catch (error) {
+      setWorkflowExportMessage(error.message || "Could not download workflow export.");
+    } finally {
+      setWorkflowExportBusy("");
     }
   }
 
@@ -5029,6 +5127,56 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </div>
                 </div>
               </div>
+            </div>
+
+            <div style={{ ...ui.sectionCard, marginTop: 14 }}>
+              <div style={ui.miniKicker}>Exports</div>
+              <h2 style={{ ...ui.cardTitle, marginTop: 8 }}>Workflow Exports</h2>
+              <div style={ui.cardDesc}>
+                Download stage-specific reports for {workflowExportScopeLabel}. Each export is generated server-side from the authoritative workflow stage data and recorded in the audit log.
+              </div>
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", marginTop: 14 }}>
+                {workflowExportOptions.map((option) => (
+                  <div key={option.stage} style={{ ...ui.metricTile, display: "grid", gap: 10, alignContent: "start" }}>
+                    <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "start" }}>
+                      <div>
+                        <div style={{ fontWeight: 900 }}>{option.label}</div>
+                        <div style={{ ...ui.small, marginTop: 4 }}>{option.description}</div>
+                      </div>
+                      <span style={option.enabled ? ui.chip : { ...ui.chip, background: "var(--bg-soft)", color: "var(--text-muted)" }}>
+                        {option.enabled ? "Ready" : "Locked"}
+                      </span>
+                    </div>
+                    <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                      Source: {option.source}
+                    </div>
+                    {!option.enabled ? (
+                      <div style={{ color: "var(--text-muted)", fontSize: 13 }}>{option.disabledReason}</div>
+                    ) : null}
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {option.formats.map((format) => {
+                        const busyKey = `${option.stage}:${format}`;
+                        return (
+                          <button
+                            key={`${option.stage}-${format}`}
+                            type="button"
+                            style={format === "xlsx" ? ui.btnPrimary : ui.btn}
+                            onClick={() => downloadWorkflowExport(option.stage, format)}
+                            disabled={!option.enabled || !workflowExportDivisions.length || workflowExportBusy === busyKey}
+                          >
+                            {workflowExportBusy === busyKey ? "Preparing..." : format.toUpperCase()}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {workflowExportMessage ? (
+                <div style={{ marginTop: 12, color: workflowExportMessage.toLowerCase().includes("downloaded") ? "#166534" : "#b91c1c", fontWeight: 800 }}>
+                  {workflowExportMessage}
+                </div>
+              ) : null}
             </div>
 
             {chairMessage ? (
