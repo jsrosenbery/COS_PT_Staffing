@@ -1042,6 +1042,11 @@ export default function PTFacultyStaffingMVP() {
   const [selectedDisciplineCode, setSelectedDisciplineCode] = useState("ALL");
   const [ptFacultyDisciplineFilter, setPtFacultyDisciplineFilter] = useState("ALL");
   const [preferenceWipeMessage, setPreferenceWipeMessage] = useState("");
+  const [divisionResetMode, setDivisionResetMode] = useState("preferences");
+  const [divisionResetReason, setDivisionResetReason] = useState("");
+  const [divisionResetConfirmation, setDivisionResetConfirmation] = useState("");
+  const [divisionResetMessage, setDivisionResetMessage] = useState("");
+  const [divisionResetBusy, setDivisionResetBusy] = useState(false);
   const [chairWorkflowRows, setChairWorkflowRows] = useState([]);
   const [chairPreferenceSource, setChairPreferenceSource] = useState(null);
   const [tentativeAssignments, setTentativeAssignments] = useState([]);
@@ -1490,6 +1495,72 @@ export default function PTFacultyStaffingMVP() {
       }
     } catch (error) {
       setPreferenceWipeMessage(error.message || "Could not wipe preferences.");
+    }
+  }
+
+  const divisionResetModeHelp = {
+    preferences: "Deletes preference workflow state: saved preferences, availability, submitted/draft/frozen versions, and the staffing window. Uploaded sections and the PT roster stay.",
+    staffing: "Deletes preference workflow state plus load-complete markers, chair decisions, dean review state, and active assignments. Uploaded sections and the PT roster stay.",
+    complete: "Returns the division to post-schedule-upload state. Sections, roster, subject mappings, terms, users, and audit history stay.",
+  };
+
+  async function resetDivisionWorkflow() {
+    if (!canUseAdminTools) {
+      setDivisionResetMessage("Sign in as an administrator before resetting a division.");
+      return;
+    }
+    const division = normalize(selectedUploadDivision);
+    if (!activeTerm?.code || !division) {
+      setDivisionResetMessage("Select a term and division before resetting workflow state.");
+      return;
+    }
+    if (!normalize(divisionResetReason)) {
+      setDivisionResetMessage("Enter an audit reason before resetting workflow state.");
+      return;
+    }
+    if (normalize(divisionResetConfirmation) !== division) {
+      setDivisionResetMessage(`Type ${division} exactly before resetting workflow state.`);
+      return;
+    }
+    const confirmed = window.confirm(
+      `Reset ${division} for ${activeTerm.code} using ${divisionResetMode} mode?\n\n${divisionResetModeHelp[divisionResetMode]}\n\nThis action is transactional but cannot be undone after it succeeds.`
+    );
+    if (!confirmed) return;
+    setDivisionResetBusy(true);
+    setDivisionResetMessage("");
+    try {
+      const response = await apiFetch(`${API_BASE}/admin/division-reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          termCode: activeTerm.code,
+          division,
+          resetMode: divisionResetMode,
+          auditReason: divisionResetReason,
+          confirmationText: divisionResetConfirmation,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setDivisionResetMessage(data.error || "Could not reset division workflow.");
+        return;
+      }
+      const affected = data.affected || {};
+      const affectedSummary = Object.entries(affected)
+        .filter(([, count]) => Number(count) > 0)
+        .map(([table, count]) => `${table}: ${count}`)
+        .join("; ") || "No rows needed removal.";
+      setDivisionResetMessage(`Reset complete for ${data.division}. ${affectedSummary}`);
+      setDivisionResetConfirmation("");
+      await loadDivisionStatuses();
+      if (role === "chair" || role === "dean" || role === "admin") {
+        await loadChairWorkflow({ preserveMessage: true });
+      }
+      await loadAvailableSections(selectedDisciplineCode);
+    } catch (error) {
+      setDivisionResetMessage(error.message || "Could not reset division workflow.");
+    } finally {
+      setDivisionResetBusy(false);
     }
   }
 
@@ -4804,6 +4875,95 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     Export Division Summary
                   </button>
                 </div>
+                {canUseAdminTools ? (
+                  <div style={{ ...ui.sectionCard, marginTop: 14, background: "var(--bg-soft)" }}>
+                    <div style={{ fontWeight: 900 }}>Reset Division</div>
+                    <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 13 }}>
+                      Transactionally reset one division and term. Sections, PT roster, subject mappings, terms, users, and audit history are preserved.
+                    </div>
+                    <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                      <label style={{ display: "grid", gap: 4 }}>
+                        <span style={ui.small}>Term</span>
+                        <select
+                          style={ui.select}
+                          value={activeTerm.code}
+                          onChange={(event) => activateTerm(event.target.value)}
+                          disabled={divisionResetBusy}
+                        >
+                          {terms.map((term) => (
+                            <option key={term.code} value={term.code}>{term.name} ({term.code})</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label style={{ display: "grid", gap: 4 }}>
+                        <span style={ui.small}>Division</span>
+                        <select
+                          style={ui.select}
+                          value={selectedUploadDivision}
+                          onChange={(event) => {
+                            setSelectedUploadDivision(event.target.value);
+                            setDivisionResetConfirmation("");
+                          }}
+                          disabled={divisionResetBusy}
+                        >
+                          <option value="">Select division</option>
+                          {divisionReportRows.map((row) => (
+                            <option key={row.division_name} value={row.division_name}>{row.division_name}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label style={{ display: "grid", gap: 4 }}>
+                        <span style={ui.small}>Reset mode</span>
+                        <select
+                          style={ui.select}
+                          value={divisionResetMode}
+                          onChange={(event) => setDivisionResetMode(event.target.value)}
+                          disabled={divisionResetBusy}
+                        >
+                          <option value="preferences">Preferences only</option>
+                          <option value="staffing">Preferences and staffing decisions</option>
+                          <option value="complete">Complete workflow reset</option>
+                        </select>
+                      </label>
+                      <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                        {divisionResetModeHelp[divisionResetMode]}
+                      </div>
+                      <label style={{ display: "grid", gap: 4 }}>
+                        <span style={ui.small}>Audit reason</span>
+                        <textarea
+                          style={{ ...ui.input, minHeight: 70, resize: "vertical" }}
+                          value={divisionResetReason}
+                          onChange={(event) => setDivisionResetReason(event.target.value)}
+                          placeholder="Explain why this division reset is needed."
+                          disabled={divisionResetBusy}
+                        />
+                      </label>
+                      <label style={{ display: "grid", gap: 4 }}>
+                        <span style={ui.small}>Type the division name to confirm</span>
+                        <input
+                          style={ui.input}
+                          value={divisionResetConfirmation}
+                          onChange={(event) => setDivisionResetConfirmation(event.target.value)}
+                          placeholder={selectedUploadDivision || "Division name"}
+                          disabled={divisionResetBusy}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        style={ui.btnDanger || ui.btnPrimary}
+                        onClick={resetDivisionWorkflow}
+                        disabled={divisionResetBusy || !selectedUploadDivision || !divisionResetReason || divisionResetConfirmation !== selectedUploadDivision}
+                      >
+                        {divisionResetBusy ? "Resetting..." : "Reset Division"}
+                      </button>
+                      {divisionResetMessage ? (
+                        <div style={{ color: divisionResetMessage.toLowerCase().includes("complete") ? "#166534" : "#b91c1c", fontWeight: 800, fontSize: 13 }}>
+                          {divisionResetMessage}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div style={ui.commandLane}>

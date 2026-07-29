@@ -37,6 +37,12 @@ Migration `0004_staffing_windows_updated_at.sql` safely upgrades older databases
 `scope_staffing_windows` table predates the `updated_at` column. It adds the column with a current-time
 default and does not drop, recreate, or remove any staffing-window records.
 
+Migration `0007_nullable_draft_submission_timestamp.sql` safely upgrades databases where
+`scope_preference_submissions.submitted_at` was created with a legacy `NOT NULL` constraint.
+Draft preference versions intentionally have no submission timestamp, so the migration drops that
+constraint and recreates the term/faculty submission index with explicit `NULLS LAST` ordering.
+It does not populate timestamps for drafts or remove any preference history.
+
 ## Backups, failures, and rollback
 
 Always create a restorable backup before production migration and retain it through post-deploy verification. The runner stops at the first failure and rolls that migration back where PostgreSQL supports transactional DDL. Investigate the error before retrying; never insert migration-history rows manually to bypass a failure.
