@@ -755,7 +755,7 @@ async function freezeLatestSubmittedVersions(client, { termCode, division, actor
   );
   const result = await client.query(
     `WITH ranked AS (
-       SELECT id, faculty_id, ROW_NUMBER() OVER (PARTITION BY faculty_id ORDER BY submitted_at DESC, version_number DESC, id DESC) AS rn
+       SELECT id, faculty_id, ROW_NUMBER() OVER (PARTITION BY faculty_id ORDER BY submitted_at DESC NULLS LAST, version_number DESC, id DESC) AS rn
        FROM scope_preference_submissions
        WHERE term_code = $1
          AND LOWER(division) = LOWER($2)
@@ -930,7 +930,7 @@ async function buildDecisionExplanationFromDb(db, { termCode, division = "", div
        FROM scope_preference_submissions
        WHERE term_code = $1
          ${requestedDivisions.length ? "AND LOWER(division) = ANY($2::text[])" : ""}
-       ORDER BY submitted_at DESC, id DESC`,
+       ORDER BY submitted_at DESC NULLS LAST, id DESC`,
       requestedDivisions.length ? [termCode, requestedDivisions.map((value) => value.toLowerCase())] : [termCode]
     ),
     db.query(
@@ -2730,6 +2730,203 @@ router.post("/preferences/wipe", requireElevatedRole, async (req,res)=>{
                 [termCode,`Wiped ${division}`]);
    res.json({ok:true,deleted:result.rowCount});
  }catch(e){res.status(500).json({error:e.message});}
+});
+
+const divisionResetModes = new Set(["preferences", "staffing", "complete"]);
+
+function addCount(counts, key, result) {
+  counts[key] = (counts[key] || 0) + (result?.rowCount || 0);
+}
+
+async function resolveResetDivision(client, termCode, division) {
+  const result = await client.query(
+    `SELECT division
+     FROM (
+       SELECT division FROM scope_sections WHERE term_code = $1 AND LOWER(division) = LOWER($2)
+       UNION ALL
+       SELECT division FROM scope_staffing_windows WHERE term = $1 AND LOWER(division) = LOWER($2)
+       UNION ALL
+       SELECT division FROM scope_preference_submissions WHERE term_code = $1 AND LOWER(division) = LOWER($2)
+       UNION ALL
+       SELECT division FROM scope_chair_decisions WHERE term_code = $1 AND LOWER(division) = LOWER($2)
+       UNION ALL
+       SELECT fls.division FROM scope_faculty_load_status fls WHERE fls.term_code = $1 AND LOWER(fls.division) = LOWER($2)
+       UNION ALL
+       SELECT s.division
+       FROM scope_assignments a
+       JOIN scope_sections s ON s.term_code = a.term_code AND s.assignment_group_id = a.assignment_group_id
+       WHERE a.term_code = $1 AND LOWER(s.division) = LOWER($2)
+     ) scoped
+     WHERE COALESCE(division, '') <> ''
+     ORDER BY CASE WHEN division = $2 THEN 0 ELSE 1 END, division
+     LIMIT 1`,
+    [termCode, division]
+  );
+  return result.rows[0]?.division || "";
+}
+
+async function resetDivisionWorkflow(client, { termCode, division, resetMode, failAfterDelete = false }) {
+  const counts = {};
+  const divisionKey = String(division || "").toLowerCase();
+  const sectionResult = await client.query(
+    `SELECT assignment_group_id
+     FROM scope_sections
+     WHERE term_code = $1 AND LOWER(division) = $2
+     FOR SHARE`,
+    [termCode, divisionKey]
+  );
+  const sectionIds = sectionResult.rows.map((row) => row.assignment_group_id).filter(Boolean);
+  const facultyResult = await client.query(
+    `SELECT employee_id
+     FROM scope_pt_faculty
+     WHERE LOWER(division) = $1`,
+    [divisionKey]
+  );
+  const facultyIds = facultyResult.rows.map((row) => String(row.employee_id || "").trim()).filter(Boolean);
+
+  const submissionIdResult = await client.query(
+    `SELECT id
+     FROM scope_preference_submissions
+     WHERE term_code = $1 AND LOWER(division) = $2
+     FOR UPDATE`,
+    [termCode, divisionKey]
+  );
+  const submissionIds = submissionIdResult.rows.map((row) => row.id);
+
+  if (submissionIds.length) {
+    addCount(counts, "scope_preference_submission_items", await client.query(
+      `DELETE FROM scope_preference_submission_items WHERE submission_id = ANY($1::int[])`,
+      [submissionIds]
+    ));
+    addCount(counts, "scope_preference_submissions", await client.query(
+      `DELETE FROM scope_preference_submissions WHERE id = ANY($1::int[])`,
+      [submissionIds]
+    ));
+  } else {
+    counts.scope_preference_submission_items = 0;
+    counts.scope_preference_submissions = 0;
+  }
+
+  if (sectionIds.length || facultyIds.length) {
+    addCount(counts, "scope_preferences", await client.query(
+      `DELETE FROM scope_preferences
+       WHERE term_code = $1
+         AND (
+           ($2::text[] <> '{}'::text[] AND assignment_group_id = ANY($2::text[]))
+           OR ($3::text[] <> '{}'::text[] AND (faculty_id = ANY($3::text[]) OR employee_id = ANY($3::text[])))
+         )`,
+      [termCode, sectionIds, facultyIds]
+    ));
+    addCount(counts, "scope_faculty_availability", await client.query(
+      `DELETE FROM scope_faculty_availability
+       WHERE term_code = $1
+         AND $2::text[] <> '{}'::text[]
+         AND (faculty_id = ANY($2::text[]) OR employee_id = ANY($2::text[]))`,
+      [termCode, facultyIds]
+    ));
+  } else {
+    counts.scope_preferences = 0;
+    counts.scope_faculty_availability = 0;
+  }
+
+  addCount(counts, "scope_staffing_windows", await client.query(
+    `DELETE FROM scope_staffing_windows
+     WHERE term = $1 AND LOWER(division) = $2`,
+    [termCode, divisionKey]
+  ));
+
+  if (resetMode === "staffing" || resetMode === "complete") {
+    addCount(counts, "scope_faculty_load_status", await client.query(
+      `DELETE FROM scope_faculty_load_status
+       WHERE term_code = $1 AND LOWER(division) = $2`,
+      [termCode, divisionKey]
+    ));
+    addCount(counts, "scope_chair_decisions", await client.query(
+      `DELETE FROM scope_chair_decisions
+       WHERE term_code = $1
+         AND (
+           LOWER(division) = $2
+           OR ($3::text[] <> '{}'::text[] AND assignment_group_id = ANY($3::text[]))
+         )`,
+      [termCode, divisionKey, sectionIds]
+    ));
+    addCount(counts, "scope_assignments", await client.query(
+      `DELETE FROM scope_assignments a
+       USING scope_sections s
+       WHERE a.term_code = $1
+         AND s.term_code = a.term_code
+         AND s.assignment_group_id = a.assignment_group_id
+         AND LOWER(s.division) = $2`,
+      [termCode, divisionKey]
+    ));
+  } else {
+    counts.scope_faculty_load_status = 0;
+    counts.scope_chair_decisions = 0;
+    counts.scope_assignments = 0;
+  }
+
+  if (failAfterDelete) throw new Error("Injected division reset failure.");
+
+  return counts;
+}
+
+router.post("/admin/division-reset", requireRoles("admin"), async (req, res) => {
+  const {
+    termCode = "",
+    division = "",
+    resetMode = "",
+    auditReason = "",
+    confirmationText = "",
+    injectFailure = "",
+  } = req.body || {};
+  const normalizedTerm = normalize(termCode);
+  const requestedDivision = normalize(division);
+  const normalizedMode = normalize(resetMode).toLowerCase();
+  const reason = normalize(auditReason);
+  if (!normalizedTerm || !requestedDivision || !normalizedMode || !reason || !normalize(confirmationText)) {
+    return res.status(400).json({ error: "termCode, division, resetMode, auditReason, and confirmationText are required." });
+  }
+  if (!divisionResetModes.has(normalizedMode)) {
+    return res.status(400).json({ error: "resetMode must be preferences, staffing, or complete." });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const storedDivision = await resolveResetDivision(client, normalizedTerm, requestedDivision);
+    if (!storedDivision) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "No stored schedule or workflow data was found for that term and division." });
+    }
+    if (normalize(confirmationText) !== storedDivision) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ error: `Confirmation text must exactly match ${storedDivision}.` });
+    }
+
+    const counts = await resetDivisionWorkflow(client, {
+      termCode: normalizedTerm,
+      division: storedDivision,
+      resetMode: normalizedMode,
+      failAfterDelete: process.env.NODE_ENV === "test" && normalize(injectFailure) === "after_delete",
+    });
+
+    await writeAuditEvent(client, req, {
+      eventType: "DIVISION_RESET",
+      division: storedDivision,
+      term: normalizedTerm,
+      reasonCode: normalizedMode.toUpperCase(),
+      explanation: reason,
+      newValue: counts,
+      note: `Admin reset ${storedDivision} for ${normalizedTerm} using ${normalizedMode} mode.`,
+    });
+    await client.query("COMMIT");
+    res.json({ success: true, termCode: normalizedTerm, division: storedDivision, resetMode: normalizedMode, affected: counts });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: error.message || "Could not reset division." });
+  } finally {
+    client.release();
+  }
 });
 
 router.post("/dissemination/send", requireElevatedRole, requireDivisionScope, async (req, res) => {

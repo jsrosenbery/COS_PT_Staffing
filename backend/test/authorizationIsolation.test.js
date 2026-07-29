@@ -212,6 +212,32 @@ test("division-sensitive writes derive indirect assignment scope from database",
   assert.match(workflow, /This action is outside your assigned division scope/);
 });
 
+test("admin division reset is explicit, transactional, and audit-preserving", () => {
+  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
+  const frontend = fs.readFileSync(
+    new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url),
+    "utf8"
+  );
+  const resetBlock = workflow.slice(workflow.indexOf("router.post(\"/admin/division-reset\""));
+
+  assert.match(workflow, /router\.post\("\/admin\/division-reset", requireRoles\("admin"\)/);
+  assert.match(workflow, /confirmationText/);
+  assert.match(workflow, /Confirmation text must exactly match/);
+  assert.match(workflow, /await client\.query\("BEGIN"\)/);
+  assert.match(workflow, /await client\.query\("ROLLBACK"\)/);
+  assert.match(workflow, /writeAuditEvent\(client, req, \{\s*eventType: "DIVISION_RESET"/);
+  assert.match(workflow, /DELETE FROM scope_preference_submission_items/);
+  assert.match(workflow, /DELETE FROM scope_preference_submissions/);
+  assert.match(workflow, /DELETE FROM scope_faculty_load_status/);
+  assert.match(workflow, /DELETE FROM scope_chair_decisions/);
+  assert.match(workflow, /DELETE FROM scope_assignments/);
+  assert.doesNotMatch(resetBlock, /DELETE FROM scope_audit_log/);
+  assert.doesNotMatch(resetBlock, /DELETE FROM scope_sections/);
+  assert.match(frontend, /Reset Division/);
+  assert.match(frontend, /auditReason: divisionResetReason/);
+  assert.match(frontend, /confirmationText: divisionResetConfirmation/);
+});
+
 test("permission matrix documents API-token behavior and endpoint classes", () => {
   const doc = fs.readFileSync(new URL("../../docs/endpoint-permissions.md", import.meta.url), "utf8");
 

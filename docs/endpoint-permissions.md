@@ -49,7 +49,8 @@ Division-scoped users must have an assigned division list. Chairs and deans with
 | `DELETE /api/preferences` | chair/dean/admin | Division-scoped write |
 | `GET /api/preferences/export` | chair/dean/admin | Division-scoped export for elevated users |
 | `GET /api/decision-logs` | chair/dean/admin | Division-scoped read derived from user divisions |
-| `POST /api/preferences/wipe` | chair/dean/admin | Division-scoped write |
+| `POST /api/preferences/wipe` | legacy chair/dean/admin | Legacy compatibility path for deleting live preference rows only; prefer admin reset |
+| `POST /api/admin/division-reset` | admin | Admin-only transactional reset for one term/division; requires audit reason and exact division confirmation |
 | `POST /api/dissemination/send` | chair/dean/admin | Division-scoped write |
 | `GET /api/roles` | chair/dean/admin | Division-scoped read derived from user divisions |
 | `POST /api/roles` | admin | Admin/API-token |
