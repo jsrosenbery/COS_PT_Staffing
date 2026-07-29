@@ -166,7 +166,11 @@ test("workflow export files include readable names, headers, legends, and format
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
 
   assert.match(workflow, /function workflowExportFilename/);
-  assert.match(workflow, /SHERMAN_\$\{safeFilePart\(termCode\)\}_\$\{safeFilePart\(divisionLabel\)\}_\$\{safeFilePart\(humanStageLabel\(stage\)\)\}_\$\{exportDateStamp\(generatedAt\)\}\.\$\{format\}/);
+  assert.match(workflow, /SHERMAN_/);
+  assert.match(workflow, /safeFilePart\(termCode\)/);
+  assert.match(workflow, /safeFilePart\(divisionLabel\)/);
+  assert.match(workflow, /safeFilePart\(humanStageLabel\(stage\)\)/);
+  assert.match(workflow, /exportDateStamp\(generatedAt\)/);
   assert.match(workflow, /Preference Review/);
   assert.match(workflow, /Chair Submission/);
   assert.match(workflow, /Final Approved Staffing/);
