@@ -2321,12 +2321,15 @@ export default function PTFacultyStaffingMVP() {
   }, [decisionLogs, auditSearch, auditTypeFilter]);
 
   const activeSectionFilterCount =
+    (selectedDisciplineCode !== "ALL" ? 1 : 0) +
     sectionFilters.campuses.length +
     sectionFilters.methods.length +
     sectionFilters.modalities.length +
     sectionFilters.days.length +
     sectionFilters.timeBlocks.length +
-    (sectionFilters.search.trim() ? 1 : 0);
+    (sectionFilters.search.trim() ? 1 : 0) +
+    (role === "faculty" && showOnlyPreferredSections ? 1 : 0) +
+    (role === "faculty" && showOnlyConflictFree ? 1 : 0);
 
   const divisionReportRows = useMemo(() => {
     return [...divisionStatuses]
@@ -3220,6 +3223,10 @@ export default function PTFacultyStaffingMVP() {
 
   function clearSectionFilters() {
     setSectionFilters({ campuses: [], methods: [], modalities: [], days: [], timeBlocks: [], search: "" });
+    setShowOnlyPreferredSections(false);
+    setShowOnlyConflictFree(false);
+    setSelectedDisciplineCode("ALL");
+    loadAvailableSections("ALL");
   }
 
   function renderSectionDisplayFilters({
@@ -3236,12 +3243,37 @@ export default function PTFacultyStaffingMVP() {
       }}>
         <div style={{ ...ui.between, alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontWeight: 800 }}>Display Filters</div>
+            <div style={{ fontWeight: 800 }}>Filter Sections</div>
             <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
               {description}
             </div>
+            <div style={{ marginTop: 6, color: "var(--text-subtle)", fontSize: 12, fontWeight: 700 }}>
+              {activeSectionFilterCount
+                ? `${activeSectionFilterCount} active filter(s)`
+                : "No active filters"}
+            </div>
           </div>
           <button style={ui.btn} onClick={clearSectionFilters}>Clear Filters</button>
+        </div>
+
+        <div style={{ marginTop: 14 }}>
+          <label style={{ ...ui.small, display: "block", marginBottom: 8 }}>Discipline or subject</label>
+          <select
+            style={ui.input}
+            value={selectedDisciplineCode}
+            onChange={(event) => {
+              const nextCode = event.target.value;
+              setSelectedDisciplineCode(nextCode);
+              loadAvailableSections(nextCode);
+            }}
+          >
+            <option value="ALL">All disciplines</option>
+            {roleAvailableDisciplineCodes.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div style={{ marginTop: 14 }}>
@@ -3253,6 +3285,32 @@ export default function PTFacultyStaffingMVP() {
             placeholder="Search course, CRN, title, campus, discipline, modality, or meeting time"
           />
         </div>
+
+        {role === "faculty" ? (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
+              Selection
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "#334155" }}>
+                <input
+                  type="checkbox"
+                  checked={showOnlyConflictFree}
+                  onChange={(event) => setShowOnlyConflictFree(event.target.checked)}
+                />
+                Show only sections with no direct meeting-pattern conflict against my current preferences
+              </label>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "#334155" }}>
+                <input
+                  type="checkbox"
+                  checked={showOnlyPreferredSections}
+                  onChange={(event) => setShowOnlyPreferredSections(event.target.checked)}
+                />
+                Show only sections listed in my preferences
+              </label>
+            </div>
+          </div>
+        ) : null}
 
         <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
@@ -5849,22 +5907,6 @@ OH,ORNAMENTAL_HORTICULTURE`}
               </div>
             </div>
             <div style={ui.row}>
-              <select
-                style={ui.alphaSelect}
-                value={selectedDisciplineCode}
-                onChange={(e) => {
-                  const nextCode = e.target.value;
-                  setSelectedDisciplineCode(nextCode);
-                  loadAvailableSections(nextCode);
-                }}
-              >
-                <option value="ALL">All disciplines</option>
-                {roleAvailableDisciplineCodes.map((code) => (
-                  <option key={code} value={code}>
-                    {code}
-                  </option>
-                ))}
-              </select>
               <button style={ui.btnPrimary} onClick={() => loadAvailableSections(selectedDisciplineCode)}>
                 Refresh Sections
               </button>
@@ -5890,132 +5932,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           ) : null}
 
-          <div style={{ ...ui.sectionCard, marginTop: 14, display: role === "faculty" && !facultyPreferenceWindowOpen ? "none" : undefined }}>
-            <div style={{ ...ui.between, alignItems: "flex-start" }}>
-              <div>
-                <div style={{ fontWeight: 800 }}>Display Filters</div>
-                <div style={{ marginTop: 4, color: "var(--text-muted)", fontSize: 13 }}>
-                  Filters stay in place while you work on this page, and reset naturally after a refresh or when you come back later.
-                </div>
-              </div>
-              <button style={ui.btn} onClick={clearSectionFilters}>Clear Filters</button>
-            </div>
-
-            <div style={{ marginTop: 14 }}>
-              <label style={{ ...ui.small, display: "block", marginBottom: 8 }}>Search sections</label>
-              <input
-                style={ui.input}
-                value={sectionFilters.search}
-                onChange={(event) => setSectionFilters((current) => ({ ...current, search: event.target.value }))}
-                placeholder="Search course, CRN, title, campus, discipline, modality, or meeting time"
-              />
-            </div>
-
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
-                Days
-              </div>
-              <div style={{ ...ui.row, gap: 8 }}>
-                {availabilityDayOptions.map((day) => {
-                  const active = sectionFilters.days.includes(day.key);
-                  return (
-                    <button
-                      key={day.key}
-                      type="button"
-                      style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
-                      onClick={() => toggleSectionFilter("days", day.key)}
-                    >
-                      {day.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
-                Time
-              </div>
-              <div style={{ ...ui.row, gap: 8 }}>
-                {availabilityTimeOptions.map((block) => {
-                  const active = sectionFilters.timeBlocks.includes(block.key);
-                  return (
-                    <button
-                      key={block.key}
-                      type="button"
-                      style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
-                      onClick={() => toggleSectionFilter("timeBlocks", block.key)}
-                    >
-                      {block.label} ({block.detail})
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
-                Campus
-              </div>
-              <div style={{ ...ui.row, gap: 8 }}>
-                {campusFilterOptions.length ? campusFilterOptions.map((campus) => {
-                  const active = sectionFilters.campuses.includes(campus);
-                  return (
-                    <button
-                      key={campus}
-                      type="button"
-                      style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
-                      onClick={() => toggleSectionFilter("campuses", campus)}
-                    >
-                      {campus}
-                    </button>
-                  );
-                }) : <span style={{ color: "var(--text-subtle)" }}>No campus values loaded yet.</span>}
-              </div>
-            </div>
-
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
-                Method
-              </div>
-              <div style={{ ...ui.row, gap: 8 }}>
-                {methodFilterOptions.length ? methodFilterOptions.map((method) => {
-                  const active = sectionFilters.methods.includes(method);
-                  return (
-                    <button
-                      key={method}
-                      type="button"
-                      style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
-                      onClick={() => toggleSectionFilter("methods", method)}
-                    >
-                      {method}
-                    </button>
-                  );
-                }) : <span style={{ color: "var(--text-subtle)" }}>No method values loaded yet.</span>}
-              </div>
-            </div>
-
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-subtle)", marginBottom: 8 }}>
-                Modality
-              </div>
-              <div style={{ ...ui.row, gap: 8 }}>
-                {modalityFilterOptions.length ? modalityFilterOptions.map((modality) => {
-                  const active = sectionFilters.modalities.includes(modality);
-                  return (
-                    <button
-                      key={modality}
-                      type="button"
-                      style={{ ...ui.filterChip, ...(active ? ui.filterChipActive : {}) }}
-                      onClick={() => toggleSectionFilter("modalities", modality)}
-                    >
-                      {modality}
-                    </button>
-                  );
-                }) : <span style={{ color: "var(--text-subtle)" }}>No modality values loaded yet.</span>}
-              </div>
-            </div>
-          </div>
+          {renderSectionDisplayFilters({ hidden: role === "faculty" && !facultyPreferenceWindowOpen })}
 
           {loadingSections ? (
             <div style={{ marginTop: 12, color: "var(--text-muted)", fontWeight: 700 }}>
@@ -6046,22 +5963,6 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 <div style={{ marginTop: 12, color: "var(--text-muted)" }}>
                   Build your ranked section list. Use Add to Preferences, then drag or move items in My Preferences.
                 </div>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 12, color: "#334155" }}>
-                  <input
-                    type="checkbox"
-                    checked={showOnlyConflictFree}
-                    onChange={(e) => setShowOnlyConflictFree(e.target.checked)}
-                  />
-                  Show only sections with no direct meeting-pattern conflict against my current preferences
-                </label>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, marginTop: 10, color: "#334155" }}>
-                  <input
-                    type="checkbox"
-                    checked={showOnlyPreferredSections}
-                    onChange={(e) => setShowOnlyPreferredSections(e.target.checked)}
-                  />
-                  Show only sections listed in my preferences
-                </label>
                 <div style={{ ...ui.sectionCard, marginTop: 12 }}>
                   <div style={{ fontWeight: 800 }}>Availability</div>
                   <div style={{ marginTop: 10, color: "var(--text-muted)", fontSize: 13 }}>

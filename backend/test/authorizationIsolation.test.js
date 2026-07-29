@@ -274,3 +274,25 @@ test("frontend exposes progressive workflow export controls with stage availabil
   assert.match(frontend, /downloadWorkflowExport\(option\.stage, format\)/);
   assert.match(frontend, /workflow-exports\/\$\{stage\}\.\$\{format\}/);
 });
+
+test("faculty section filters use one comprehensive panel", () => {
+  const frontend = fs.readFileSync(
+    new URL("../../frontend/src/pt-faculty-staffing-mvp.jsx", import.meta.url),
+    "utf8"
+  );
+  const availableSectionsStart = frontend.indexOf("<h2 style={ui.cardTitle}>Available Sections</h2>");
+  const filterPanelCall = frontend.indexOf("{renderSectionDisplayFilters({ hidden: role === \"faculty\" && !facultyPreferenceWindowOpen })}", availableSectionsStart);
+  const availableSectionsHeader = frontend.slice(availableSectionsStart, filterPanelCall);
+
+  assert.ok(availableSectionsStart > -1);
+  assert.ok(filterPanelCall > availableSectionsStart);
+  assert.doesNotMatch(availableSectionsHeader, /<select[\s\S]*selectedDisciplineCode/);
+  assert.match(frontend, /<div style=\{\{ fontWeight: 800 \}\}>Filter Sections<\/div>/);
+  assert.match(frontend, /Discipline or subject/);
+  assert.match(frontend, /Search sections/);
+  assert.match(frontend, /Selection/);
+  assert.match(frontend, /Show only sections listed in my preferences/);
+  assert.match(frontend, /setShowOnlyPreferredSections\(false\)/);
+  assert.match(frontend, /setShowOnlyConflictFree\(false\)/);
+  assert.match(frontend, /setSelectedDisciplineCode\("ALL"\)/);
+});
