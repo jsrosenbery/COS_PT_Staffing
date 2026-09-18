@@ -3,7 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { pool, query } from "./db.js";
 import { authenticateRequest, cleanupExpiredAuthRecords, publicAuthPaths } from "./auth.js";
-import { runMigrations } from "./migrations.js";
+import { getMigrationStatus, runMigrations } from "./migrations.js";
 import { assertProductionConfig, correlationId, isPublicApiRequest, logError, publicError, securityHeaders } from "./security.js";
 import authRoutes from "./routes/auth.js";
 import persistenceRoutes from "./routes/persistence.js";
@@ -70,6 +70,27 @@ app.get("/api/health", async (_req, res) => {
   } catch (e) {
     logError("health", e, { originalUrl: "/api/health" });
     res.status(500).json({ error: "Health check failed." });
+  }
+});
+
+app.get("/api/readiness", async (req, res) => {
+  try {
+    await query("SELECT 1");
+    const migrations = await getMigrationStatus({ pool });
+    const pending = migrations.filter((migration) => migration.status !== "applied");
+    if (pending.length) {
+      return res.status(503).json({
+        ok: false,
+        error: "Database migrations are pending.",
+        code: "MIGRATIONS_PENDING",
+        correlationId: req.correlationId,
+        pendingMigrations: pending.map((migration) => migration.filename),
+      });
+    }
+    return res.json({ ok: true, commit: DEPLOY_COMMIT || null, migrationCount: migrations.length });
+  } catch (error) {
+    logError("readiness", error, req);
+    return publicError(res, 503, "NOT_READY", "The service is not ready.", req.correlationId);
   }
 });
 

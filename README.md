@@ -23,6 +23,10 @@ Database migrations are an explicit release step and must complete before deploy
 
 See [Database migrations](docs/database-migrations.md) for production adoption, verification, failure handling, and rollback limitations.
 
+The backend exposes `/api/health` for liveness and `/api/readiness` for database and migration readiness. Route production traffic only to instances whose readiness check succeeds.
+
+Browser session and bootstrap credentials are kept in memory and are cleared by a page reload or tab close; they are not written to browser storage. Users should expect to sign in again after reloading the application.
+
 ## Operational readiness
 
 - [Environment configuration](docs/operations/environment-reference.md)
@@ -42,6 +46,7 @@ Before opening a pull request, run:
 
 ```sh
 cd backend && npm test
+cd frontend && npm test
 cd frontend && npm run build
 ```
 

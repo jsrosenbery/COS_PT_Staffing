@@ -1,6 +1,7 @@
 import express from "express";
 import { pool, query } from "../db.js";
-import { currentRole, requireElevatedRole, requireRoles, requireScopedRead, scopeFilterForReq } from "../permissions.js";
+import { currentRole, requireDivisionScope, requireElevatedRole, requireRoles, requireScopedRead, scopeFilterForReq } from "../permissions.js";
+import { internalError } from "../security.js";
 
 const router = express.Router();
 
@@ -49,7 +50,7 @@ router.get("/roles", requireElevatedRole, requireScopedRead, async (req, res) =>
     );
     res.json(result.rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not load role records.");
   }
 });
 
@@ -85,7 +86,7 @@ router.post("/roles", requireRoles("admin"), async (req, res) => {
     res.json({ success: true, count: rows.length });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not replace role records.");
   } finally {
     client.release();
   }
@@ -165,7 +166,7 @@ router.get("/pt-faculty", requireScopedRead, async (req, res) => {
     );
     res.json(result.rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not load faculty records.");
   }
 });
 
@@ -226,7 +227,7 @@ router.post("/pt-faculty", requireRoles("admin"), async (req, res) => {
     res.json({ success: true, activeCount: activeCountResult.rows?.[0]?.count || 0 });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not replace faculty records.");
   } finally {
     client.release();
   }
@@ -242,7 +243,7 @@ router.delete("/pt-faculty", requireRoles("admin"), async (_req, res) => {
     );
     res.json({ success: true, inactivated: result.rowCount || 0 });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not inactivate faculty records.");
   }
 });
 
@@ -264,11 +265,11 @@ router.get("/windows", requireElevatedRole, requireScopedRead, async (req, res) 
     );
     res.json(result.rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not load staffing windows.");
   }
 });
 
-router.post("/windows", requireElevatedRole, async (req, res) => {
+router.post("/windows", requireElevatedRole, requireDivisionScope, async (req, res) => {
   const row = req.body || {};
   try {
     const result = await query(
@@ -285,11 +286,11 @@ router.post("/windows", requireElevatedRole, async (req, res) => {
     );
     res.json({ success: true, window: result.rows[0] });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not create the staffing window.");
   }
 });
 
-router.get("/audit", requireElevatedRole, async (req, res) => {
+router.get("/audit", requireElevatedRole, requireScopedRead, async (req, res) => {
   const { q = "", eventType = "", division = "", sortBy = "created_at", sortDir = "desc" } = req.query;
   const allowedSortFields = new Set(["created_at", "event_type", "division", "term", "actor_name", "instructor_name"]);
   const safeSortBy = allowedSortFields.has(sortBy) ? sortBy : "created_at";
@@ -319,9 +320,13 @@ router.get("/audit", requireElevatedRole, async (req, res) => {
     where.push(`event_type = $${params.length}`);
   }
 
-  if (division) {
-    params.push(division);
-    where.push(`division = $${params.length}`);
+  const scopedDivisions = scopeFilterForReq(req, division ? [division] : []);
+  if (division && !scopedDivisions.length) {
+    return res.status(403).json({ error: "This audit query is outside your assigned division scope." });
+  }
+  if (scopedDivisions.length) {
+    params.push(scopedDivisions);
+    where.push(`LOWER(division) = ANY($${params.length}::text[])`);
   }
 
   const sql = `
@@ -338,7 +343,7 @@ router.get("/audit", requireElevatedRole, async (req, res) => {
     const result = await query(sql, params);
     res.json(result.rows);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not load audit records.");
   }
 });
 

@@ -15,6 +15,10 @@ The runner takes a PostgreSQL advisory lock so only one release process migrates
 
 Production server startup is intentionally separate: `npm start` does not run migrations. Run migrations once as a release or pre-deploy job before new backend code starts. Do not run them independently from every application replica.
 
+Before applying `0010_validate_integrity_constraints.sql`, run `npm run db:integrity-precheck` against the target database and resolve every reported violation through an approved, audit-preserving cleanup. The migration validates existing rows and deliberately stops if legacy data violates an invariant; it never deletes or rewrites that data.
+
+Migration `0009_protect_audit_history.sql` makes `scope_audit_log` append-only at the database layer. Corrections must be represented by a new audit event, never by updating or deleting history.
+
 ## Existing production databases
 
 `0001_baseline.sql` is the former idempotent schema and contains no table drops, recreation, truncation, or wholesale data rewrites. Running `npm run migrate` against an existing database safely verifies or adds the current objects and then records the baseline. Existing rows remain in place. New empty databases run the same baseline and are reproducible.

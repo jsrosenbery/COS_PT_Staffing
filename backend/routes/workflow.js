@@ -9,6 +9,7 @@ import { buildDecisionExplanation, decisionExplanationRows } from "../domain/dec
 import { canSavePreferenceVersion, preferenceSubmissionStatuses, preferenceWindowTimezone, validatePreferenceRanks, windowState } from "../domain/preferenceSubmissionPolicy.js";
 import { enforceFacultySelf, isAdmin, requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles, requireScopedRead, scopeFilterForReq, splitScope } from "../permissions.js";
 import { sendDisseminationEmail } from "../emailService.js";
+import { internalError, logError } from "../security.js";
 
 const router = express.Router();
 const upload = multer({
@@ -880,7 +881,8 @@ function escapeHtml(value) {
 
 function csvFromRows(rows, headers) {
   const escapeCell = (value) => {
-    const safe = String(value ?? "");
+    const original = String(value ?? "");
+    const safe = /^\s*[=+\-@]/.test(original) ? `'${original}` : original;
     const escaped = safe.replace(/"/g, '""');
     return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
   };
@@ -1409,11 +1411,11 @@ async function getProtectedWork(termCode, division) {
   };
 }
 
-router.get("/terms", async (_req, res) => {
+router.get("/terms", async (req, res) => {
   try {
     const result = await query(`SELECT term_code, term_name, is_active FROM scope_terms ORDER BY is_active DESC, term_name ASC`);
     res.json({ terms: result.rows });
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { internalError(req, res, error, "Could not load terms."); }
 });
 
 router.post("/terms", requireRoles("admin"), async (req, res) => {
@@ -1439,7 +1441,7 @@ router.post("/terms", requireRoles("admin"), async (req, res) => {
     res.json({ term: result.rows[0] });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not save the term.");
   } finally {
     client.release();
   }
@@ -1465,7 +1467,7 @@ router.post("/terms/activate", requireRoles("admin"), async (req, res) => {
     res.json({ term: result.rows[0] });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not activate the term.");
   } finally { client.release(); }
 });
 
@@ -1474,7 +1476,7 @@ router.get("/subject-mapping", async (req, res) => {
   try {
     const result = await query(`SELECT scope, term_code, subject_code, discipline_code FROM scope_subject_mappings WHERE scope = 'global' OR term_code = $1 ORDER BY subject_code`, [termCode]);
     res.json({ mappings: result.rows });
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { internalError(req, res, error, "Could not load subject mappings."); }
 });
 
 router.get("/subject-mapping/export", async (req, res) => {
@@ -1483,7 +1485,7 @@ router.get("/subject-mapping/export", async (req, res) => {
     const result = await query(`SELECT scope, term_code, subject_code, discipline_code FROM scope_subject_mappings WHERE scope = 'global' OR term_code = $1 ORDER BY subject_code`, [termCode]);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.send(Papa.unparse(result.rows));
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { internalError(req, res, error, "Could not export subject mappings."); }
 });
 
 router.get("/subject-mapping/:termCode/status", async (req, res) => {
@@ -1491,7 +1493,7 @@ router.get("/subject-mapping/:termCode/status", async (req, res) => {
     const globalCount = await query(`SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE scope = 'global'`);
     const termCount = await query(`SELECT COUNT(*)::int AS count FROM scope_subject_mappings WHERE term_code = $1`, [req.params.termCode]);
     res.json({ globalCount: globalCount.rows[0]?.count || 0, termCount: termCount.rows[0]?.count || 0 });
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { internalError(req, res, error, "Could not load schedule statistics."); }
 });
 
 router.post("/upload/subject-mapping", requireRoles("admin"), upload.single("file"), async (req, res) => {
@@ -1529,7 +1531,7 @@ router.post("/upload/subject-mapping", requireRoles("admin"), upload.single("fil
     res.json({ importedRows: valid.length, globalCount: globalCount.rows[0]?.count || valid.length, termCount: termCount.rows[0]?.count || 0, scope: "global", message: `Imported ${valid.length} global subject mapping row(s).` });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message, importedRows: 0, globalCount: 0, termCount: 0, scope: "global" });
+    internalError(req, res, error, "Could not import subject mappings.", { importedRows: 0, globalCount: 0, termCount: 0, scope: "global" });
   } finally { client.release(); }
 });
 
@@ -1560,7 +1562,7 @@ router.post("/upload/schedule/preview", requireElevatedRole, requireDivisionScop
       summary,
       impact: { openSections: inDivision.length, facultyPreferences: protectedWork.preferences, tentativeAssignments: protectedWork.tentativeAssignments, decisionLogs: protectedWork.decisionLogs },
     });
-  } catch (error) { res.status(500).json({ ok: false, error: error.message, errors: [error.message] }); }
+  } catch (error) { internalError(req, res, error, "Could not preview the schedule upload.", { ok: false, errors: ["Could not preview the schedule upload."] }); }
 });
 
 router.post("/upload/schedule", requireElevatedRole, requireDivisionScope, upload.single("file"), async (req, res) => {
@@ -1648,7 +1650,7 @@ router.post("/upload/schedule", requireElevatedRole, requireDivisionScope, uploa
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message, errors: [error.message] });
+    internalError(req, res, error, "Could not import the schedule.", { errors: ["Could not import the schedule."] });
   } finally { client.release(); }
 });
 
@@ -1719,7 +1721,7 @@ router.get("/available-sections", requireScopedRead, async (req, res) => {
       params
     );
     res.json({ sections: result.rows.map((r) => ({ ...r, meetings: r.meetings || [] })) });
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { internalError(req, res, error, "Could not load available sections."); }
 });
 
 router.get("/faculty-self-dashboard", async (req, res) => {
@@ -1846,7 +1848,7 @@ router.get("/faculty-self-dashboard", async (req, res) => {
       window: state,
     });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not load faculty dashboard." });
+    internalError(req, res, error, "Could not load faculty dashboard.");
   }
 });
 
@@ -1902,7 +1904,7 @@ router.get("/division-statuses", requireScopedRead, async (req, res) => {
       };
     });
     res.json({ divisions });
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { internalError(req, res, error, "Could not load division statuses."); }
 });
 
 router.post("/windows/freeze", requireElevatedRole, requireDivisionScope, async (req, res) => {
@@ -1941,7 +1943,7 @@ router.post("/windows/freeze", requireElevatedRole, requireDivisionScope, async 
     res.json({ success: true, frozenCount: frozen.filter((row) => row.status === "frozen").length, windowTimezone: preferenceWindowTimezone });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message || "Could not freeze preference window." });
+    internalError(req, res, error, "Could not freeze preference window.");
   } finally {
     client.release();
   }
@@ -1969,7 +1971,7 @@ router.post("/windows/reopen", requireRoles("admin"), requireDivisionScope, asyn
     res.json({ success: true, window: result.rows[0], windowTimezone: preferenceWindowTimezone });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message || "Could not reopen preference window." });
+    internalError(req, res, error, "Could not reopen preference window.");
   } finally {
     client.release();
   }
@@ -2006,15 +2008,15 @@ router.get("/allocation-analysis", requireElevatedRole, requireDivisionScope, as
 
     res.json({ analysis, exceptionReasons, preferenceSource });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not build allocation analysis." });
+    internalError(req, res, error, "Could not build allocation analysis.");
   }
 });
 
-router.get("/contract-exception-reasons", requireElevatedRole, async (_req, res) => {
+router.get("/contract-exception-reasons", requireElevatedRole, async (req, res) => {
   try {
     res.json({ reasons: await getContractExceptionReasons({ query }) });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not load contractual exception reasons." });
+    internalError(req, res, error, "Could not load contractual exception reasons.");
   }
 });
 
@@ -2033,7 +2035,7 @@ router.get("/decision-explanations", requireElevatedRole, requireDivisionScope, 
     });
     res.json({ explanation });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not build decision explanations." });
+    internalError(req, res, error, "Could not build decision explanations.");
   }
 });
 
@@ -2070,7 +2072,7 @@ router.get("/decision-explanations/export.csv", requireRoles("admin"), async (re
     res.setHeader("Content-Disposition", `attachment; filename="sherman-decision-explanations-${termCode}.csv"`);
     res.send(csvFromRows(rows, headers));
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not export decision explanations." });
+    internalError(req, res, error, "Could not export decision explanations.");
   }
 });
 
@@ -2127,7 +2129,8 @@ router.get("/decision-explanations/print", requireRoles("admin"), async (req, re
         </body>
       </html>`);
   } catch (error) {
-    res.status(500).send(escapeHtml(error.message || "Could not render decision explanations."));
+    logError("decision-explanations-print", error, req);
+    res.status(500).send("Could not render decision explanations. Use the request ID from the response headers when contacting support.");
   }
 });
 
@@ -2178,7 +2181,10 @@ router.get("/workflow-exports/:stage.:format", requireElevatedRole, requireScope
       headers: report.headers,
     });
   } catch (error) {
-    return res.status(error.status || 500).json({ error: error.message || "Could not generate workflow export." });
+    if (error.status && error.status < 500) {
+      return res.status(error.status).json({ error: error.message || "Could not generate workflow export." });
+    }
+    return internalError(req, res, error, "Could not generate workflow export.");
   } finally {
     client.release();
   }
@@ -2365,7 +2371,7 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
     if (error.code === "23505") {
       return res.status(409).json({ error: "This staffing unit already has an active chair decision or assignment." });
     }
-    res.status(500).json({ error: error.message || "Could not record chair decision." });
+    internalError(req, res, error, "Could not record chair decision.");
   } finally {
     client.release();
   }
@@ -2516,7 +2522,7 @@ router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req
     });
 
     res.json({ rows, preferenceSource });
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { internalError(req, res, error, "Could not load the chair workflow."); }
 });
 
 router.post("/faculty-load-status", requireRoles("chair"), async (req, res) => {
@@ -2583,7 +2589,7 @@ router.post("/faculty-load-status", requireRoles("chair"), async (req, res) => {
     });
     res.json({ status: result.rows[0] });
   } catch (error) {
-    res.status(500).json({ error: error.message || "Could not update faculty load status." });
+    internalError(req, res, error, "Could not update faculty load status.");
   }
 });
 
@@ -2623,7 +2629,7 @@ router.get("/assignments", requireElevatedRole, requireScopedRead, async (req, r
       params
     );
     res.json({ assignments: result.rows.map((r) => ({ ...r, meetings: r.meetings || [] })) });
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { internalError(req, res, error, "Could not load assignments."); }
 });
 
 async function advanceAssignmentStatus({ client, req, termCode, fromStatuses, toStatus, divisions = [], disciplineCode = "", actorName = "", actorRole = "", eventType = "", notePrefix = "" }) {
@@ -2690,7 +2696,7 @@ router.post("/assignments/submit", requireRoles("chair"), requireDivisionScope, 
     res.json({ success: true, submittedCount: rows.length, message: `${rows.length} assignment(s) submitted to dean review.` });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not submit assignments.");
   } finally { client.release(); }
 });
 
@@ -2718,7 +2724,7 @@ router.post("/assignments/approve", requireRoles("dean"), requireDivisionScope, 
     res.json({ success: true, approvedCount: rows.length, message: `${rows.length} assignment(s) approved.` });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not approve assignments.");
   } finally { client.release(); }
 });
 
@@ -2747,7 +2753,7 @@ router.post("/assignments/return", requireRoles("dean"), requireDivisionScope, a
     res.json({ success: true, returnedCount: rows.length, message: `${rows.length} assignment(s) returned for chair revision.` });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not return assignments.");
   } finally { client.release(); }
 });
 
@@ -2804,7 +2810,7 @@ router.post("/assignments", requireElevatedRole, async (req, res) => {
     res.json({ success: true, id: result.rows[0]?.id, version: result.rows[0]?.version, message: "Tentative assignment saved." });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not save the assignment.");
   } finally { client.release(); }
 });
 
@@ -2856,7 +2862,7 @@ router.delete("/assignments/:id", requireElevatedRole, async (req, res) => {
     res.json({ success: true, version: updated.rows[0]?.version, message: "Tentative assignment removed." });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not remove the assignment.");
   } finally { client.release(); }
 });
 
@@ -2906,7 +2912,7 @@ router.put("/assignments/:id/reassign", requireElevatedRole, async (req, res) =>
     res.json({ success: true, version: updated.rows[0]?.version, message: "Tentative assignment reassigned." });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not reassign the section.");
   } finally { client.release(); }
 });
 
@@ -2977,7 +2983,7 @@ router.get("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated,
         timeBlocks: Array.isArray(availability.availability_time_blocks) ? availability.availability_time_blocks : [],
       },
     });
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { internalError(req, res, error, "Could not load preferences."); }
 });
 
 router.post("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated, async (req, res) => {
@@ -3104,7 +3110,7 @@ router.post("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not save preferences.");
   } finally { client.release(); }
 });
 
@@ -3135,7 +3141,7 @@ router.delete("/preferences", requireElevatedRole, requireDivisionScope, async (
     res.json({ success: true, deletedCount: deleteResult.rowCount || 0 });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message });
+    internalError(req, res, error, "Could not delete preferences.");
   } finally { client.release(); }
 });
 
@@ -3161,7 +3167,7 @@ router.get("/preferences/export", requireElevatedRole, requireScopedRead, async 
     );
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.send(Papa.unparse(result.rows));
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { internalError(req, res, error, "Could not export preferences."); }
 });
 
 router.get("/decision-logs", requireElevatedRole, requireScopedRead, async (req, res) => {
@@ -3199,7 +3205,7 @@ router.get("/decision-logs", requireElevatedRole, requireScopedRead, async (req,
       return { ...row, discipline_code: section.rows[0]?.discipline_code || "" };
     }));
     res.json({ logs: withDiscipline });
-  } catch (error) { res.status(500).json({ error: error.message }); }
+  } catch (error) { internalError(req, res, error, "Could not load decision logs."); }
 });
 
 
@@ -3413,7 +3419,7 @@ router.post("/admin/division-reset", requireRoles("admin"), async (req, res) => 
     res.json({ success: true, termCode: normalizedTerm, division: storedDivision, resetMode: normalizedMode, affected: counts });
   } catch (error) {
     await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message || "Could not reset division." });
+    internalError(req, res, error, "Could not reset division.");
   } finally {
     client.release();
   }
@@ -3448,10 +3454,23 @@ router.post("/dissemination/send", requireElevatedRole, requireDivisionScope, as
     const recipients = recipientResult.rows.map((row) => row.email).filter(Boolean);
     if (!recipients.length) return res.status(400).json({ error: "No active recipients with email were found for this division." });
 
-    const emailResult = await sendDisseminationEmail({ recipients, subject, body });
-
     await client.query("BEGIN");
     transactionStarted = true;
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [termCode, division]);
+    const existingWindow = await client.query(
+      `SELECT id
+       FROM scope_staffing_windows
+       WHERE LOWER(term) = LOWER($1)
+         AND LOWER(division) = LOWER($2)
+         AND status = 'open'
+       LIMIT 1`,
+      [termCode, division]
+    );
+    if (existingWindow.rowCount) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+      return res.status(409).json({ error: "An open staffing window already exists for this term and division." });
+    }
     const windowResult = await client.query(
       `INSERT INTO scope_staffing_windows (term, division, sender_email, closes_at, status, updated_at)
        VALUES ($1, $2, $3, $4, 'open', NOW())
@@ -3459,17 +3478,63 @@ router.post("/dissemination/send", requireElevatedRole, requireDivisionScope, as
       [termCode, division, senderEmail, closesAt || null]
     );
     await client.query(
+      `INSERT INTO scope_email_deliveries
+         (staffing_window_id, recipient_count, subject, status, requested_by, requested_at)
+       VALUES ($1, $2, $3, 'pending', $4, NOW())`,
+      [
+        windowResult.rows[0].id,
+        recipients.length,
+        subject,
+        req.auth?.user?.full_name || req.auth?.user?.email || req.auth?.authType || "",
+      ]
+    );
+    await client.query(
       `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, division, term, note, source)
-       VALUES ('DISSEMINATION_SENT', $1, $2, $3, $4, $5, 'backend')`,
+       VALUES ('DISSEMINATION_QUEUED', $1, $2, $3, $4, $5, 'backend')`,
       [
         req.auth?.user?.full_name || req.auth?.user?.email || req.auth?.authType || "",
         req.auth?.user?.role || req.auth?.role || "",
         division,
         termCode,
-        `Sent staffing window email to ${recipients.length} recipient(s). Subject: ${subject}`,
+        `Queued staffing window email for ${recipients.length} recipient(s). Subject: ${subject}`,
       ]
     );
     await client.query("COMMIT");
+    transactionStarted = false;
+
+    let emailResult;
+    try {
+      emailResult = await sendDisseminationEmail({ recipients, subject, body });
+      await client.query(
+        `UPDATE scope_email_deliveries
+         SET status = 'sent', sent_at = NOW(), provider_message_id = $2, last_error = NULL
+         WHERE staffing_window_id = $1`,
+        [windowResult.rows[0].id, String(emailResult?.messageId || emailResult?.id || "")]
+      );
+      await client.query(
+        `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, division, term, note, source)
+         VALUES ('DISSEMINATION_SENT', $1, $2, $3, $4, $5, 'backend')`,
+        [
+          req.auth?.user?.full_name || req.auth?.user?.email || req.auth?.authType || "",
+          req.auth?.user?.role || req.auth?.role || "",
+          division,
+          termCode,
+          `Sent staffing window email to ${recipients.length} recipient(s). Subject: ${subject}`,
+        ]
+      );
+    } catch (emailError) {
+      await client.query(
+        `UPDATE scope_email_deliveries
+         SET status = 'failed', failed_at = NOW(), last_error = $2
+         WHERE staffing_window_id = $1`,
+        [windowResult.rows[0].id, String(emailError?.message || "Email provider error").slice(0, 500)]
+      );
+      return internalError(req, res, emailError, "The staffing window was created, but its email could not be delivered.", {
+        windowCreated: true,
+        window: windowResult.rows[0],
+        emailStatus: "failed",
+      });
+    }
 
     res.json({
       success: true,
@@ -3479,7 +3544,7 @@ router.post("/dissemination/send", requireElevatedRole, requireDivisionScope, as
     });
   } catch (error) {
     if (transactionStarted) await client.query("ROLLBACK");
-    res.status(500).json({ error: error.message || "Could not send dissemination email." });
+    internalError(req, res, error, "Could not create the staffing window or queue its email.");
   } finally {
     client.release();
   }

@@ -1,25 +1,22 @@
+const VITE_ENV = import.meta.env || {};
 const RAW_BASE =
-  (import.meta.env.VITE_API_BASE_URL || "").trim() ||
+  (VITE_ENV.VITE_API_BASE_URL || "").trim() ||
   "https://cos-pt-staffing.onrender.com/api";
 
 export const API_BASE = RAW_BASE.replace(/\/$/, "");
 export const API_TOKEN_AUTH_ENABLED =
-  String(import.meta.env.VITE_API_TOKEN_AUTH_ENABLED || "").trim().toLowerCase() === "true" ||
-  (import.meta.env.DEV && String(import.meta.env.VITE_API_TOKEN_AUTH_ENABLED || "").trim() !== "false");
-const API_TOKEN_STORAGE_KEY = "cos_pt_staffing_api_token";
-const SESSION_STORAGE_KEY = "cos_pt_staffing_session_token";
-const USER_STORAGE_KEY = "cos_pt_staffing_user";
+  String(VITE_ENV.VITE_API_TOKEN_AUTH_ENABLED || "").trim().toLowerCase() === "true" ||
+  (VITE_ENV.DEV && String(VITE_ENV.VITE_API_TOKEN_AUTH_ENABLED || "").trim() !== "false");
+let apiTokenInMemory = "";
+let sessionTokenInMemory = "";
+let currentUserInMemory = null;
 
 export function getApiToken() {
-  if (typeof window === "undefined") return "";
-  return (window.sessionStorage?.getItem(API_TOKEN_STORAGE_KEY) || "").trim();
+  return apiTokenInMemory;
 }
 
 export function setApiToken(token) {
-  if (typeof window === "undefined") return;
-  const normalized = String(token || "").trim();
-  if (normalized) window.sessionStorage?.setItem(API_TOKEN_STORAGE_KEY, normalized);
-  else window.sessionStorage?.removeItem(API_TOKEN_STORAGE_KEY);
+  apiTokenInMemory = String(token || "").trim();
 }
 
 export function clearApiToken() {
@@ -27,29 +24,18 @@ export function clearApiToken() {
 }
 
 export function getSessionToken() {
-  if (typeof window === "undefined") return "";
-  return (window.sessionStorage?.getItem(SESSION_STORAGE_KEY) || "").trim();
+  return sessionTokenInMemory;
 }
 
 export function getCurrentUser() {
-  if (typeof window === "undefined") return null;
-  const raw = window.sessionStorage?.getItem(USER_STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+  return currentUserInMemory;
 }
 
 export function setSession(session, user) {
-  if (typeof window === "undefined") return;
   const token = String(session?.token || "").trim();
-  if (token) window.sessionStorage?.setItem(SESSION_STORAGE_KEY, token);
-  else window.sessionStorage?.removeItem(SESSION_STORAGE_KEY);
+  sessionTokenInMemory = token;
 
-  if (user) window.sessionStorage?.setItem(USER_STORAGE_KEY, JSON.stringify(user));
-  else window.sessionStorage?.removeItem(USER_STORAGE_KEY);
+  currentUserInMemory = user || null;
 }
 
 export function clearSession() {

@@ -56,7 +56,7 @@ Set `CORS_ORIGIN` to exact approved frontend origins. Test an allowed browser re
 
 ## 5. Start and verify services
 
-Deploy the backend only after migrations succeed. By default, `npm start` does not run migrations. If the hosting platform is configured with `RUN_MIGRATIONS_ON_STARTUP=true`, the backend applies pending migrations before listening; use that option only after the same backup and pending-migration review described above. Verify:
+Deploy the backend only after migrations succeed. Run `npm run db:integrity-precheck` before migration `0010`; stop and review any legacy violations rather than deleting or rewriting historical rows. By default, `npm start` does not run migrations. If the hosting platform is configured with `RUN_MIGRATIONS_ON_STARTUP=true`, the backend applies pending migrations before listening; use that option only after the same backup and pending-migration review described above. Verify both `/api/health` (process/database liveness) and `/api/readiness` (database connectivity and migration currency):
 
 ```sh
 curl --fail --show-error https://backend.example.invalid/api/health
