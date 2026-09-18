@@ -79,21 +79,34 @@ test("draft preference timestamp migration allows unsubmitted versions", async (
   assert.doesNotMatch(migration, /\b(TRUNCATE|DELETE)\b/i);
 });
 
+test("email delivery, append-only audit, and validation migrations are non-destructive", async () => {
+  const emailDelivery = await fs.readFile(new URL("../migrations/0008_email_delivery_status.sql", import.meta.url), "utf8");
+  const auditProtection = await fs.readFile(new URL("../migrations/0009_protect_audit_history.sql", import.meta.url), "utf8");
+  const validation = await fs.readFile(new URL("../migrations/0010_validate_integrity_constraints.sql", import.meta.url), "utf8");
+
+  assert.match(emailDelivery, /CREATE TABLE IF NOT EXISTS scope_email_deliveries/i);
+  assert.match(auditProtection, /BEFORE UPDATE OR DELETE ON scope_audit_log/i);
+  assert.match(validation, /VALIDATE CONSTRAINT scope_assignments_integrity_valid/i);
+  assert.doesNotMatch(`${emailDelivery}\n${auditProtection}\n${validation}`, /\b(TRUNCATE|DELETE FROM|DROP TABLE)\b/i);
+});
+
 integrationTest("applies all ordered migrations to an empty PostgreSQL database", async () => {
   await withEmptyDatabase(async (pool) => {
     const result = await runMigrations({ pool, logger: silentLogger });
-    assert.deepEqual(result.applied, ["0001", "0002", "0003", "0004", "0005", "0006", "0007"]);
+    assert.deepEqual(result.applied, ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]);
 
     const tables = await pool.query(`
       SELECT to_regclass('scope_users') AS users,
              to_regclass('scope_assignments') AS assignments,
              to_regclass('scope_rate_limits') AS rate_limits,
-             to_regclass('scope_faculty_load_status') AS faculty_load_status
+             to_regclass('scope_faculty_load_status') AS faculty_load_status,
+             to_regclass('scope_email_deliveries') AS email_deliveries
     `);
     assert.equal(tables.rows[0].users, "scope_users");
     assert.equal(tables.rows[0].assignments, "scope_assignments");
     assert.equal(tables.rows[0].rate_limits, "scope_rate_limits");
     assert.equal(tables.rows[0].faculty_load_status, "scope_faculty_load_status");
+    assert.equal(tables.rows[0].email_deliveries, "scope_email_deliveries");
 
     const submissionColumns = await pool.query(`
       SELECT column_name, is_nullable
@@ -117,7 +130,7 @@ integrationTest("applies all ordered migrations to an empty PostgreSQL database"
     assert.match(windowColumns.rows[0].column_default, /now\(\)/i);
 
     const history = await pool.query("SELECT * FROM scope_schema_migrations ORDER BY migration_identifier");
-    assert.equal(history.rowCount, 7);
+    assert.equal(history.rowCount, 10);
     assert.equal(history.rows[0].migration_filename, "0001_baseline.sql");
     assert.equal(history.rows[1].migration_filename, "0002_security_integrity_constraints.sql");
     assert.equal(history.rows[2].migration_filename, "0003_shared_auth_rate_limits.sql");
@@ -125,6 +138,9 @@ integrationTest("applies all ordered migrations to an empty PostgreSQL database"
     assert.equal(history.rows[4].migration_filename, "0005_audit_values_as_text.sql");
     assert.equal(history.rows[5].migration_filename, "0006_faculty_load_status.sql");
     assert.equal(history.rows[6].migration_filename, "0007_nullable_draft_submission_timestamp.sql");
+    assert.equal(history.rows[7].migration_filename, "0008_email_delivery_status.sql");
+    assert.equal(history.rows[8].migration_filename, "0009_protect_audit_history.sql");
+    assert.equal(history.rows[9].migration_filename, "0010_validate_integrity_constraints.sql");
     assert.ok(history.rows.every((row) => row.applied_at));
   });
 });
@@ -149,9 +165,9 @@ integrationTest("skips migrations that were already applied successfully", async
     const secondRun = await runMigrations({ pool, logger: silentLogger });
 
     assert.deepEqual(secondRun.applied, []);
-    assert.deepEqual(secondRun.skipped, ["0001", "0002", "0003", "0004", "0005", "0006", "0007"]);
+    assert.deepEqual(secondRun.skipped, ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010"]);
     const history = await pool.query("SELECT COUNT(*)::int AS count FROM scope_schema_migrations");
-    assert.equal(history.rows[0].count, 7);
+    assert.equal(history.rows[0].count, 10);
   });
 });
 

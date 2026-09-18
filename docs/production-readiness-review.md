@@ -1,8 +1,10 @@
 # Final production-readiness review
 
-Review date: 2026-07-22  
-Reviewed baseline: `main` at `af0d9682e203c9851152c72b040597a688e65c1f`  
-Recommendation: **staging-ready**
+Review date: 2026-09-18
+Reviewed baseline: `main` at `fa264f9` with the remediation branch applied
+Recommendation: **production-ready with conditions**
+
+> This document has been refreshed after the production-readiness remediation. Earlier findings concerning division scope, raw database errors, TLS verification defaults, browser token persistence, audit immutability, legacy constraint validation, migration-aware readiness, CSV formulas, and dependency scanning are now addressed in code. Production promotion still requires the PostgreSQL-backed CI suite, a restored-data migration rehearsal, provider TLS validation, and the manual staging scenarios below.
 
 ## Executive summary
 
@@ -10,11 +12,11 @@ The repository is ready for a controlled institutional staging pilot, but it is 
 
 One narrowly scoped production bootstrap defect was fixed during this review: `npm run seed:logins` previously created demo faculty/chair/dean accounts even in production and could display generated credentials. Production now requires an explicitly configured administrator, rejects demo seeding, and suppresses the password from output.
 
-Production promotion remains conditional on completing the manual staging scenarios below and resolving or formally accepting the high-priority risks: PostgreSQL TLS certificate verification, browser bearer-token storage, database-role/audit immutability, and validation of adopted legacy constraints. These are verified repository limitations; whether compensating hosting controls already address them is an assumption requiring deployment evidence.
+Production promotion remains conditional on completing the manual staging scenarios below. Authentication credentials are now memory-only in the browser and therefore require users to sign in again after a page reload; this deliberately trades persistence for reduced token exposure until an institutionally reviewed HttpOnly-cookie deployment is introduced.
 
 ## Verification performed
 
-- Backend unit/domain/security suite: **81 passed, 0 failed, 8 skipped, 89 total** using `node --test --experimental-test-isolation=none`. The skips are the PostgreSQL integration cases because `TEST_DATABASE_URL` was not available locally.
+- Backend and frontend command results must be taken from the current remediation pull request and CI run; historical counts have intentionally been removed from this living review.
 - Frontend production build: **passed** with Vite 8.1.5; 21 modules transformed and production assets emitted to ignored `frontend/dist`.
 - PostgreSQL coverage in CI: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml), component `backend-test`, provisions PostgreSQL 17 and runs `npm test` for pull requests and pushes to `main`. The current review PR must pass that job before merge; local skips are not presented as PostgreSQL validation.
 - Repository hygiene: the branch was created directly from the recorded `origin/main` commit. Root [`.gitignore`](../.gitignore) ignores dependency directories, build output, and environment files; no tracked `node_modules`, `dist`, private key, or `.env` file was found.
@@ -37,65 +39,18 @@ Production promotion remains conditional on completing the manual staging scenar
 
 None verified.
 
-## High-priority findings
+## Remediated findings
 
-### H1 — Database TLS does not authenticate the server certificate
-
-- **Evidence / fact:** [`backend/db.js`](../backend/db.js), component `databaseSslConfig`, enables TLS with `rejectUnauthorized: false` whenever `DATABASE_SSL` is enabled or inferred from `DATABASE_URL`.
-- **Consequence:** traffic is encrypted but a client cannot prove it reached the intended PostgreSQL server; a capable network attacker or DNS/routing compromise could impersonate the database endpoint.
-- **Smallest remediation:** add a strict production mode that accepts a provider CA bundle or uses platform-verified TLS, default production to certificate verification, and reserve `DATABASE_SSL=false` for explicitly trusted local/service networks.
-- **Assumption to verify:** a hosting provider may supply a private authenticated network that reduces this exposure; no such topology is committed in this repository.
-
-### H2 — Browser sessions are readable by JavaScript
-
-- **Evidence / fact:** [`frontend/src/apiClient.js`](../frontend/src/apiClient.js), components `getSessionToken` and `setSession`, stores bearer sessions in `sessionStorage`; [`docs/auth-production-hardening.md`](auth-production-hardening.md) already labels this as an interim posture.
-- **Consequence:** any successful same-origin script injection can read and exfiltrate an active session. CSP reduces exposure but does not make JavaScript-readable bearer tokens equivalent to `HttpOnly` cookies.
-- **Smallest remediation:** move named-user sessions to `Secure`, `HttpOnly`, `SameSite` cookies and add CSRF protection before broad production use. Keep the existing bearer flow only for an explicitly risk-accepted limited pilot.
-- **Assumption to verify:** deployment headers may add a stronger nonce/hash CSP and monitoring; that configuration was not available in the repository.
-
-### H3 — Audit immutability depends on external database privileges
-
-- **Evidence / fact:** [`backend/migrations/0001_baseline.sql`](../backend/migrations/0001_baseline.sql), table `scope_audit_log`, has no database trigger or privilege policy preventing update/delete. [`backend/db.js`](../backend/db.js) uses one `DATABASE_URL` for normal writes, while migrations and runtime are not separated by code-level roles.
-- **Consequence:** compromise or misuse of the runtime database credential could alter or erase audit evidence even though HTTP clients cannot append generic audit events.
-- **Smallest remediation:** deploy with distinct migration-owner and runtime roles; grant runtime only required operations and make audit rows append-only through privileges or a reviewed trigger. Export/retain audit evidence outside the application database according to policy.
-- **Assumption to verify:** the production provider may already enforce separate roles or immutable log export; repository configuration does not prove it.
-
-### H4 — Legacy integrity constraints remain unvalidated until an operator completes remediation
-
-- **Evidence / fact:** [`backend/migrations/0002_security_integrity_constraints.sql`](../backend/migrations/0002_security_integrity_constraints.sql) deliberately uses `NOT VALID`. New writes are checked, but pre-existing invalid rows remain possible. [`backend/scripts/data-integrity-report.js`](../backend/scripts/data-integrity-report.js) reports them; no later migration validates the constraints.
-- **Consequence:** adopted production data can violate identifiers/status invariants and produce authorization, allocation, or reporting anomalies despite clean new writes.
-- **Smallest remediation:** run and archive the strict integrity report, resolve only data-owner-approved exceptions, then add a separately reviewed migration containing `VALIDATE CONSTRAINT` statements.
-- **Assumption to verify:** no actual legacy violation count was available because this review did not access production data.
+- Database TLS now verifies the server certificate by default. `DATABASE_SSL_REJECT_UNAUTHORIZED=false` is an explicit, documented compatibility exception rather than the default.
+- Browser session and bootstrap bearer credentials are memory-only and are cleared on reload instead of being persisted in web storage.
+- Migration `0009_protect_audit_history.sql` makes audit rows append-only with a database trigger.
+- Migration `0010_validate_integrity_constraints.sql` validates adopted constraints after the mandatory integrity precheck and stops without destructive cleanup if legacy data is invalid.
+- `/api/readiness` verifies database access and migration currency separately from liveness.
+- Unexpected route failures use logged internal details and public correlation-ID responses.
+- The stale duplicate database module was removed.
+- CI performs production-dependency audits, frontend utility tests, and Dependabot monitors npm and GitHub Actions dependencies.
 
 ## Medium-priority findings
-
-### M1 — Health does not prove migration readiness
-
-- **Evidence / fact:** [`backend/server.js`](../backend/server.js), `GET /api/health`, runs only `SELECT 1`.
-- **Consequence:** an instance can report healthy while migrations are pending or required tables/columns are absent, allowing traffic to reach a partially deployable release.
-- **Smallest remediation:** keep liveness simple, add a readiness check that verifies the latest migration identifier/checksum, and gate traffic promotion on readiness.
-- **Assumption to verify:** the hosting platform may already run `npm run migrate:status` as a release gate; this is documented but not encoded in deployment configuration.
-
-### M2 — Internal database errors are returned by many authenticated routes
-
-- **Evidence / fact:** [`backend/routes/persistence.js`](../backend/routes/persistence.js) and [`backend/routes/workflow.js`](../backend/routes/workflow.js) contain multiple 500 responses using `error.message`; authentication routes more consistently use public errors.
-- **Consequence:** authorized users may receive constraint names, SQL details, or internal state useful for reconnaissance, while error formats remain inconsistent.
-- **Smallest remediation:** route unexpected failures through `logError` plus a stable correlation-ID response, retaining explicit 4xx domain messages.
-- **Assumption to verify:** PostgreSQL error text varies by failure; no exploit was demonstrated in this review.
-
-### M3 — A stale duplicate database module can bypass current TLS controls
-
-- **Evidence / fact:** [`backend/db/db.js`](../backend/db/db.js) is a CommonJS duplicate that accepts `POSTGRES_URL` and always disables certificate verification. Repository search found no current import of it.
-- **Consequence:** a future maintainer may import the wrong module and silently bypass the documented `DATABASE_SSL` policy.
-- **Smallest remediation:** remove the unused duplicate in a dedicated cleanup or replace it with an explicit re-export of the canonical module.
-- **Assumption to verify:** external tooling outside this repository might still import the path; confirm before deletion.
-
-### M4 — Dependency security scanning is not automated
-
-- **Evidence / fact:** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) installs and tests locked dependencies but has no dependency-review, audit, or update workflow. [`backend/package.json`](../backend/package.json) still uses the Multer 1.x LTS line.
-- **Consequence:** a build can pass while a newly disclosed dependency vulnerability remains unnoticed.
-- **Smallest remediation:** enable GitHub dependency review/Dependabot and add a policy-calibrated audit job; upgrade Multer after compatibility tests rather than bundling it into this review.
-- **Assumption to verify:** organization-level Dependabot may already be enabled; repository files do not show it.
 
 ### M5 — Accessibility has no automated regression gate
 
@@ -147,17 +102,17 @@ These scenarios are required before production and should retain screenshots/log
 | Areas | Result and primary evidence |
 | --- | --- |
 | Repository/branch hygiene; Actions; build/tests | Verified controls and local results above; CI PostgreSQL result required on this PR. |
-| Migrations; invariants; assignment uniqueness | Transactional/checksummed runner and partial unique index verified; legacy constraint validation remains H4. |
-| Authentication; public endpoints; headers; rate limiting; secrets | Strong baseline verified in `auth.js`, `security.js`, `rateLimit.js`, environment docs; H1–H3 and M2 remain. |
+| Migrations; invariants; assignment uniqueness | Transactional/checksummed runner, validated constraints, append-only audit trigger, and partial unique index verified; restored-data rehearsal remains required. |
+| Authentication; public endpoints; headers; rate limiting; secrets | Strong baseline verified in `auth.js`, `security.js`, `rateLimit.js`, environment docs, strict TLS defaults, and memory-only browser credentials. |
 | Authorization; division isolation; faculty ownership | Middleware, SQL scoping, and authorization tests verified. |
 | Draft/submit/version/freeze/reopen/correction | Version tables, locks, policies, routes, and race tests verified. |
 | Determinism; seniority; qualifications; pass/load limits | Domain tests and real-PostgreSQL lifecycle test cover required outcomes. |
 | Recommendation/decision; exceptions; dean workflow | Separation, explanation requirements, return/resubmit/approve, and snapshots verified. |
 | Optimistic concurrency; audit; history | Row locks/version checks, server audit creation, no generic append route, and frozen explanations verified. |
-| Error handling; dependencies; maintainability | M2–M4 and L3 remain; no broad refactor recommended. |
+| Error handling; dependencies; maintainability | Correlation-ID errors and automated dependency checks are present; the large workflow modules remain a maintainability risk, but no broad refactor is recommended for launch remediation. |
 | Accessibility/workflow; ten-day operations | No obvious build-blocking UI defect found by source/build review; M5 and the manual load/accessibility scenarios remain. |
 | Backups, rollback, deployment | Documentation is explicit; execution evidence must be produced in staging. |
 
 ## Production launch recommendation
 
-**Staging-ready.** Proceed with a controlled, synthetic-data staging pilot. Do not classify the system as production-ready until the PostgreSQL-backed CI job passes on the final review PR, all manual staging scenarios have named evidence, H1–H4 are remediated or formally risk-accepted with compensating controls, and the production release checklist is fully signed off. No finding supports bypassing the existing staffing governance or changing core staffing rules.
+**Production-ready with conditions.** Merge only after the PostgreSQL-backed CI job passes. Production launch additionally requires a successful integrity precheck and migration rehearsal on a restored production-shaped copy, provider TLS verification, the manual staging scenarios with named evidence, and a fully signed production release checklist. No finding supports bypassing the existing staffing governance or changing core staffing rules.

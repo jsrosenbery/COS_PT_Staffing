@@ -1122,7 +1122,7 @@ export default function PTFacultyStaffingMVP() {
   function saveApiAccessToken() {
     if (!API_TOKEN_AUTH_ENABLED) return;
     setApiToken(apiTokenInput);
-    setApiAccessMessage(apiTokenInput.trim() ? "API access token saved for this browser session." : "API access token cleared.");
+    setApiAccessMessage(apiTokenInput.trim() ? "API access token enabled until this page is reloaded." : "API access token cleared.");
     if (apiTokenInput.trim()) setRole("admin");
   }
 
@@ -3907,7 +3907,7 @@ export default function PTFacultyStaffingMVP() {
                   <span style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>{authMessage}</span>
                 ) : null}
               </form>
-              {canShowWorkspace ? (
+              {canShowWorkspace && API_TOKEN_AUTH_ENABLED ? (
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "8px 10px", borderRadius: 16, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.22)" }}>
                 <input
                   type="password"

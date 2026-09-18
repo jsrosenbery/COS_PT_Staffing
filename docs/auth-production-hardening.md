@@ -33,7 +33,7 @@ After a successful invite acceptance, all outstanding invites for that user are 
 
 ## Session Storage
 
-Current browser sessions are bearer tokens stored in `sessionStorage`. This keeps implementation risk low while the account workflow is still settling, but it is not the final institutional posture.
+Current browser sessions are bearer tokens held only in JavaScript memory. They are not written to `sessionStorage` or `localStorage`, and a reload requires the user to sign in again. This reduces persistence and post-tab token exposure while the account workflow is still settling, but an institutionally reviewed `Secure`, `HttpOnly`, `SameSite` cookie design with CSRF protection remains the preferred long-term posture.
 
 Recommended next step: move session transport to secure, HTTP-only, same-site cookies with CSRF protection and integration tests for login, logout, password reset, invite acceptance, role changes, and cross-origin deployment. That rewrite should land only after test coverage proves existing user flows still work.
 

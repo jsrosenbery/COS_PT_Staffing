@@ -228,6 +228,7 @@ test("request IDs with unsupported characters receive a server UUID", () => {
 test("only the minimal terms read is public", () => {
   const publicAuthPaths = new Set(["/api/auth/login"]);
   assert.equal(isPublicApiRequest({ method: "GET", path: "/api/terms" }, { publicAuthPaths }), true);
+  assert.equal(isPublicApiRequest({ method: "GET", path: "/api/readiness" }, { publicAuthPaths }), true);
   assert.equal(isPublicApiRequest({ method: "POST", path: "/api/terms" }, { publicAuthPaths }), false);
   assert.equal(isPublicApiRequest({ method: "GET", path: "/api/windows" }, { publicAuthPaths }), false);
   assert.equal(isPublicApiRequest({ method: "POST", path: "/api/auth/login" }, { publicAuthPaths }), true);

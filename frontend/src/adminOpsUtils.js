@@ -15,7 +15,8 @@ export function toIsoDate(value) {
 }
 
 export function escapeCsv(value) {
-  const safe = String(value ?? "");
+  const original = String(value ?? "");
+  const safe = /^\s*[=+\-@]/.test(original) ? `'${original}` : original;
   const escaped = safe.replace(/"/g, '""');
   return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
 }

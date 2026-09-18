@@ -105,8 +105,18 @@ export function correlationId(req, res, next) {
 
 export function isPublicApiRequest(req, { authDisabled = false, publicAuthPaths = new Set() } = {}) {
   if (authDisabled || req.method === "OPTIONS") return true;
-  if (req.path === "/api/health" || publicAuthPaths.has(req.path)) return true;
+  if (req.path === "/api/health" || req.path === "/api/readiness" || publicAuthPaths.has(req.path)) return true;
   return req.method === "GET" && req.path === "/api/terms";
+}
+
+export function internalError(req, res, error, message = "The request could not be completed.", extras = {}) {
+  logError("request", error, req);
+  return res.status(500).json({
+    ...extras,
+    error: message,
+    code: "INTERNAL_ERROR",
+    correlationId: req.correlationId || null,
+  });
 }
 
 export function publicError(res, status, code, message, correlationId) {
