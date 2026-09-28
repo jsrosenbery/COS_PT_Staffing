@@ -52,21 +52,21 @@ export function sanitizeUser(user) {
   };
 }
 
-export async function issueSession(userId) {
+export async function issueSession(userId, runQuery = query) {
   const token = createRawToken(32);
   const tokenHash = hashToken(token);
   const expires = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
-  await query(
+  await runQuery(
     `INSERT INTO scope_user_sessions (user_id, session_token_hash, expires_at)
      VALUES ($1, $2, $3)`,
     [userId, tokenHash, expires.toISOString()]
   );
-  await query("UPDATE scope_users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1", [userId]);
+  await runQuery("UPDATE scope_users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1", [userId]);
   return { token, expires_at: expires.toISOString() };
 }
 
-export async function revokeOtherSessions(userId, activeToken) {
-  await query(
+export async function revokeOtherSessions(userId, activeToken, runQuery = query) {
+  await runQuery(
     `UPDATE scope_user_sessions
      SET revoked_at = NOW()
      WHERE user_id = $1

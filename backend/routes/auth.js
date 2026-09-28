@@ -156,6 +156,8 @@ router.get("/users", async (req, res) => {
 
 router.patch("/users/:id", async (req, res) => {
   if (!requireAdmin(req, res)) return;
+  const client = await pool.connect();
+  let transactionStarted = false;
   try {
     const employeeId = String(req.body?.employee_id || req.body?.employeeId || "").trim();
     const fullName = String(req.body?.full_name || req.body?.fullName || "").trim();
@@ -167,14 +169,16 @@ router.patch("/users/:id", async (req, res) => {
       return res.status(400).json({ error: "Status must be invited, active, or disabled." });
     }
 
-    const existingResult = await query("SELECT * FROM scope_users WHERE id = $1 LIMIT 1", [req.params.id]);
+    await client.query("BEGIN");
+    transactionStarted = true;
+    const existingResult = await client.query("SELECT * FROM scope_users WHERE id = $1 LIMIT 1 FOR UPDATE", [req.params.id]);
     const existing = existingResult.rows[0];
     if (!existing) return res.status(404).json({ error: "User not found." });
     const hasEmployeeId = Object.prototype.hasOwnProperty.call(req.body || {}, "employee_id") || Object.prototype.hasOwnProperty.call(req.body || {}, "employeeId");
     const hasFullName = Object.prototype.hasOwnProperty.call(req.body || {}, "full_name") || Object.prototype.hasOwnProperty.call(req.body || {}, "fullName");
     const hasDivision = Object.prototype.hasOwnProperty.call(req.body || {}, "division");
 
-    const result = await query(
+    const result = await client.query(
       `UPDATE scope_users
        SET employee_id = $2,
            full_name = $3,
@@ -196,10 +200,12 @@ router.patch("/users/:id", async (req, res) => {
     const nextRole = role || existing.role;
     const nextDivision = hasDivision ? division : existing.division || "";
     const nextStatus = activeStatus || existing.active_status;
-    if (nextStatus !== "active" || nextRole !== existing.role || nextDivision !== (existing.division || "")) {
-      await query("UPDATE scope_user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL", [req.params.id]);
+    const identityChanged = hasEmployeeId && employeeId !== (existing.employee_id || "");
+    if (nextStatus !== "active" || nextRole !== existing.role || nextDivision !== (existing.division || "") || identityChanged) {
+      await client.query("UPDATE scope_user_invites SET expires_at = NOW() WHERE user_id = $1 AND accepted_at IS NULL", [req.params.id]);
+      await client.query("UPDATE scope_user_sessions SET revoked_at = NOW() WHERE user_id = $1 AND revoked_at IS NULL", [req.params.id]);
     }
-    await query(
+    await client.query(
       `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, instructor_name, old_value, new_value, note, source)
        VALUES ('USER_UPDATED', $1, 'admin', $2, $3, $4, $5, 'backend')`,
       [
@@ -210,9 +216,14 @@ router.patch("/users/:id", async (req, res) => {
         `Updated user ${existing.email}.`,
       ]
     );
+    await client.query("COMMIT");
+    transactionStarted = false;
     res.json({ user: sanitizeUser(result.rows[0]) });
   } catch (error) {
     unexpected(res, req, "auth-update-user", error, "Could not update user.");
+  } finally {
+    if (transactionStarted) await client.query("ROLLBACK");
+    client.release();
   }
 });
 
@@ -522,50 +533,57 @@ router.post("/password-reset/complete", resetCompleteLimit, async (req, res) => 
 });
 
 router.post("/accept-invite", inviteAcceptLimit, async (req, res) => {
+  const token = String(req.body?.token || "").trim();
+  const password = String(req.body?.password || "");
+  const fullName = String(req.body?.full_name || req.body?.fullName || "").trim();
+  if (!token || password.length < 10) {
+    return res.status(400).json({ error: "Invite token and a password of at least 10 characters are required." });
+  }
+  const client = await pool.connect();
+  let transactionStarted = false;
   try {
-    const token = String(req.body?.token || "").trim();
-    const password = String(req.body?.password || "");
-    const fullName = String(req.body?.full_name || req.body?.fullName || "").trim();
-    if (!token || password.length < 10) {
-      return res.status(400).json({ error: "Invite token and a password of at least 10 characters are required." });
-    }
-
-    const inviteResult = await query(
-      `SELECT *
-         FROM scope_user_invites
-        WHERE invite_token_hash = $1
-          AND accepted_at IS NULL
-          AND expires_at > NOW()
-        LIMIT 1`,
-      [hashToken(token)]
+    const tokenHash = hashToken(token);
+    const lookup = await client.query("SELECT user_id FROM scope_user_invites WHERE invite_token_hash = $1", [tokenHash]);
+    if (!lookup.rows.length) return res.status(400).json({ error: "Invite is invalid or expired." });
+    const passwordRecord = await hashPassword(password);
+    await client.query("BEGIN");
+    transactionStarted = true;
+    // Lock the account first, matching administrator updates, then recheck the
+    // invitation. Concurrent disable/revoke/accept operations cannot interleave.
+    const current = await client.query("SELECT * FROM scope_users WHERE id = $1 FOR UPDATE", [lookup.rows[0].user_id]);
+    const account = current.rows[0];
+    const inviteResult = await client.query(
+      `SELECT * FROM scope_user_invites
+       WHERE invite_token_hash = $1 AND accepted_at IS NULL AND expires_at > NOW()
+       FOR UPDATE`, [tokenHash]
     );
     const invite = inviteResult.rows[0];
-    if (!invite) return res.status(400).json({ error: "Invite is invalid or expired." });
-
-    const passwordRecord = await hashPassword(password);
-    const userResult = await query(
+    if (!account || !invite || !["invited", "active"].includes(account.active_status)
+        || invite.role !== account.role
+        || (invite.division || "") !== (account.division || "")
+        || (invite.employee_id || "") !== (account.employee_id || "")) {
+      return res.status(400).json({ error: "Invite is invalid or expired. Ask an administrator for a new invitation." });
+    }
+    const userResult = await client.query(
       `UPDATE scope_users
-          SET full_name = COALESCE(NULLIF($2, ''), full_name, $3),
-              role = $4,
-              division = $5,
-              employee_id = $8,
-              active_status = 'active',
-              password_hash = $6,
-              password_salt = $7,
-              password_set_at = NOW(),
-              updated_at = NOW()
-        WHERE id = $1
-        RETURNING *`,
-      [invite.user_id, fullName, invite.full_name, invite.role, invite.division, passwordRecord.hash, passwordRecord.salt, invite.employee_id || ""]
+       SET full_name = COALESCE(NULLIF($2, ''), full_name),
+           active_status = 'active', password_hash = $3, password_salt = $4,
+           password_set_at = NOW(), updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [account.id, fullName, passwordRecord.hash, passwordRecord.salt]
     );
-    await query("UPDATE scope_user_invites SET accepted_at = NOW() WHERE user_id = $1 AND accepted_at IS NULL", [invite.user_id]);
-
-    const user = userResult.rows[0];
-    const session = await issueSession(user.id);
-    await revokeOtherSessions(user.id, session.token);
-    res.json({ user: sanitizeUser(user), session });
+    await client.query("UPDATE scope_user_invites SET accepted_at = NOW() WHERE user_id = $1 AND accepted_at IS NULL", [account.id]);
+    const runQuery = client.query.bind(client);
+    const session = await issueSession(account.id, runQuery);
+    await revokeOtherSessions(account.id, session.token, runQuery);
+    await client.query("COMMIT");
+    transactionStarted = false;
+    res.json({ user: sanitizeUser(userResult.rows[0]), session });
   } catch (error) {
     unexpected(res, req, "auth-accept-invite", error, "Could not accept invitation.");
+  } finally {
+    if (transactionStarted) await client.query("ROLLBACK");
+    client.release();
   }
 });
 

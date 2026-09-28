@@ -704,45 +704,29 @@ async function createPreferenceSubmissionVersion(client, {
   return { ...submissionResult.rows[0], division: facultyRosterRow.division || "", discipline: facultyRosterRow.discipline || "" };
 }
 
-async function resolvePreferenceFacultyRoster(db, { facultyId = "", employeeId = "", authUser = null } = {}) {
+export async function resolvePreferenceFacultyRoster(db, { facultyId = "", employeeId = "", authUser = null } = {}) {
   const runQuery = typeof db === "function" ? db : db?.query?.bind(db);
-  if (typeof runQuery !== "function") {
-    throw new TypeError("A database query function is required to resolve a faculty roster row.");
-  }
   const isFaculty = String(authUser?.role || "").trim().toLowerCase() === "faculty";
-  const lookupEmployeeId = String(isFaculty ? authUser?.employee_id || employeeId || facultyId : employeeId || facultyId).trim();
-  const lookupEmail = String(isFaculty ? authUser?.email || "" : "").trim();
-  const lookupName = String(isFaculty ? authUser?.full_name || "" : "").trim();
+  const lookupEmployeeId = String(isFaculty ? authUser?.employee_id || "" : employeeId || facultyId).trim();
+  if (!lookupEmployeeId) return null;
   const result = await runQuery(
     `SELECT employee_id, email, CONCAT_WS(' ', first_name, last_name) AS faculty_name, division, discipline
      FROM scope_pt_faculty
-     WHERE COALESCE(active_status, 'active') = 'active'
-       AND (
-         employee_id = $1
-         OR ($2 <> '' AND LOWER(email) = LOWER($2))
-         OR ($3 <> '' AND LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) =
-              LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')))
-         OR (
-           LENGTH(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')) >= 6
-           AND (
-             LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) LIKE '%' || LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')) || '%'
-             OR LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')) LIKE '%' || LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) || '%'
-           )
-         )
-       )
-     ORDER BY
-       CASE
-         WHEN employee_id = $1 THEN 0
-         WHEN $2 <> '' AND LOWER(email) = LOWER($2) THEN 1
-         WHEN $3 <> '' AND LOWER(REGEXP_REPLACE(CONCAT_WS('', first_name, last_name), '[^a-zA-Z0-9]', '', 'g')) =
-              LOWER(REGEXP_REPLACE($3, '[^a-zA-Z0-9]', '', 'g')) THEN 2
-         ELSE 3
-       END,
-       employee_id
-     LIMIT 1`,
-    [lookupEmployeeId, lookupEmail, lookupName]
+     WHERE COALESCE(active_status, 'active') = 'active' AND employee_id = $1
+     ORDER BY division, discipline`,
+    [lookupEmployeeId]
   );
-  return result.rows[0] || null;
+  const rows = isFaculty
+    ? result.rows.filter((row) => splitScope(authUser.division).includes(String(row.division || "").trim().toLowerCase()))
+    : result.rows;
+  // A name or email is not an authorization link. Ambiguous division ownership
+  // must be reconciled by an administrator before using the single-window flow.
+  if (!rows[0]?.division?.trim() || new Set(rows.map((row) => String(row.division || "").trim().toLowerCase())).size !== 1) return null;
+  return rows[0] || null;
+}
+
+function canAccessPreferenceFaculty(req, roster) {
+  return Boolean(roster && (isAdmin(req) || scopeFilterForReq(req, [roster.division]).length));
 }
 
 async function freezeLatestSubmittedVersions(client, { termCode, division, actor, auditReason = "Preference window closed; latest valid submitted versions frozen." }) {
@@ -1666,7 +1650,7 @@ router.get("/available-sections", requireScopedRead, async (req, res) => {
       });
       if (!facultyRosterRow) {
         return res.status(409).json({
-          error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID, email, or name to the roster.",
+          error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to link your employee ID and division to an unambiguous active roster record.",
           sections: [],
         });
       }
@@ -1738,7 +1722,7 @@ router.get("/faculty-self-dashboard", async (req, res) => {
     });
     if (!facultyRosterRow?.employee_id) {
       return res.status(409).json({
-        error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID, email, or name to the roster.",
+        error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to link your employee ID and division to an unambiguous active roster record.",
         rosterRows: [],
         sections: [],
         preferences: [],
@@ -1754,8 +1738,9 @@ router.get("/faculty-self-dashboard", async (req, res) => {
        FROM scope_pt_faculty pt
        WHERE COALESCE(pt.active_status, 'active') = 'active'
          AND pt.employee_id = $1
+         AND LOWER(pt.division) = LOWER($2)
        ORDER BY pt.division, pt.discipline, pt.last_name, pt.first_name`,
-      [facultyRosterRow.employee_id]
+      [facultyRosterRow.employee_id, facultyRosterRow.division]
     );
     const rosterRows = rosterResult.rows || [];
     const facultyDivisions = Array.from(new Set(rosterRows.flatMap((row) => splitScope(row.division))));
@@ -1822,8 +1807,9 @@ router.get("/faculty-self-dashboard", async (req, res) => {
          LEFT JOIN scope_sections s ON s.term_code = p.term_code AND s.assignment_group_id = p.assignment_group_id
          WHERE p.term_code = $1
            AND (p.faculty_id = ANY($2::text[]) OR p.employee_id = ANY($2::text[]))
+           AND LOWER(s.division) = ANY($3::text[])
          ORDER BY p.preference_rank ASC`,
-        [termCode, facultyIdentifiers]
+        [termCode, facultyIdentifiers, facultyDivisionKeys]
       ),
       query(
         `SELECT availability_days, availability_time_blocks
@@ -2190,8 +2176,8 @@ router.get("/workflow-exports/:stage.:format", requireElevatedRole, requireScope
   }
 });
 
-router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
-  const {
+async function recordChairDecision(req, res, mode = "create") {
+  let {
     termCode = "",
     disciplineCode = "",
     assignmentGroupId = "",
@@ -2201,7 +2187,7 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
     expectedRecommendedEmployeeId = "",
     expectedRecommendationSnapshot = null,
   } = req.body || {};
-  if (!termCode || !assignmentGroupId || !selectedEmployeeId) {
+  if (!selectedEmployeeId || (mode !== "reassign" && (!termCode || !assignmentGroupId))) {
     return res.status(400).json({ error: "termCode, assignmentGroupId, and selectedEmployeeId are required." });
   }
 
@@ -2209,6 +2195,15 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    if (mode === "reassign") {
+      const target = await client.query("SELECT term_code, assignment_group_id FROM scope_assignments WHERE id = $1", [req.params.id]);
+      if (!target.rows.length) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ error: "Assignment not found." });
+      }
+      termCode = target.rows[0].term_code;
+      assignmentGroupId = target.rows[0].assignment_group_id;
+    }
     const lockedSection = await client.query(
       `SELECT assignment_group_id, division, discipline_code
        FROM scope_sections
@@ -2222,7 +2217,7 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
     }
 
     const sectionDivision = lockedSection.rows[0].division || "";
-    const sectionDisciplineCode = disciplineCode || lockedSection.rows[0].discipline_code || "";
+    const sectionDisciplineCode = lockedSection.rows[0].discipline_code || "";
     const scopedDivisions = scopeFilterForReq(req, [sectionDivision]);
     if (!isAdmin(req) && !scopedDivisions.length) {
       await client.query("ROLLBACK");
@@ -2230,17 +2225,37 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
     }
 
     const existingAssignment = await client.query(
-      `SELECT id
+      `SELECT *
        FROM scope_assignments
        WHERE term_code = $1
          AND assignment_group_id = $2
-         AND COALESCE(status, 'tentative') NOT IN ('released', 'deleted', 'void', 'returned_for_revision')
+         AND (COALESCE(status, 'tentative') NOT IN ('released', 'deleted', 'void', 'returned_for_revision') OR id = $3)
        FOR UPDATE`,
-      [termCode, assignmentGroupId]
+      [termCode, assignmentGroupId, mode === "reassign" ? req.params.id : null]
     );
-    if (existingAssignment.rows.length) {
+    if (mode === "create" && existingAssignment.rows.length) {
       await client.query("ROLLBACK");
       return res.status(409).json({ error: "This staffing unit already has an active chair decision or assignment." });
+    }
+
+    const previous = existingAssignment.rows[0] || null;
+    if (mode === "reassign" && (!previous || String(previous.id) !== String(req.params.id) || existingAssignment.rows.length !== 1)) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Assignment changed. Reload the staffing queue.", code: "STALE_ASSIGNMENT" });
+    }
+    if (previous) {
+      if (!["tentative", "returned_for_revision"].includes(previous.status || "tentative")) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "Only tentative or returned assignments can be revised." });
+      }
+      const expected = req.body.expectedVersion ?? req.body.expectedAssignmentVersion;
+      if (!Number.isInteger(Number(expected)) || Number(expected) < 1 || Number(expected) !== Number(previous.version)) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ error: "A current assignment version is required. Reload and try again.", code: "STALE_ASSIGNMENT" });
+      }
+      // Exclude the prior choice while recomputing eligibility. Rollback restores
+      // it if validation fails; the released row retains its original snapshots.
+      await client.query("UPDATE scope_assignments SET status = 'released', version = version + 1, updated_at = NOW() WHERE id = $1", [previous.id]);
     }
 
     const { analysis, exceptionReasons } = await buildAllocationAnalysisFromDb(client, {
@@ -2316,9 +2331,9 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
     const assignmentResult = await client.query(
       `INSERT INTO scope_assignments
         (term_code, discipline_code, assignment_group_id, employee_id, faculty_name, status, actor_name, reason,
-         reason_code, justification, recommendation_snapshot, decision_snapshot, updated_at)
-       VALUES ($1,$2,$3,$4,$5,'tentative',$6,$7,$8,$9,$10::jsonb,$11::jsonb,NOW())
-       RETURNING id`,
+         reason_code, justification, recommendation_snapshot, decision_snapshot, version, updated_at)
+       VALUES ($1,$2,$3,$4,$5,'tentative',$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,NOW())
+       RETURNING id, version`,
       [
         termCode,
         sectionDisciplineCode,
@@ -2331,16 +2346,17 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
         justification,
         recommendationSnapshot,
         decisionSnapshot,
+        previous ? Number(previous.version) + 1 : 1,
       ]
     );
 
     await writeAuditEvent(client, req, {
-      eventType: "CHAIR_DECISION_RECORDED",
+      eventType: previous ? "ASSIGNMENT_REASSIGNED" : "CHAIR_DECISION_RECORDED",
       division: sectionDivision,
       term: termCode,
       sectionKey: assignmentGroupId,
       instructorName: selectedFacultyName,
-      oldValue: decision.recommendedCandidate.employeeId,
+      oldValue: previous?.employee_id || decision.recommendedCandidate.employeeId,
       newValue: selectedEmployeeId,
       reasonCode,
       explanation: justification,
@@ -2350,8 +2366,11 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
     });
 
     await client.query("COMMIT");
-    res.status(201).json({
+    res.status(mode === "create" ? 201 : 200).json({
       success: true,
+      id: assignmentResult.rows[0]?.id,
+      version: assignmentResult.rows[0]?.version,
+      message: "Chair decision saved.",
       decision: {
         id: decisionResult.rows[0]?.id,
         decided_at: decisionResult.rows[0]?.decided_at,
@@ -2375,7 +2394,9 @@ router.post("/chair-decisions", requireRoles("chair"), async (req, res) => {
   } finally {
     client.release();
   }
-});
+}
+
+router.post("/chair-decisions", requireRoles("chair"), (req, res) => recordChairDecision(req, res));
 
 router.get("/chair-workflow", requireElevatedRole, requireScopedRead, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = "" } = req.query;
@@ -2675,7 +2696,9 @@ async function advanceAssignmentStatus({ client, req, termCode, fromStatuses, to
 router.post("/assignments/submit", requireRoles("chair"), requireDivisionScope, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = [] } = req.body || {};
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
-  const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean) : [];
+  const requested = Array.isArray(divisions) ? divisions : [];
+  const divisionList = scopeFilterForReq(req, requested);
+  if (!isAdmin(req) && !divisionList.length) return res.status(403).json({ error: "No permitted divisions are available for this request." });
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -2703,7 +2726,9 @@ router.post("/assignments/submit", requireRoles("chair"), requireDivisionScope, 
 router.post("/assignments/approve", requireRoles("dean"), requireDivisionScope, async (req, res) => {
   const { termCode = "", disciplineCode = "", divisions = [] } = req.body || {};
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
-  const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean) : [];
+  const requested = Array.isArray(divisions) ? divisions : [];
+  const divisionList = scopeFilterForReq(req, requested);
+  if (!isAdmin(req) && !divisionList.length) return res.status(403).json({ error: "No permitted divisions are available for this request." });
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -2732,7 +2757,9 @@ router.post("/assignments/return", requireRoles("dean"), requireDivisionScope, a
   const { termCode = "", disciplineCode = "", divisions = [], reason = "" } = req.body || {};
   if (!termCode) return res.status(400).json({ error: "termCode is required." });
   if (!String(reason || "").trim()) return res.status(400).json({ error: "A revision reason is required." });
-  const divisionList = Array.isArray(divisions) ? divisions.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean) : [];
+  const requested = Array.isArray(divisions) ? divisions : [];
+  const divisionList = scopeFilterForReq(req, requested);
+  if (!isAdmin(req) && !divisionList.length) return res.status(403).json({ error: "No permitted divisions are available for this request." });
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -2757,64 +2784,12 @@ router.post("/assignments/return", requireRoles("dean"), requireDivisionScope, a
   } finally { client.release(); }
 });
 
-router.post("/assignments", requireElevatedRole, async (req, res) => {
-  const { termCode = "", disciplineCode = "", assignmentGroupId = "", employeeId = "", reason = "", expectedAssignmentVersion = null } = req.body || {};
-  if (!termCode || !assignmentGroupId || !employeeId) return res.status(400).json({ error: "termCode, assignmentGroupId, and employeeId are required." });
-  const actor = req.auth?.user || {};
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const section = await client.query(`SELECT division FROM scope_sections WHERE term_code = $1 AND assignment_group_id = $2 FOR UPDATE`, [termCode, assignmentGroupId]);
-    if (!section.rows.length) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Section not found." });
-    }
-    const scoped = scopeFilterForReq(req, [section.rows[0].division]);
-    if (!isAdmin(req) && !scoped.length) {
-      await client.query("ROLLBACK");
-      return res.status(403).json({ error: "This action is outside your assigned division scope." });
-    }
-    const existing = await client.query(
-      `SELECT id, version
-       FROM scope_assignments
-       WHERE term_code = $1 AND assignment_group_id = $2 AND COALESCE(status, 'tentative') NOT IN ('released', 'deleted', 'void', 'returned_for_revision')
-       FOR UPDATE`,
-      [termCode, assignmentGroupId]
-    );
-    if (existing.rows.length && Number(expectedAssignmentVersion) !== Number(existing.rows[0].version)) {
-      await client.query("ROLLBACK");
-      return res.status(409).json({ error: "Assignment changed before this request was submitted. Reload and try again.", code: "STALE_ASSIGNMENT", currentVersion: existing.rows[0].version });
-    }
-    const faculty = await client.query(`SELECT CONCAT_WS(' ', first_name, last_name) AS faculty_name FROM scope_pt_faculty WHERE employee_id = $1 ORDER BY COALESCE(active_status, 'active') = 'active' DESC LIMIT 1`, [employeeId]);
-    const facultyName = faculty.rows[0]?.faculty_name || employeeId;
-    await client.query(`DELETE FROM scope_assignments WHERE term_code = $1 AND assignment_group_id = $2`, [termCode, assignmentGroupId]);
-    const result = await client.query(
-      `INSERT INTO scope_assignments
-        (term_code, discipline_code, assignment_group_id, employee_id, faculty_name, status, actor_name, reason, updated_at)
-       VALUES ($1,$2,$3,$4,$5,'tentative',$6,$7,NOW())
-       RETURNING id, version`,
-      [termCode, disciplineCode, assignmentGroupId, employeeId, facultyName, actor.full_name || actor.email || "", reason]
-    );
-    await writeAuditEvent(client, req, {
-      eventType: "ASSIGNMENT_SAVED",
-      division: section.rows[0].division,
-      term: termCode,
-      sectionKey: assignmentGroupId,
-      instructorName: facultyName,
-      oldValue: existing.rows[0]?.id || null,
-      newValue: employeeId,
-      explanation: reason,
-      note: "Tentative assignment saved.",
-    });
-    await client.query("COMMIT");
-    res.json({ success: true, id: result.rows[0]?.id, version: result.rows[0]?.version, message: "Tentative assignment saved." });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    internalError(req, res, error, "Could not save the assignment.");
-  } finally { client.release(); }
+router.post("/assignments", requireRoles("chair"), (req, res) => {
+  req.body = { ...req.body, selectedEmployeeId: req.body?.employeeId || "" };
+  return recordChairDecision(req, res, "replace");
 });
 
-router.delete("/assignments/:id", requireElevatedRole, async (req, res) => {
+router.delete("/assignments/:id", requireRoles("chair"), async (req, res) => {
   const expectedVersion = req.query?.expectedVersion || req.body?.expectedVersion;
   const client = await pool.connect();
   try {
@@ -2837,7 +2812,11 @@ router.delete("/assignments/:id", requireElevatedRole, async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(403).json({ error: "This action is outside your assigned division scope." });
     }
-    if (expectedVersion && Number(expectedVersion) !== Number(existing.rows[0].version)) {
+    if (!["tentative", "returned_for_revision"].includes(existing.rows[0].status || "tentative")) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Only tentative or returned assignments can be released." });
+    }
+    if (!Number.isInteger(Number(expectedVersion)) || Number(expectedVersion) < 1 || Number(expectedVersion) !== Number(existing.rows[0].version)) {
       await client.query("ROLLBACK");
       return res.status(409).json({ error: "Assignment changed before this request was submitted. Reload and try again.", code: "STALE_ASSIGNMENT", currentVersion: existing.rows[0].version });
     }
@@ -2866,54 +2845,9 @@ router.delete("/assignments/:id", requireElevatedRole, async (req, res) => {
   } finally { client.release(); }
 });
 
-router.put("/assignments/:id/reassign", requireElevatedRole, async (req, res) => {
-  const { employeeId = "", reason = "", expectedVersion = null } = req.body || {};
-  if (!employeeId || !reason.trim()) return res.status(400).json({ error: "employeeId and reason are required." });
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const existing = await client.query(
-      `SELECT a.*, s.division
-       FROM scope_assignments a
-       LEFT JOIN scope_sections s ON s.term_code = a.term_code AND s.assignment_group_id = a.assignment_group_id
-       WHERE a.id = $1
-       LIMIT 1
-       FOR UPDATE OF a`,
-      [req.params.id]
-    );
-    if (!existing.rows.length) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "Assignment not found." });
-    }
-    const scoped = scopeFilterForReq(req, [existing.rows[0].division]);
-    if (!isAdmin(req) && !scoped.length) {
-      await client.query("ROLLBACK");
-      return res.status(403).json({ error: "This action is outside your assigned division scope." });
-    }
-    if (expectedVersion && Number(expectedVersion) !== Number(existing.rows[0].version)) {
-      await client.query("ROLLBACK");
-      return res.status(409).json({ error: "Assignment changed before this request was submitted. Reload and try again.", code: "STALE_ASSIGNMENT", currentVersion: existing.rows[0].version });
-    }
-    const faculty = await client.query(`SELECT CONCAT_WS(' ', first_name, last_name) AS faculty_name FROM scope_pt_faculty WHERE employee_id = $1 LIMIT 1`, [employeeId]);
-    const facultyName = faculty.rows[0]?.faculty_name || employeeId;
-    const updated = await client.query(`UPDATE scope_assignments SET employee_id = $1, faculty_name = $2, actor_name = $3, reason = $4, version = version + 1, updated_at = NOW() WHERE id = $5 RETURNING version`, [employeeId, facultyName, req.auth?.user?.full_name || req.auth?.user?.email || "", reason, req.params.id]);
-    await writeAuditEvent(client, req, {
-      eventType: "ASSIGNMENT_REASSIGNED",
-      division: existing.rows[0].division,
-      term: existing.rows[0].term_code,
-      sectionKey: existing.rows[0].assignment_group_id,
-      instructorName: facultyName,
-      oldValue: existing.rows[0].employee_id,
-      newValue: employeeId,
-      explanation: reason,
-      note: "Tentative assignment reassigned.",
-    });
-    await client.query("COMMIT");
-    res.json({ success: true, version: updated.rows[0]?.version, message: "Tentative assignment reassigned." });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    internalError(req, res, error, "Could not reassign the section.");
-  } finally { client.release(); }
+router.put("/assignments/:id/reassign", requireRoles("chair"), (req, res) => {
+  req.body = { ...req.body, selectedEmployeeId: req.body?.employeeId || "" };
+  return recordChairDecision(req, res, "reassign");
 });
 
 router.get("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated, async (req, res) => {
@@ -2924,10 +2858,13 @@ router.get("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated,
       facultyId,
       authUser: req.auth?.user || null,
     });
+    if (!canAccessPreferenceFaculty(req, facultyRosterRow)) {
+      return res.status(403).json({ error: "This faculty record is unavailable in your assigned division scope." });
+    }
     if (String(req.auth?.user?.role || "").toLowerCase() === "faculty") {
       if (!facultyRosterRow) {
         return res.status(409).json({
-          error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID, email, or name to the roster.",
+          error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to link your employee ID and division to an unambiguous active roster record.",
           preferences: [],
           availability: { days: [], timeBlocks: [] },
         });
@@ -2954,7 +2891,7 @@ router.get("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated,
       }
     }
 
-    const facultyIdentifiers = Array.from(new Set([facultyId, facultyRosterRow?.employee_id].map((value) => String(value || "").trim()).filter(Boolean)));
+    const facultyIdentifiers = [facultyRosterRow.employee_id];
     const [result, availabilityResult] = await Promise.all([
       query(
       `SELECT p.assignment_group_id, p.preference_rank, p.faculty_id, p.employee_id, p.faculty_name,
@@ -2963,8 +2900,9 @@ router.get("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated,
        LEFT JOIN scope_sections s ON s.term_code = p.term_code AND s.assignment_group_id = p.assignment_group_id
        WHERE p.term_code = $1
          AND (p.faculty_id = ANY($2::text[]) OR p.employee_id = ANY($2::text[]))
+         AND LOWER(s.division) = LOWER($3)
        ORDER BY p.preference_rank ASC`,
-      [termCode, facultyIdentifiers]
+      [termCode, facultyIdentifiers, facultyRosterRow.division]
       ),
       query(
         `SELECT availability_days, availability_time_blocks
@@ -3012,13 +2950,30 @@ router.post("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated
     if (!facultyRosterRow) {
       await client.query("ROLLBACK");
       return res.status(409).json({
-        error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to match your account employee ID, email, or name to the roster.",
+        error: "Your account is not linked to an active PT staffing roster record. Ask an administrator to link your employee ID and division to an unambiguous active roster record.",
       });
+    }
+    if (!canAccessPreferenceFaculty(req, facultyRosterRow)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({ error: "This faculty record is outside your assigned division scope." });
     }
     const canonicalFacultyId = facultyRosterRow.employee_id || employeeId || facultyId;
     const canonicalEmployeeId = facultyRosterRow.employee_id || employeeId || facultyId;
     const canonicalFacultyName = facultyRosterRow.faculty_name || facultyName;
-    const facultyIdentifiers = Array.from(new Set([facultyId, employeeId, canonicalFacultyId].map((value) => String(value || "").trim()).filter(Boolean)));
+    const facultyIdentifiers = [canonicalFacultyId];
+    if (preferences.length) {
+      const sectionIds = preferences.map((preference) => preference.assignment_group_id);
+      const sections = await client.query(
+        `SELECT assignment_group_id FROM scope_sections
+         WHERE term_code = $1 AND LOWER(division) = LOWER($2)
+           AND assignment_group_id = ANY($3::text[])`,
+        [termCode, facultyRosterRow.division, sectionIds]
+      );
+      if (sections.rows.length !== sectionIds.length) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "Preferences must reference sections in this faculty member's division and term." });
+      }
+    }
     const windowResult = await client.query(
       `SELECT id, term, division, opened_at, closes_at, status
        FROM scope_staffing_windows
@@ -3151,6 +3106,7 @@ router.get("/preferences/export", requireElevatedRole, requireScopedRead, async 
   try {
     const params = [termCode];
     const scopedDivisions = scopeFilterForReq(req, String(divisions || "").split("|"));
+    if (!isAdmin(req) && !scopedDivisions.length) return res.status(403).json({ error: "No permitted divisions are available for this request." });
     let scopedFilter = "";
     if (scopedDivisions.length) {
       params.push(scopedDivisions);
@@ -3550,4 +3506,3 @@ router.post("/dissemination/send", requireElevatedRole, requireDivisionScope, as
   }
 });
 export default router;
-
