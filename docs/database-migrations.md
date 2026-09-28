@@ -1,5 +1,25 @@
 # Database migrations
 
+## Chair/dean directory compatibility (0011)
+
+Migration `0011_chair_dean_directory_identity.sql` permits an empty employee ID only
+for chair/dean directory contacts with a syntactically valid email and nonblank
+division. It preserves every row and does not change login accounts, permissions,
+faculty identity requirements, or delivery settings. Email syntax does not imply
+that a mailbox is active or verified.
+
+The runner explicitly applies 0011 before pending 0010 so databases blocked by the
+old directory rule can recover. Existing migration files and checksums are unchanged.
+Databases already through 0010 receive 0011 normally. The replacement constraint is
+validated in the same transaction; invalid contacts still block and roll back the
+replacement. The integrity report uses the same revised rule.
+
+From the new release checkout, run the integrity precheck, migrations, and migration
+status after verifying the target backup. Do not manually mark 0010 as applied.
+After deployment, verify public readiness and the release commit. Missing or invalid
+email/division data still requires explicit correction; test login accounts must be
+disabled separately from directory records.
+
 The backend uses ordered SQL files in `backend/migrations`. Filenames must follow `NNNN_name.sql`; the numeric identifier determines deterministic execution order and must never be reused.
 
 ## How migrations run

@@ -1,6 +1,6 @@
 const checks = Object.freeze([
   ["terms.identifiers", "scope_terms", "BTRIM(term_code) = ''"],
-  ["roles.identity_or_role", "scope_roles", "BTRIM(employee_id) = '' OR BTRIM(division) = '' OR role <> LOWER(BTRIM(role)) OR role NOT IN ('admin', 'chair', 'dean', 'faculty')"],
+  ["roles.identity_or_role", "scope_roles", "(BTRIM(employee_id) = '' AND NOT (role IN ('chair', 'dean') AND BTRIM(email) ~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$')) OR BTRIM(division) = '' OR role <> LOWER(BTRIM(role)) OR role NOT IN ('admin', 'chair', 'dean', 'faculty')"],
   ["users.role", "scope_users", "role <> LOWER(BTRIM(role)) OR role NOT IN ('admin', 'chair', 'dean', 'faculty')"],
   ["pt_faculty.identity", "scope_pt_faculty", "BTRIM(employee_id) = '' OR BTRIM(division) = ''"],
   ["sections.identifiers", "scope_sections", "BTRIM(term_code) = '' OR BTRIM(division) = '' OR BTRIM(assignment_group_id) = ''"],
