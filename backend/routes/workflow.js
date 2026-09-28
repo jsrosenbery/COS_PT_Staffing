@@ -2356,7 +2356,7 @@ async function recordChairDecision(req, res, mode = "create") {
       term: termCode,
       sectionKey: assignmentGroupId,
       instructorName: selectedFacultyName,
-      oldValue: decision.recommendedCandidate.employeeId,
+      oldValue: previous?.employee_id || decision.recommendedCandidate.employeeId,
       newValue: selectedEmployeeId,
       reasonCode,
       explanation: justification,
