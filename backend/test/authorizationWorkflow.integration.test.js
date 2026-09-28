@@ -106,6 +106,19 @@ integrationTest("authorization holds across preference, assignment, and invitati
       assert.equal(own.body[0].employee_id, "F1");
       assert.equal((await api("/faculty-self-dashboard?termCode=T", { role: "faculty", employee: "A1" })).status, 409);
     });
+    await t.test("faculty-supplied identifiers cannot impersonate another roster owner", async () => {
+      const before = (await pool.query("SELECT * FROM scope_preferences WHERE employee_id='A1'")).rows;
+      const read = await api("/preferences?termCode=T&facultyId=A1", { role: "faculty", employee: "F1" });
+      assert.equal(read.status, 200);
+      assert.ok(read.body.preferences.length > 0);
+      assert.ok(read.body.preferences.every(row => row.employee_id === "F1"));
+      const write = await api("/preferences", { method: "POST", role: "faculty", employee: "F1", body: {
+        termCode: "T", facultyId: "A1", employeeId: "A1",
+        preferences: ["S1", "S2"].map((assignment_group_id, index) => ({ assignment_group_id, preference_rank: index + 1, discipline_code: "MATH" })),
+      } });
+      assert.equal(write.status, 200, JSON.stringify(write.body));
+      assert.deepEqual((await pool.query("SELECT * FROM scope_preferences WHERE employee_id='A1'")).rows, before);
+    });
     await t.test("faculty dashboard and preference selections stay in the linked division", async () => {
       await pool.query(`INSERT INTO scope_pt_faculty(employee_id,first_name,last_name,division,discipline)
         VALUES ('F1','Same','Name','Arts','MATH')`);
@@ -178,6 +191,17 @@ integrationTest("authorization holds across preference, assignment, and invitati
       return { user, token };
     }
     const accept = token => api("/auth/accept-invite", { method: "POST", body: { token, password: "Synthetic test password 123" } });
+    await t.test("expired and consumed invitations cannot activate an account", async () => {
+      for (const state of ["expired", "consumed"]) {
+        const { user, token } = await invitedUser(`${state}@example.invalid`);
+        if (state === "expired") await pool.query("UPDATE scope_user_invites SET expires_at=NOW()-INTERVAL '1 second' WHERE user_id=$1", [user.id]);
+        else await pool.query("UPDATE scope_user_invites SET accepted_at=NOW() WHERE user_id=$1", [user.id]);
+        const before = (await pool.query("SELECT * FROM scope_users WHERE id=$1", [user.id])).rows;
+        assert.equal((await accept(token)).status, 400);
+        assert.deepEqual((await pool.query("SELECT * FROM scope_users WHERE id=$1", [user.id])).rows, before);
+        assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM scope_user_sessions WHERE user_id=$1", [user.id])).rows[0].count, 0);
+      }
+    });
     await t.test("disable or privilege changes invalidate outstanding invitations", async () => {
       for (const patch of [{ active_status: "disabled" }, { role: "faculty" }, { division: "Arts" }, { employee_id: "F2" }]) {
         const { user, token } = await invitedUser(`change-${Object.keys(patch)[0]}@example.invalid`, "chair");

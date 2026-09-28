@@ -108,27 +108,6 @@ test("token bearer URLs are suppressed by default in production", () => {
   }
 });
 
-test("auth routes invalidate invite, reset, and stale session tokens after use", () => {
-  const authRoutes = read("../routes/auth.js");
-
-  assert.match(authRoutes, /UPDATE scope_user_invites SET accepted_at = NOW\(\) WHERE user_id = \$1 AND accepted_at IS NULL/);
-  assert.match(authRoutes, /UPDATE scope_password_resets SET used_at = NOW\(\) WHERE user_id = \$1 AND used_at IS NULL/);
-  assert.match(authRoutes, /revokeOtherSessions\(user\.id, session\.token\)/);
-});
-
-test("expired tokens, disabled users, and revoked sessions are rejected by auth queries", () => {
-  const auth = read("../auth.js");
-  const authRoutes = read("../routes/auth.js");
-
-  assert.match(auth, /s\.revoked_at IS NULL/);
-  assert.match(auth, /s\.expires_at > NOW\(\)/);
-  assert.match(auth, /u\.active_status = 'active'/);
-  assert.match(authRoutes, /r\.used_at IS NULL/);
-  assert.match(authRoutes, /r\.expires_at > NOW\(\)/);
-  assert.match(authRoutes, /accepted_at IS NULL/);
-  assert.match(authRoutes, /expires_at > NOW\(\)/);
-});
-
 test("API token authentication is bootstrap-only and production-disabled by default", () => {
   const auth = read("../auth.js");
   const doc = read("../../docs/auth-production-hardening.md");
