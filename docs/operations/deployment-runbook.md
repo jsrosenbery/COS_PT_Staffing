@@ -59,10 +59,22 @@ Set `CORS_ORIGIN` to exact approved frontend origins. Test an allowed browser re
 Deploy the backend only after migrations succeed. Run `npm run db:integrity-precheck` before migration `0010`; stop and review any legacy violations rather than deleting or rewriting historical rows. By default, `npm start` does not run migrations. If the hosting platform is configured with `RUN_MIGRATIONS_ON_STARTUP=true`, the backend applies pending migrations before listening; use that option only after the same backup and pending-migration review described above. Verify both `/api/health` (process/database liveness) and `/api/readiness` (database connectivity and migration currency):
 
 ```sh
-curl --fail --show-error https://backend.example.invalid/api/health
+cd backend
+RELEASE_API_BASE_URL=https://backend.example.invalid/api \
+EXPECTED_DEPLOY_COMMIT=$(git rev-parse HEAD) npm run release:verify
 ```
 
-Expected response is HTTP 200 with `{"ok":true}`. A failure indicates the service or database is unavailable and must block traffic promotion.
+Run this from the exact release checkout. The command makes unauthenticated, read-only requests to both `/health` and `/readiness`, requiring HTTP 200, `ok: true`, the complete expected Git commit SHA on both responses, and the readiness migration count matching this checkout. Redirects, timeouts, non-JSON responses, missing metadata, pending migrations, and revision mismatches fail with a nonzero exit code. Save the JSON output as release evidence. A healthy response from an older backend is not a successful release.
+
+This check verifies the server's migration-aware readiness response; it does not replace the target-database checksum inspection, integrity precheck, backup verification, or restore drill above. If readiness returns 401, inspect the deployed revision and authentication configuration rather than sending an administrator token to make the check pass.
+
+For PowerShell, set `$env:RELEASE_API_BASE_URL` and `$env:EXPECTED_DEPLOY_COMMIT` (using `git rev-parse HEAD`), then run `npm run release:verify` from `backend`.
+
+### Render release reconciliation
+
+Inspect the existing Render service before changing it: confirm its linked repository and branch, backend root directory, build/start/pre-deploy commands, auto-deploy setting, deployed commit, and database target. Review failed or skipped deploy logs. Record nonsecret settings only; do not copy connection URLs or provider keys into release evidence.
+
+Use the approved release SHA from `main`. Review the pending migrations on the actual target, verify the backup/restore evidence, and complete the integrity precheck before running a migration or triggering a deployment that runs migrations at startup. If those checks are unavailable, leave deployment blocked and record the missing evidence. After release, run `release:verify` against the configured frontend API target and confirm Render's reported commit matches the same SHA.
 
 Deploy the frontend built with the intended `VITE_API_BASE_URL`. In browser developer tools, confirm API requests go only to the intended backend and CORS succeeds.
 

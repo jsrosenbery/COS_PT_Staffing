@@ -12,7 +12,7 @@ Release operator: __________  Database owner: __________  Rollback owner: ______
 - [ ] `npm run db:integrity-precheck` passed or every exception has written data-owner approval.
 - [ ] `npm run migrate` succeeded and `npm run migrate:status` reports every repository migration applied with no checksum mismatch.
 - [ ] The production frontend build succeeded with the intended production `VITE_API_BASE_URL`.
-- [ ] The backend `/api/health` check succeeded after deployment.
+- [ ] `npm run release:verify` passed from the exact release checkout against the production API URL: health and readiness both return HTTP 200 and the expected full commit SHA, and readiness reports the expected migration count. JSON evidence is attached.
 - [ ] The production smoke test succeeded: named login, scoped read, safe representative workflow/read-only checks, email link origin, audit entry, and correlation ID.
 - [ ] CORS permits only approved production frontend origins.
 - [ ] Bootstrap authentication is disabled and the bootstrap token is removed or rotated.
