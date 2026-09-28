@@ -489,29 +489,39 @@ router.post("/password-reset/request", resetRequestLimit, async (req, res) => {
 });
 
 router.post("/password-reset/complete", resetCompleteLimit, async (req, res) => {
+  const token = String(req.body?.token || "").trim();
+  const password = String(req.body?.password || "");
+  if (!token || password.length < 10) {
+    return res.status(400).json({ error: "Reset token and a password of at least 10 characters are required." });
+  }
+  let client;
+  let transactionStarted = false;
   try {
-    const token = String(req.body?.token || "").trim();
-    const password = String(req.body?.password || "");
-    if (!token || password.length < 10) {
-      return res.status(400).json({ error: "Reset token and a password of at least 10 characters are required." });
-    }
-
-    const resetResult = await query(
-      `SELECT r.*, u.email, u.full_name
-       FROM scope_password_resets r
-       JOIN scope_users u ON u.id = r.user_id
-       WHERE r.reset_token_hash = $1
-         AND r.used_at IS NULL
-         AND r.expires_at > NOW()
-         AND u.active_status = 'active'
-       LIMIT 1`,
-      [hashToken(token)]
+    client = await pool.connect();
+    const tokenHash = hashToken(token);
+    const lookup = await client.query(
+      `SELECT user_id FROM scope_password_resets
+       WHERE reset_token_hash = $1 AND used_at IS NULL AND expires_at > NOW()`, [tokenHash]
+    );
+    if (!lookup.rows.length) return res.status(400).json({ error: "Reset link is invalid or expired." });
+    const passwordRecord = await hashPassword(password);
+    await client.query("BEGIN");
+    transactionStarted = true;
+    // Match invitation acceptance and admin updates: lock the account before
+    // the token, then recheck both. Different tokens for one user serialize too.
+    const current = await client.query("SELECT * FROM scope_users WHERE id = $1 FOR UPDATE", [lookup.rows[0].user_id]);
+    const account = current.rows[0];
+    const resetResult = await client.query(
+      `SELECT * FROM scope_password_resets
+       WHERE reset_token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+       FOR UPDATE`, [tokenHash]
     );
     const reset = resetResult.rows[0];
-    if (!reset) return res.status(400).json({ error: "Reset link is invalid or expired." });
+    if (!reset || !account || account.active_status !== "active") {
+      return res.status(400).json({ error: "Reset link is invalid or expired." });
+    }
 
-    const passwordRecord = await hashPassword(password);
-    const userResult = await query(
+    const userResult = await client.query(
       `UPDATE scope_users
        SET password_hash = $2,
            password_salt = $3,
@@ -521,14 +531,23 @@ router.post("/password-reset/complete", resetCompleteLimit, async (req, res) => 
        RETURNING *`,
       [reset.user_id, passwordRecord.hash, passwordRecord.salt]
     );
-    await query("UPDATE scope_password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL", [reset.user_id]);
+    await client.query("UPDATE scope_password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL", [reset.user_id]);
 
     const user = userResult.rows[0];
-    const session = await issueSession(user.id);
-    await revokeOtherSessions(user.id, session.token);
+    const runQuery = client.query.bind(client);
+    const session = await issueSession(user.id, runQuery);
+    await revokeOtherSessions(user.id, session.token, runQuery);
+    await client.query("COMMIT");
+    transactionStarted = false;
     res.json({ user: sanitizeUser(user), session });
   } catch (error) {
     unexpected(res, req, "auth-password-reset-complete", error, "Could not reset password.");
+  } finally {
+    try {
+      if (transactionStarted) await client.query("ROLLBACK");
+    } finally {
+      client?.release();
+    }
   }
 });
 
