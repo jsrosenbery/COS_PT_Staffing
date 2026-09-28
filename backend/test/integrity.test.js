@@ -43,7 +43,9 @@ integrationTest("new databases install unvalidated constraints that enforce new 
     const constraints = await pool.query(`
       SELECT conname, convalidated
       FROM pg_constraint
+      JOIN pg_namespace ON pg_namespace.oid = connamespace
       WHERE conname LIKE 'scope\\_%\\_valid' ESCAPE '\\'
+        AND pg_namespace.nspname = current_schema()
       ORDER BY conname
     `);
     assert.equal(constraints.rowCount, dataIntegrityChecks.length);

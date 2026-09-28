@@ -1738,8 +1738,9 @@ router.get("/faculty-self-dashboard", async (req, res) => {
        FROM scope_pt_faculty pt
        WHERE COALESCE(pt.active_status, 'active') = 'active'
          AND pt.employee_id = $1
+         AND LOWER(pt.division) = LOWER($2)
        ORDER BY pt.division, pt.discipline, pt.last_name, pt.first_name`,
-      [facultyRosterRow.employee_id]
+      [facultyRosterRow.employee_id, facultyRosterRow.division]
     );
     const rosterRows = rosterResult.rows || [];
     const facultyDivisions = Array.from(new Set(rosterRows.flatMap((row) => splitScope(row.division))));
@@ -1806,8 +1807,9 @@ router.get("/faculty-self-dashboard", async (req, res) => {
          LEFT JOIN scope_sections s ON s.term_code = p.term_code AND s.assignment_group_id = p.assignment_group_id
          WHERE p.term_code = $1
            AND (p.faculty_id = ANY($2::text[]) OR p.employee_id = ANY($2::text[]))
+           AND LOWER(s.division) = ANY($3::text[])
          ORDER BY p.preference_rank ASC`,
-        [termCode, facultyIdentifiers]
+        [termCode, facultyIdentifiers, facultyDivisionKeys]
       ),
       query(
         `SELECT availability_days, availability_time_blocks
@@ -2898,8 +2900,9 @@ router.get("/preferences", enforceFacultySelf, requirePreferenceOwnerOrElevated,
        LEFT JOIN scope_sections s ON s.term_code = p.term_code AND s.assignment_group_id = p.assignment_group_id
        WHERE p.term_code = $1
          AND (p.faculty_id = ANY($2::text[]) OR p.employee_id = ANY($2::text[]))
+         AND LOWER(s.division) = LOWER($3)
        ORDER BY p.preference_rank ASC`,
-      [termCode, facultyIdentifiers]
+      [termCode, facultyIdentifiers, facultyRosterRow.division]
       ),
       query(
         `SELECT availability_days, availability_time_blocks

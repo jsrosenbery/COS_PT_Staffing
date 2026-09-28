@@ -85,6 +85,23 @@ integrationTest("authorization holds across preference, assignment, and invitati
       assert.equal(own.body[0].employee_id, "F1");
       assert.equal((await api("/faculty-self-dashboard?termCode=T", { role: "faculty", employee: "A1" })).status, 409);
     });
+    await t.test("faculty dashboard and preference selections stay in the linked division", async () => {
+      await pool.query(`INSERT INTO scope_pt_faculty(employee_id,first_name,last_name,division,discipline)
+        VALUES ('F1','Same','Name','Arts','MATH')`);
+      try {
+        const dashboard = await api("/faculty-self-dashboard?termCode=T", { role: "faculty", employee: "F1" });
+        assert.equal(dashboard.status, 200, JSON.stringify(dashboard.body));
+        assert.ok(dashboard.body.rosterRows.length > 0);
+        assert.ok(dashboard.body.rosterRows.every(row => row.division === "Science"));
+        assert.ok(dashboard.body.sections.every(row => row.division === "Science"));
+        const blocked = await api("/preferences", { method: "POST", role: "faculty", employee: "F1",
+          body: { termCode: "T", facultyId: "F1", preferences: [{ assignment_group_id: "A-S1", preference_rank: 1 }] } });
+        assert.equal(blocked.status, 400);
+        assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM scope_preferences WHERE employee_id='F1'")).rows[0].count, 2);
+      } finally {
+        await pool.query("DELETE FROM scope_pt_faculty WHERE employee_id='F1' AND division='Arts'");
+      }
+    });
     let saved;
     await t.test("legacy assignment creation and reassignment enforce decision rules", async () => {
       saved = await api("/assignments", { method: "POST", body: { termCode: "T", assignmentGroupId: "S1", employeeId: "F1" } });

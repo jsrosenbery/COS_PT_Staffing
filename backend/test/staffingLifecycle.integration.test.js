@@ -479,7 +479,7 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
         "CHAIR_DECISION_RECORDED",
         "CHAIR_SUBMITTED",
         "DEAN_RETURNED_FOR_REVISION",
-        "ASSIGNMENT_SAVED",
+        "ASSIGNMENT_REASSIGNED",
         "DEAN_APPROVED",
       ]) assert.ok(eventTypes.has(expected), `missing audit event ${expected}`);
       assert.ok(events.rows.every((row) => row.source === "backend"));
