@@ -494,9 +494,10 @@ router.post("/password-reset/complete", resetCompleteLimit, async (req, res) => 
   if (!token || password.length < 10) {
     return res.status(400).json({ error: "Reset token and a password of at least 10 characters are required." });
   }
-  const client = await pool.connect();
+  let client;
   let transactionStarted = false;
   try {
+    client = await pool.connect();
     const tokenHash = hashToken(token);
     const lookup = await client.query(
       `SELECT user_id FROM scope_password_resets
@@ -542,8 +543,11 @@ router.post("/password-reset/complete", resetCompleteLimit, async (req, res) => 
   } catch (error) {
     unexpected(res, req, "auth-password-reset-complete", error, "Could not reset password.");
   } finally {
-    if (transactionStarted) await client.query("ROLLBACK");
-    client.release();
+    try {
+      if (transactionStarted) await client.query("ROLLBACK");
+    } finally {
+      client?.release();
+    }
   }
 });
 
