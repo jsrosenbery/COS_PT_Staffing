@@ -87,7 +87,15 @@ export async function runMigrations({ pool, migrationsDir = defaultMigrationsDir
     await ensureHistoryTable(client);
     const appliedMigrations = await readAppliedMigrations(client);
 
-    for (const migration of migrations) {
+    // Existing databases can be blocked at 0010 by ID-less directory contacts.
+    // Apply its narrowly scoped repair first without changing recorded SQL files.
+    const ordered = [...migrations];
+    const validationIndex = ordered.findIndex(item => item.filename === "0010_validate_integrity_constraints.sql");
+    const repairIndex = ordered.findIndex(item => item.filename === "0011_chair_dean_directory_identity.sql");
+    if (validationIndex >= 0 && repairIndex > validationIndex) {
+      ordered.splice(validationIndex, 0, ordered.splice(repairIndex, 1)[0]);
+    }
+    for (const migration of ordered) {
       const applied = appliedMigrations.get(migration.identifier);
       if (applied) {
         verifyAppliedMigration(migration, applied);
