@@ -1880,13 +1880,8 @@ export default function PTFacultyStaffingMVP() {
 
   const facultyAccountRosterMatch = (item) => {
     if (!item || role !== "faculty" || currentUser?.role !== "faculty") return false;
-    const userEmployeeKey = employeeIdentityKey(currentUser?.employee_id);
-    const rosterEmployeeKey = employeeIdentityKey(item.employeeId);
-    if (userEmployeeKey && rosterEmployeeKey && userEmployeeKey === rosterEmployeeKey) return true;
-    const userEmail = normalize(currentUser?.email).toLowerCase();
-    const rosterEmail = normalize(item.email).toLowerCase();
-    if (userEmail && rosterEmail && userEmail === rosterEmail) return true;
-    return compatibleNameKey(currentUser?.full_name, facultyName(item));
+    const employeeId = normalize(currentUser.employee_id);
+    return Boolean(employeeId && employeeId === normalize(item.employeeId));
   };
 
   useEffect(() => {
@@ -2924,7 +2919,7 @@ export default function PTFacultyStaffingMVP() {
   async function reassignTentativeAssignment(assignment, candidateRow) {
     if (!assignment?.id || !candidateRow?.employee_id) return;
     const reason = window.prompt(
-      `Reassign ${assignment.primary_subject_course || assignment.assignment_group_id} from ${assignment.faculty_name || assignment.employee_id} to ${candidateRow.faculty_name || candidateRow.employee_id}. Enter a brief rationale:`,
+      `Reassign ${assignment.primary_subject_course || assignment.assignment_group_id} from ${assignment.faculty_name || assignment.employee_id} to ${candidateRow.faculty_name || candidateRow.employee_id}. Enter a detailed contractual rationale (at least 20 characters for Other):`,
       ""
     ) || "";
     if (!reason.trim()) {
@@ -2932,6 +2927,11 @@ export default function PTFacultyStaffingMVP() {
       return;
     }
 
+    const exceptionReasonCode = window.prompt(
+      "Contractual exception code: COURSE_CONTINUITY, DUAL_ENROLLMENT_SITE_POSITION, SPECIALIZED_QUALIFICATION, AVAILABILITY_OR_SCHEDULE_CONFLICT, LOAD_OR_ASSIGNMENT_LIMIT, or OTHER_CONTRACTUAL_EXCEPTION",
+      "OTHER_CONTRACTUAL_EXCEPTION"
+    );
+    if (!exceptionReasonCode) return;
     setChairMessage("");
     try {
       const response = await apiFetch(`${API_BASE}/assignments/${assignment.id}/reassign`, {
@@ -2940,6 +2940,8 @@ export default function PTFacultyStaffingMVP() {
         body: JSON.stringify({
           employeeId: candidateRow.employee_id,
           reason: reason.trim(),
+          exceptionReasonCode: exceptionReasonCode.trim(),
+          exceptionExplanation: reason.trim(),
           expectedVersion: assignment.version || null,
         }),
       });

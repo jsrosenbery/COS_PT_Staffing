@@ -121,10 +121,8 @@ test("assignment mutations lock rows and reject stale browser state", () => {
 test("assignment and chair audit events are server generated", () => {
   const workflow = read("../routes/workflow.js");
 
-  assert.match(workflow, /writeAuditEvent\(client, req, \{\s*eventType: "CHAIR_DECISION_RECORDED"/);
-  assert.match(workflow, /eventType: "ASSIGNMENT_SAVED"/);
+  assert.match(workflow, /writeAuditEvent\(client, req, \{\s*eventType: previous \? "ASSIGNMENT_REASSIGNED" : "CHAIR_DECISION_RECORDED"/);
   assert.match(workflow, /eventType: "ASSIGNMENT_RELEASED"/);
-  assert.match(workflow, /eventType: "ASSIGNMENT_REASSIGNED"/);
   assert.doesNotMatch(workflow, /const \{[^}]*actorName[^}]*\} = req\.body/);
 });
 

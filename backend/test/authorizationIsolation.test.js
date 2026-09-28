@@ -122,7 +122,6 @@ test("faculty section display is bound to the authenticated employee roster reco
   assert.match(frontend, /Your account is not linked to an active PT staffing roster record/);
   assert.doesNotMatch(frontend, /role === "faculty" \? normalize\(currentUser\?\.employee_id\)\.toLowerCase\(\) : ""/);
   assert.match(persistence, /if \(currentRole\(req\) === "faculty"\)/);
-  assert.match(persistence, /compatiblePersonName\(fullName, row\.faculty_name\)/);
   assert.match(persistence, /AND employee_id = \$1/);
   assert.match(persistence, /return res\.json\(result\.rows\);\s+\}\s+\s+const where = \[\];/);
   assert.match(frontend, /faculty-self-dashboard/);
@@ -140,11 +139,6 @@ test("faculty preference reload resolves the authenticated account to the active
 
   assert.match(workflow, /async function resolvePreferenceFacultyRoster/);
   assert.match(workflow, /const runQuery = typeof db === "function" \? db : db\?\.query\?\.bind\(db\)/);
-  assert.match(workflow, /function compatiblePersonName\(left, right\)/);
-  assert.match(workflow, /fallbackResult\.rows \|\| \[\]\)\.find\(\(row\) => compatiblePersonName\(lookupName, row\.faculty_name\)\)/);
-  assert.match(workflow, /LOWER\(email\) = LOWER\(\$2\)/);
-  assert.match(workflow, /REGEXP_REPLACE\(CONCAT_WS\('', first_name, last_name\)/);
-  assert.match(workflow, /LIKE '%' \|\| LOWER\(REGEXP_REPLACE\(\$3/);
   assert.match(workflow, /const canonicalFacultyId = facultyRosterRow\.employee_id/);
   assert.match(workflow, /p\.faculty_id = ANY\(\$2::text\[\]\) OR p\.employee_id = ANY\(\$2::text\[\]\)/);
   assert.match(workflow, /faculty_id = ANY\(\$2::text\[\]\) OR employee_id = ANY\(\$2::text\[\]\)/);
@@ -162,7 +156,7 @@ test("faculty section reads use the resolved roster division, not a stale accoun
   assert.match(workflow, /availability/);
   assert.match(workflow, /router\.get\("\/available-sections", requireScopedRead/);
   assert.match(workflow, /facultyRosterRow = await resolvePreferenceFacultyRoster/);
-  assert.match(workflow, /Ask an administrator to match your account employee ID, email, or name to the roster/);
+  assert.match(workflow, /Ask an administrator to link your employee ID and division/);
   assert.match(workflow, /const facultyDivisions = splitScope\(facultyRosterRow\.division\)/);
   assert.match(workflow, /AND LOWER\(division\) = ANY\(\$2::text\[\]\)/);
   assert.match(workflow, /const divisionList = facultyRosterRow\s+\? splitScope\(facultyRosterRow\.division\)/);
@@ -231,7 +225,7 @@ test("allocation analysis load-status join keeps faculty columns unambiguous", (
 test("division-sensitive writes derive indirect assignment scope from database", () => {
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
 
-  assert.match(workflow, /SELECT division FROM scope_sections WHERE term_code = \$1 AND assignment_group_id = \$2/);
+  assert.match(workflow, /SELECT assignment_group_id, division, discipline_code/);
   assert.match(workflow, /FROM scope_assignments a\s+LEFT JOIN scope_sections s/);
   assert.match(workflow, /router\.post\("\/faculty-load-status", requireRoles\("chair"\)/);
   assert.match(workflow, /const scoped = scopeFilterForReq\(req, \[targetDivision\]\)/);

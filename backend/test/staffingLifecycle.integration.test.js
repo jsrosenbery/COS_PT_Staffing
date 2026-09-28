@@ -382,6 +382,8 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
             disciplineCode: groupId === "S-A3" ? "STAT" : "MATH",
             employeeId: decision.selected_employee_id,
             reason: "Chair revision completed after dean feedback.",
+            exceptionReasonCode: "COURSE_CONTINUITY",
+            exceptionExplanation: "Chair revision completed after dean feedback.",
           },
         });
         assert.equal(revised.status, 200);
@@ -404,6 +406,14 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
          VALUES ($1,$2,'S-STALE','MATH 199','90099','Special Topics','MATH','MATH','{"staff_eligible":true}'::jsonb)`,
         [TERM, SCIENCE]
       );
+      // A direct assignment now requires an interested, eligible candidate.
+      await pool.query(
+        `INSERT INTO scope_preference_submission_items
+          (submission_id,term_code,faculty_id,employee_id,faculty_name,assignment_group_id,discipline_code,preference_rank,item_snapshot)
+         SELECT id,term_code,faculty_id,employee_id,faculty_name,'S-STALE','MATH',99,'{}'::jsonb
+         FROM scope_preference_submissions
+         WHERE term_code=$1 AND status='frozen' AND faculty_id IN ('F1','F2','F3')`, [TERM]
+      );
       const saved = await api("/api/assignments", {
         method: "POST", role: "chair", division: SCIENCE,
         body: { termCode: TERM, assignmentGroupId: "S-STALE", disciplineCode: "MATH", employeeId: "F1", reason: "Concurrency fixture." },
@@ -411,7 +421,7 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
       assert.equal(saved.status, 200);
       const reassign = (employeeId) => api(`/api/assignments/${saved.body.id}/reassign`, {
         method: "PUT", role: "chair", division: SCIENCE,
-        body: { employeeId, reason: "Concurrent chair correction.", expectedVersion: saved.body.version },
+        body: { employeeId, reason: "Concurrent chair correction.", expectedVersion: saved.body.version, exceptionReasonCode: "COURSE_CONTINUITY", exceptionExplanation: "Concurrent chair correction with documented continuity." },
       });
       const results = await Promise.all([reassign("F2"), reassign("F3")]);
       assert.deepEqual(results.map((result) => result.status).sort(), [200, 409]);
