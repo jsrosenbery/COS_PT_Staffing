@@ -3779,8 +3779,20 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
   };
 
   return (
-    <div style={{ ...ui.page, ...themeVars }}>
+    <div className="cos-app" style={{ ...ui.page, ...themeVars }}>
       <style>{`
+        .cos-app *, .cos-app *::before, .cos-app *::after { box-sizing: border-box; }
+        .cos-field { display: grid; gap: 6px; min-width: 0; max-width: 100%; }
+        .cos-field label { font-size: 13px; font-weight: 700; }
+        .cos-field input, .cos-field select { max-width: 100% !important; }
+        .cos-app :focus-visible { outline: 3px solid #087ea4; outline-offset: 3px; }
+        .cos-app main > * { min-width: 0; }
+        @media (max-width: 600px) {
+          .cos-app { padding: 12px !important; }
+          .cos-app form { max-width: 100%; }
+          .cos-app .cos-field { width: 100%; }
+          .cos-app .cos-field input, .cos-app .cos-field select { width: 100% !important; }
+        }
         .cos-table tbody tr:nth-child(even) { background: rgba(36, 51, 122, 0.03); }
         .cos-table tbody tr:hover { background: rgba(240, 84, 35, 0.08); transition: background 140ms ease; }
         .cos-summary-card { position: relative; overflow: hidden; }
@@ -3789,7 +3801,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
           .cos-panel-grid { grid-template-columns: 1fr !important; }
         }
       `}</style>
-      <div style={ui.shell}>
+      <main style={ui.shell}>
         <div style={heroCardStyle}>
           <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at top right, rgba(255,255,255,0.2), transparent 34%)" }} />
           <div style={{ ...ui.between, position: "relative" }}>
@@ -3869,7 +3881,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                   </>
                 ) : (
                   <>
-                    <input
+                    <div className="cos-field"><label htmlFor="login-email">Email</label><input id="login-email" autoComplete="email"
                       type="email"
                       value={authEmail}
                       onChange={(e) => {
@@ -3879,8 +3891,8 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                       placeholder="Email"
                       aria-label="Email"
                       style={{ ...ui.input, width: 180, padding: "9px 10px", background: "rgba(255,255,255,0.92)", color: "#0f172a" }}
-                    />
-                    <input
+                    /></div>
+                    <div className="cos-field"><label htmlFor="login-password">Password</label><input id="login-password" autoComplete="current-password"
                       type="password"
                       value={authPassword}
                       onChange={(e) => {
@@ -3890,17 +3902,17 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                       placeholder="Password"
                       aria-label="Password"
                       style={{ ...ui.input, width: 150, padding: "9px 10px", background: "rgba(255,255,255,0.92)", color: "#0f172a" }}
-                    />
+                    /></div>
                     <button type="submit" style={ui.btn} disabled={authBusy}>
                       Sign In
                     </button>
-                    <button type="button" style={ui.btn} onClick={() => setResetEmail(authEmail)}>
+                    <button type="button" style={ui.btn} onClick={() => { setResetEmail(authEmail); document.getElementById("help-email")?.focus(); }}>
                       Forgot
                     </button>
                   </>
                 )}
                 {authMessage ? (
-                  <span style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>{authMessage}</span>
+                  <span role="status" aria-live="polite" aria-atomic="true" style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>{authMessage}</span>
                 ) : null}
               </form>
               {canShowWorkspace && API_TOKEN_AUTH_ENABLED ? (
@@ -3951,13 +3963,13 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
               Enter your name and create a password to activate this SHERMAN invitation.
             </div>
             <form onSubmit={handleAcceptInvitation} style={{ ...ui.row, marginTop: 16, alignItems: "center" }}>
-              <input
+              <div className="cos-field"><label htmlFor="setup-name">Full name</label><input id="setup-name" autoComplete="name"
                 style={{ ...ui.input, maxWidth: 260 }}
                 value={setupFullName}
                 onChange={(e) => setSetupFullName(e.target.value)}
                 placeholder="Full name"
-              />
-              <input
+              /></div>
+              <div className="cos-field"><label htmlFor="setup-password">New password (required, 10+ characters)</label><input id="setup-password" autoComplete="new-password"
                 style={{ ...ui.input, maxWidth: 260 }}
                 value={setupPassword}
                 onChange={(e) => setSetupPassword(e.target.value)}
@@ -3965,13 +3977,13 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                 type="password"
                 minLength={10}
                 required
-              />
+              /></div>
               <button type="submit" style={ui.btnPrimary} disabled={setupBusy}>
                 {setupBusy ? "Activating..." : "Activate Account"}
               </button>
             </form>
             {setupMessage ? (
-              <div style={{ marginTop: 10, fontSize: 13, color: setupMessage.startsWith("Account") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+              <div role="status" aria-live="polite" aria-atomic="true" style={{ marginTop: 10, fontSize: 13, color: setupMessage.startsWith("Account") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
                 {setupMessage}
               </div>
             ) : null}
@@ -3985,7 +3997,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
               Create a new password for your SHERMAN account.
             </div>
             <form onSubmit={handleCompletePasswordReset} style={{ ...ui.row, marginTop: 16, alignItems: "center" }}>
-              <input
+              <div className="cos-field"><label htmlFor="reset-password">New password (required, 10+ characters)</label><input id="reset-password" autoComplete="new-password"
                 style={{ ...ui.input, maxWidth: 260 }}
                 value={newResetPassword}
                 onChange={(e) => setNewResetPassword(e.target.value)}
@@ -3993,13 +4005,13 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                 type="password"
                 minLength={10}
                 required
-              />
+              /></div>
               <button type="submit" style={ui.btnPrimary} disabled={newResetBusy}>
                 {newResetBusy ? "Resetting..." : "Reset Password"}
               </button>
             </form>
             {newResetMessage ? (
-              <div style={{ marginTop: 10, fontSize: 13, color: newResetMessage.startsWith("Password") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+              <div role="status" aria-live="polite" aria-atomic="true" style={{ marginTop: 10, fontSize: 13, color: newResetMessage.startsWith("Password") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
                 {newResetMessage}
               </div>
             ) : null}
@@ -4015,30 +4027,30 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
               </div>
               <form onSubmit={submitAccessRequest} style={{ display: "grid", gap: 10, marginTop: 16 }}>
                 <div style={ui.row}>
-                  <input
+                  <div className="cos-field"><label htmlFor="request-name">Full name (required)</label><input id="request-name" autoComplete="name"
                     style={{ ...ui.input, maxWidth: 260 }}
                     value={accessRequestForm.full_name}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, full_name: e.target.value }))}
                     placeholder="Full name"
                     required
-                  />
-                  <input
+                  /></div>
+                  <div className="cos-field"><label htmlFor="request-email">Email (required)</label><input id="request-email" autoComplete="email"
                     style={{ ...ui.input, maxWidth: 260 }}
                     value={accessRequestForm.email}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, email: e.target.value }))}
                     placeholder="user@cos.edu"
                     type="email"
                     required
-                  />
-                  <input
+                  /></div>
+                  <div className="cos-field"><label htmlFor="request-employee">Employee ID (optional)</label><input id="request-employee" autoComplete="off"
                     style={{ ...ui.input, maxWidth: 160 }}
                     value={accessRequestForm.employee_id}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, employee_id: e.target.value }))}
                     placeholder="Employee ID"
-                  />
+                  /></div>
                 </div>
                 <div style={ui.row}>
-                  <select
+                  <div className="cos-field"><label htmlFor="request-role">Requested role</label><select id="request-role"
                     style={{ ...ui.input, maxWidth: 220 }}
                     value={accessRequestForm.role}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, role: e.target.value }))}
@@ -4046,8 +4058,8 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                     <option value="faculty">Part-Time Faculty</option>
                     <option value="chair">Division Chair</option>
                     <option value="dean">Dean</option>
-                  </select>
-                  <select
+                  </select></div>
+                  <div className="cos-field"><label htmlFor="request-division">Division (required)</label><select id="request-division"
                     style={{ ...ui.input, maxWidth: 260 }}
                     value={accessRequestForm.division}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, division: e.target.value }))}
@@ -4057,20 +4069,20 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                     {uploadDivisionOptions.map((division) => (
                       <option key={division} value={division}>{division}</option>
                     ))}
-                  </select>
-                  <input
+                  </select></div>
+                  <div className="cos-field"><label htmlFor="request-note">Note (optional)</label><input id="request-note" autoComplete="off"
                     style={{ ...ui.input, maxWidth: 360 }}
                     value={accessRequestForm.note}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, note: e.target.value }))}
                     placeholder="Optional note"
-                  />
+                  /></div>
                   <button type="submit" style={ui.btnPrimary} disabled={accessRequestBusy}>
                     {accessRequestBusy ? "Submitting..." : "Request Access"}
                   </button>
                 </div>
               </form>
               {accessRequestMessage ? (
-                <div style={{ marginTop: 10, fontSize: 13, color: accessRequestMessage.startsWith("Account") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+                <div role="status" aria-live="polite" aria-atomic="true" style={{ marginTop: 10, fontSize: 13, color: accessRequestMessage.startsWith("Account") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
                   {accessRequestMessage}
                 </div>
               ) : null}
@@ -4081,20 +4093,20 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                 Send a reset link to the email on your active account.
               </div>
               <form onSubmit={sendPasswordResetRequest} style={{ ...ui.row, marginTop: 16 }}>
-                <input
+                <div className="cos-field"><label htmlFor="help-email">Account email (required)</label><input id="help-email" autoComplete="email"
                   style={{ ...ui.input, maxWidth: 260 }}
                   value={resetEmail}
                   onChange={(e) => setResetEmail(e.target.value)}
                   placeholder="user@cos.edu"
                   type="email"
                   required
-                />
+                /></div>
                 <button type="submit" style={ui.btnPrimary} disabled={resetBusy}>
                   {resetBusy ? "Sending..." : "Send Reset"}
                 </button>
               </form>
               {resetMessage ? (
-                <div style={{ marginTop: 10, fontSize: 13, color: resetMessage.startsWith("If") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+                <div role="status" aria-live="polite" aria-atomic="true" style={{ marginTop: 10, fontSize: 13, color: resetMessage.startsWith("If") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
                   {resetMessage}
                 </div>
               ) : null}
@@ -6180,7 +6192,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           <br />
           College of the Sequoias Part-Time Faculty Staffing
         </footer>
-      </div>
+      </main>
     </div>
   );
 }

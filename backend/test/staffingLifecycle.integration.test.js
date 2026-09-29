@@ -16,14 +16,6 @@ function quoteIdentifier(value) {
   return `"${String(value).replaceAll('"', '""')}"`;
 }
 
-function actorHeaders(role, division, employeeId = "") {
-  return {
-    "x-test-role": role,
-    "x-test-division": division,
-    "x-test-employee-id": employeeId,
-  };
-}
-
 integrationTest("complete staffing lifecycle preserves institutional rules in PostgreSQL", { timeout: 120_000 }, async (t) => {
   const schema = `staffing_lifecycle_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   const adminPool = new Pool({ connectionString: testDatabaseUrl });
@@ -33,12 +25,16 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
   scopedUrl.searchParams.set("options", `-c search_path=${schema}`);
   process.env.DATABASE_URL = scopedUrl.toString();
   process.env.EMAIL_PROVIDER = "console";
+  process.env.API_TOKEN_AUTH_ENABLED = "false";
+  process.env.RATE_LIMIT_STORE = "memory";
 
-  const [{ default: express }, { pool }, { default: persistenceRoutes }, { default: workflowRoutes }] = await Promise.all([
+  const [{ default: express }, { pool }, { default: persistenceRoutes }, { default: workflowRoutes }, { default: authRoutes }, { authenticateRequest, publicAuthPaths, hashPassword }] = await Promise.all([
     import("express"),
     import("../db.js"),
     import("../routes/persistence.js"),
     import("../routes/workflow.js"),
+    import("../routes/auth.js"),
+    import("../auth.js"),
   ]);
 
   await runMigrations({ pool, logger: { info() {} } });
@@ -46,25 +42,14 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
   let requestSequence = 0;
   const app = express();
   app.use(express.json());
-  app.use((req, _res, next) => {
+  app.use(async (req, res, next) => {
     requestSequence += 1;
-    const role = req.get("x-test-role") || "faculty";
-    const employeeId = req.get("x-test-employee-id") || "";
     req.correlationId = `integration-${requestSequence}`;
-    req.auth = role === "admin"
-      ? { authType: "api-token", user: { role: "admin", email: "admin@test.invalid", full_name: "Test Admin", division: "" } }
-      : {
-          authType: "session",
-          user: {
-            role,
-            division: req.get("x-test-division") || "",
-            employee_id: employeeId,
-            email: `${employeeId || role}@test.invalid`,
-            full_name: `Test ${role}`,
-          },
-        };
-    next();
+    if (publicAuthPaths.has(req.path)) return next();
+    req.auth = await authenticateRequest(req);
+    return req.auth ? next() : res.status(401).json({ error: "Unauthorized" });
   });
+  app.use("/api/auth", authRoutes);
   app.use("/api", persistenceRoutes);
   app.use("/api", workflowRoutes);
 
@@ -74,11 +59,29 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
+  // Exercise real password login and persisted sessions for every named actor.
+  // Synthetic accounts exist only in this disposable schema.
+  const sessions = new Map();
+  const password = "Synthetic-pilot-only-2099!";
+  const credentials = await hashPassword(password);
+  async function sessionFor(role, division, employeeId) {
+    const key = [role, division, employeeId].join("-").toLowerCase();
+    if (sessions.has(key)) return sessions.get(key);
+    const email = `${key}@test.invalid`;
+    await pool.query(`INSERT INTO scope_users(email,full_name,employee_id,role,division,active_status,password_hash,password_salt)
+      VALUES ($1,$2,$3,$4,$5,'active',$6,$7)`, [email, `Pilot ${role} ${division}`, employeeId, role, division, credentials.hash, credentials.salt]);
+    const response = await fetch(`${baseUrl}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
+    assert.equal(response.status, 200, `login failed for ${key}`);
+    const result = await response.json();
+    sessions.set(key, result.session.token);
+    return result.session.token;
+  }
+
   async function api(path, { method = "GET", role = "admin", division = "", employeeId = "", body } = {}) {
     const response = await fetch(`${baseUrl}${path}`, {
       method,
       headers: {
-        ...actorHeaders(role, division, employeeId),
+        authorization: `Bearer ${await sessionFor(role, division, employeeId)}`,
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -457,6 +460,41 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
       assert.equal(freezeResult.status, 200);
       const mutable = await pool.query("SELECT COUNT(*)::int AS count FROM scope_preference_submissions WHERE term_code = $1 AND status IN ('submitted','corrected')", [raceTerm]);
       assert.equal(mutable.rows[0].count, 0);
+    });
+
+    await t.test("Arts completes an independent authenticated cycle without exposing Science", async () => {
+      const preferences = [{ assignment_group_id: "S-B1", discipline_code: "ART", preference_rank: 1 }];
+      const submit = action => api("/api/preferences", { method: "POST", role: "faculty", division: ARTS, employeeId: "F5",
+        body: { termCode: TERM, facultyId: "F5", employeeId: "F5", facultyName: "Eli Outside", action, preferences } });
+      assert.equal((await submit("draft")).status, 200);
+      assert.equal((await submit("submit")).status, 200);
+      assert.equal((await submit("submit")).body.versionNumber, 3);
+      for (const [allowed, forbidden] of [[SCIENCE, ARTS], [ARTS, SCIENCE]]) {
+        for (const role of ["chair", "dean"]) {
+          assert.equal((await api(`/api/preferences/export?termCode=${TERM}&divisions=${forbidden}`, { role, division: allowed })).status, 403);
+          assert.equal((await api("/api/windows/freeze", { method: "POST", role, division: allowed, body: { termCode: TERM, division: forbidden, auditReason: "Unauthorized pilot probe" } })).status, 403);
+        }
+      }
+      assert.equal((await api("/api/windows/freeze", { method: "POST", role: "chair", division: ARTS, body: { termCode: TERM, division: ARTS, auditReason: "Arts deadline" } })).status, 200);
+      assert.equal((await submit("submit")).status, 409);
+      const query = `/api/allocation-analysis?termCode=${TERM}&division=${ARTS}`;
+      const analysis = (await api(query, { role: "chair", division: ARTS })).body.analysis;
+      assert.deepEqual(analysis.recommendedNextAssignmentSequence, (await api(query, { role: "chair", division: ARTS })).body.analysis.recommendedNextAssignmentSequence);
+      assert.deepEqual(analysis.recommendedNextAssignmentSequence.map(item => item.employeeId), ["F5"]);
+      const decision = await api("/api/chair-decisions", { method: "POST", role: "chair", division: ARTS,
+        body: { termCode: TERM, division: ARTS, assignmentGroupId: "S-B1", selectedEmployeeId: "F5", expectedRecommendedEmployeeId: "F5" } });
+      assert.equal(decision.status, 201);
+      const transition = (route, role, extra = {}) => api(`/api/assignments/${route}`, { method: "POST", role, division: ARTS, body: { termCode: TERM, divisions: [ARTS], ...extra } });
+      assert.equal((await transition("submit", "chair")).body.submittedCount, 1);
+      assert.equal((await transition("return", "dean", { reason: "Confirm Arts continuity" })).body.returnedCount, 1);
+      assert.equal((await api("/api/assignments", { method: "POST", role: "chair", division: ARTS, body: { termCode: TERM, assignmentGroupId: "S-B1", disciplineCode: "ART", employeeId: "F5", exceptionReasonCode: "COURSE_CONTINUITY", exceptionExplanation: "Arts continuity reviewed after dean feedback" } })).status, 200);
+      assert.equal((await transition("submit", "chair")).body.submittedCount, 1);
+      assert.equal((await transition("approve", "dean")).body.approvedCount, 1);
+      const approved = await pool.query("SELECT division,COUNT(*)::int AS count FROM scope_assignments WHERE term_code=$1 AND status='dean_approved' GROUP BY division ORDER BY division", [TERM]);
+      assert.deepEqual(approved.rows, [{ division: ARTS, count: 1 }, { division: SCIENCE, count: 2 }]);
+      const audit = await pool.query("SELECT actor_name FROM scope_audit_log WHERE term=$1 AND division=$2 AND event_type='DEAN_APPROVED'", [TERM, ARTS]);
+      assert.ok(audit.rows.length);
+      assert.ok(audit.rows.every(row => row.actor_name.includes("Pilot dean")));
     });
 
     await t.test("historical explanations use frozen snapshots and mutation audit is server-generated", async () => {
