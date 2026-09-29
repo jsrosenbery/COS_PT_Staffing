@@ -6098,7 +6098,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </button>
                 </div>
                 {preferencesMessage ? (
-                  <div style={{ marginTop: 10, color: /saved|loaded|loading/i.test(preferencesMessage) ? "#166534" : "#b91c1c", fontWeight: 700 }}>
+                  <div role="status" aria-live="polite" style={{ marginTop: 10, color: /saved|loaded|loading/i.test(preferencesMessage) ? "#166534" : "#b91c1c", fontWeight: 700 }}>
                     {preferencesMessage}
                   </div>
                 ) : null}

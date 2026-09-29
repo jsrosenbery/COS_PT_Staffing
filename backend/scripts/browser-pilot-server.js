@@ -38,8 +38,10 @@ await pool.query("INSERT INTO scope_terms(term_code,term_name,is_active) VALUES 
 for (const division of ['Science', 'Arts']) {
   await pool.query("INSERT INTO scope_staffing_windows(term,division,status,closes_at) VALUES ('2099FA',$1,'open','2099-12-31')", [division]);
   const discipline = division === 'Science' ? 'MATH' : 'ART';
-  await pool.query(`INSERT INTO scope_sections(term_code,division,assignment_group_id,primary_subject_course,primary_crn,title,subject_code,discipline_code,raw_row)
-    VALUES ('2099FA',$1,$2,$3,$4,$5,$6,$6,'{"staff_eligible":true}'::jsonb)`, [division, `${division}-1`, `${discipline} 101`, division === 'Science' ? '90001' : '90002', `Pilot ${division} section`, discipline]);
+  for (const n of [1, 2]) {
+    await pool.query(`INSERT INTO scope_sections(term_code,division,assignment_group_id,primary_subject_course,primary_crn,title,subject_code,discipline_code,raw_row)
+      VALUES ('2099FA',$1,$2,$3,$4,$5,$6,$6,'{"staff_eligible":true}'::jsonb)`, [division, `${division}-${n}`, `${discipline} ${100 + n}`, `${division === 'Science' ? '900' : '910'}0${n}`, `Pilot ${division} section ${n}`, discipline]);
+  }
 }
 let stopping = false;
 async function stop() {
