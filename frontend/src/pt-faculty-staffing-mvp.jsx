@@ -4933,7 +4933,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </option>
                       ))}
                     </select>
-                    <select aria-label="Faculty member"
+                    <select aria-label="Faculty profile"
                       style={ui.alphaSelect}
                       value={selectedFacultyId}
                       onChange={(e) => {
@@ -5444,7 +5444,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </div>
                   <div style={{ display: "grid", gap: 6, maxWidth: 360, marginTop: 10 }}>
                     <label style={ui.small}>Submitted faculty list</label>
-                    <select aria-label="Faculty member"
+                    <select aria-label="Faculty preference review"
                       style={ui.select}
                       value={selectedFacultyId}
                       onChange={(e) => {

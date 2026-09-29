@@ -16,6 +16,7 @@ async function login(page, actor) {
 }
 
 async function keyboardAction(page, button, path) {
+  await expect(button).toBeEnabled();
   const pending = page.waitForResponse(r => r.url().endsWith(path) && r.request().method() === 'POST');
   await button.focus();
   await page.keyboard.press('Enter');
@@ -59,7 +60,7 @@ for (const division of ['Science', 'Arts']) {
     });
     expect(frozen.ok()).toBe(true);
     await page.getByRole('button', { name: 'Refresh Workflow', exact: true }).click();
-    await page.getByLabel('Faculty member', { exact: true }).selectOption(`faculty-${scope}`);
+    await page.getByLabel('Faculty preference review', { exact: true }).selectOption(`faculty-${scope}`);
     const assign = page.getByRole('button', { name: 'Assign', exact: true }).first();
     await expect(assign).toBeEnabled();
     page.once('dialog', dialog => dialog.accept());
