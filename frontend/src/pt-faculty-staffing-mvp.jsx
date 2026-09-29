@@ -878,7 +878,7 @@ const ui = {
     padding: "10px 14px",
     borderRadius: 14,
     border: "1px solid transparent",
-    background: "linear-gradient(135deg, var(--brand-blue), var(--brand-orange) 55%, var(--brand-green))",
+    background: "var(--brand-blue)",
     color: "#fff",
     cursor: "pointer",
     fontWeight: 800,
@@ -1689,7 +1689,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
 
   const heroCardStyle = {
     ...ui.card,
-    background: "linear-gradient(135deg, rgba(36,51,122,0.98), rgba(240,84,35,0.96) 58%, rgba(127,190,65,0.92))",
+    background: "linear-gradient(135deg, #24337a, #84331d 58%, #354f1c)",
     color: "#fff",
     padding: 26,
     overflow: "hidden",

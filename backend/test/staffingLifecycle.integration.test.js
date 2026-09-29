@@ -490,7 +490,7 @@ integrationTest("complete staffing lifecycle preserves institutional rules in Po
       assert.equal((await api("/api/assignments", { method: "POST", role: "chair", division: ARTS, body: { termCode: TERM, assignmentGroupId: "S-B1", disciplineCode: "ART", employeeId: "F5", exceptionReasonCode: "COURSE_CONTINUITY", exceptionExplanation: "Arts continuity reviewed after dean feedback" } })).status, 200);
       assert.equal((await transition("submit", "chair")).body.submittedCount, 1);
       assert.equal((await transition("approve", "dean")).body.approvedCount, 1);
-      const approved = await pool.query("SELECT division,COUNT(*)::int AS count FROM scope_assignments WHERE term_code=$1 AND status='dean_approved' GROUP BY division ORDER BY division", [TERM]);
+      const approved = await pool.query("SELECT s.division,COUNT(*)::int AS count FROM scope_assignments a JOIN scope_sections s ON s.term_code=a.term_code AND s.assignment_group_id=a.assignment_group_id WHERE a.term_code=$1 AND a.status='dean_approved' GROUP BY s.division ORDER BY s.division", [TERM]);
       assert.deepEqual(approved.rows, [{ division: ARTS, count: 1 }, { division: SCIENCE, count: 2 }]);
       const audit = await pool.query("SELECT actor_name FROM scope_audit_log WHERE term=$1 AND division=$2 AND event_type='DEAN_APPROVED'", [TERM, ARTS]);
       assert.ok(audit.rows.length);
