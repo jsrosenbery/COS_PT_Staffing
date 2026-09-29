@@ -2,6 +2,8 @@
 
 Use synthetic or specifically approved staging data. Record evidence and the responsible person for every item; do not mark an item complete based on assumption.
 
+For repeatable isolated automation and its coverage limits, see [the two-division pilot](isolated-pilot.md). A passing isolated run does not complete the hosted checks below.
+
 ## Platform and data preparation
 
 - [ ] Create a dedicated staging PostgreSQL database with restricted network access, encryption in transit, backups, monitoring, and credentials distinct from production and development.

@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+if (process.env.CI && !process.env.TEST_DATABASE_URL) throw new Error('CI browser pilot requires TEST_DATABASE_URL; do not silently skip authenticated coverage');
+
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,

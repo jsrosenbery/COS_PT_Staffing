@@ -14,7 +14,7 @@ Object.assign(process.env, {
   DATABASE_URL: url.toString(), DATABASE_SSL: 'false', NODE_ENV: 'test',
   AUTH_DISABLED: 'false', API_TOKEN_AUTH_ENABLED: 'false', EMAIL_PROVIDER: 'console',
   ALLOW_TOKEN_URLS_IN_RESPONSES: 'false', RATE_LIMIT_STORE: 'postgres',
-  PORT: '4317', CORS_ORIGIN: 'http://127.0.0.1:4173',
+  HOST: '127.0.0.1', PORT: '4317', CORS_ORIGIN: 'http://127.0.0.1:4173',
 });
 const { pool } = await import('../db.js');
 const { runMigrations } = await import('../migrations.js');

@@ -29,6 +29,7 @@ Browser session and bootstrap credentials are kept in memory and are cleared by 
 
 ## Operational readiness
 
+- [Repeatable two-division pilot and browser checks](docs/operations/isolated-pilot.md)
 - [Account continuity and notice recovery](docs/operations/notice-recovery.md)
 - [Environment configuration](docs/operations/environment-reference.md)
 - [Controlled deployment runbook](docs/operations/deployment-runbook.md)
