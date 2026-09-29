@@ -3787,9 +3787,12 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
         .cos-field input, .cos-field select { max-width: 100% !important; }
         .cos-app :focus-visible { outline: 3px solid #087ea4; outline-offset: 3px; }
         .cos-app div, .cos-app main, .cos-app form { min-width: 0; }
+        .cos-app table { overflow-wrap: normal; }
+        .cos-app table button { white-space: nowrap; }
         @media (max-width: 600px) {
           .cos-app { padding: 12px !important; overflow-wrap: anywhere; }
           .cos-app div[style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
+          .cos-app div.cos-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
           .cos-app form { max-width: 100%; }
           .cos-app .cos-field { width: 100%; }
           .cos-app .cos-field input, .cos-app .cos-field select { width: 100% !important; }
@@ -3947,7 +3950,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
         </div>
 
         {canShowWorkspace ? (
-        <div style={ui.gridSummary}>
+        <div className="cos-summary-grid" style={ui.gridSummary}>
           <SummaryCard title="Ready" value={summary.ready} />
           <SummaryCard title="Open" value={summary.open} />
           <SummaryCard title="Pending Dean" value={summary.pending} />
