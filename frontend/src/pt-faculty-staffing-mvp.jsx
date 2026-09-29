@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { signOutAndReset } from "./signOut.js";
 import Papa from "papaparse";
 import cosLogo from "./assets/cos-logo.jpg";
 import AdminOperationsPanel from "./AdminOperationsPanel";
@@ -967,14 +968,15 @@ const ui = {
   },
 };
 
-export default function PTFacultyStaffingMVP() {
+export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, signOutNotice = "" }) {
   const [role, setRole] = useState(() => getCurrentUser()?.role || "faculty");
   const [apiTokenInput, setApiTokenInput] = useState(() => getApiToken());
   const [apiAccessMessage, setApiAccessMessage] = useState("");
   const [currentUser, setCurrentUser] = useState(() => getCurrentUser());
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
-  const [authMessage, setAuthMessage] = useState("");
+  const [authMessage, setAuthMessage] = useState(signOutNotice);
+  useEffect(() => { if (signOutNotice) setAuthMessage(signOutNotice); }, [signOutNotice]);
   const [authBusy, setAuthBusy] = useState(false);
   const [inviteForm, setInviteForm] = useState({ email: "", full_name: "", employee_id: "", role: "faculty", division: "" });
   const [inviteMessage, setInviteMessage] = useState("");
@@ -1105,6 +1107,8 @@ export default function PTFacultyStaffingMVP() {
   const apiTokenConfigured = Boolean(apiTokenInput.trim());
   const savedApiTokenConfigured = API_TOKEN_AUTH_ENABLED && Boolean(getApiToken());
   const canShowWorkspace = Boolean(currentUser || savedApiTokenConfigured);
+  const activeManagedAdmins = managedUsers.filter(user => user.role === "admin" && user.active_status === "active");
+  const lastActiveAdminId = activeManagedAdmins.length === 1 ? activeManagedAdmins[0].id : null;
   const canUseAdminTools = role === "admin" && (currentUser?.role === "admin" || savedApiTokenConfigured);
   const canUseElevatedTools = canUseAdminTools || ["chair", "dean"].includes(currentUser?.role || "");
   const canSelectSyntheticScope = currentUser?.role === "admin" || savedApiTokenConfigured;
@@ -1151,17 +1155,7 @@ export default function PTFacultyStaffingMVP() {
   }
 
   async function handleLogout() {
-    setAuthBusy(true);
-    setAuthMessage("");
-    try {
-      await logout();
-      setCurrentUser(null);
-      setAuthMessage("Signed out.");
-    } catch (error) {
-      setAuthMessage(error.message || "Could not sign out.");
-    } finally {
-      setAuthBusy(false);
-    }
+    await signOutAndReset({ revoke: logout, resetWorkspace: onSignedOut, report: onSignOutResult });
   }
 
   async function sendAccessInvite(event) {
@@ -4751,7 +4745,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{user.email}{user.employee_id ? ` | ${user.employee_id}` : ""}</div>
                       </td>
                       <td style={ui.td}>
-                        <select style={ui.input} value={user.role || "faculty"} onChange={(e) => saveManagedUser(user, { role: e.target.value })} disabled={managedUsersBusy}>
+                        <select style={ui.input} value={user.role || "faculty"} onChange={(e) => saveManagedUser(user, { role: e.target.value })} disabled={managedUsersBusy || user.id === lastActiveAdminId} title={user.id === lastActiveAdminId ? "At least one active administrator must remain." : undefined}>
                           <option value="faculty">Faculty</option>
                           <option value="chair">Chair</option>
                           <option value="dean">Dean</option>
@@ -4767,7 +4761,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </select>
                       </td>
                       <td style={ui.td}>
-                        <select style={ui.input} value={user.active_status || "invited"} onChange={(e) => saveManagedUser(user, { active_status: e.target.value })} disabled={managedUsersBusy}>
+                        <select style={ui.input} value={user.active_status || "invited"} onChange={(e) => saveManagedUser(user, { active_status: e.target.value })} disabled={managedUsersBusy || user.id === lastActiveAdminId} title={user.id === lastActiveAdminId ? "At least one active administrator must remain." : undefined}>
                           <option value="invited">Invited</option>
                           <option value="active">Active</option>
                           <option value="disabled">Disabled</option>
@@ -4785,7 +4779,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                             type="button"
                             style={{ ...ui.btn, color: "#b91c1c", borderColor: "#fecaca" }}
                             onClick={() => deleteManagedUser(user)}
-                            disabled={managedUsersBusy || (currentUser?.id && Number(currentUser.id) === Number(user.id))}
+                            disabled={managedUsersBusy || user.id === lastActiveAdminId || (currentUser?.id && Number(currentUser.id) === Number(user.id))}
                           >
                             Delete
                           </button>

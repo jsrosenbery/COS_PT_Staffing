@@ -110,11 +110,22 @@ export async function login(email, password) {
 }
 
 export async function logout() {
+  let request;
   try {
-    await fetchJson("/auth/logout", { method: "POST" });
+    request = fetchJson("/auth/logout", { method: "POST", signal: AbortSignal.timeout(10_000) });
   } finally {
     clearSession();
+    clearApiToken();
   }
+  await request;
+}
+
+export function getDisseminationStatus(termCode, division) {
+  return fetchJson(`/dissemination/status?termCode=${encodeURIComponent(termCode)}&division=${encodeURIComponent(division)}`);
+}
+
+export function retryDissemination(id, legacyBody) {
+  return fetchJson(`/dissemination/${id}/retry`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ legacyBody }) });
 }
 
 export async function fetchCurrentUser() {

@@ -42,7 +42,7 @@ integrationTest("blocked 0010 resumes with chair/dean email identity and preserv
     await assert.rejects(through(10), /scope_roles_identity_valid/);
     const before = (await pool.query("SELECT * FROM scope_roles ORDER BY id")).rows;
     const result = await runMigrations({ pool, logger });
-    assert.deepEqual(result.applied, ["0011", "0010"]);
+    assert.deepEqual(result.applied, ["0011", "0010", "0012"]);
     assert.deepEqual((await pool.query("SELECT * FROM scope_roles ORDER BY id")).rows, before);
     assert.ok((await getMigrationStatus({ pool })).every(row => row.status === "applied"));
     const report = await buildDataIntegrityReport(pool.query.bind(pool));
@@ -63,7 +63,7 @@ integrationTest("blocked 0010 resumes with chair/dean email identity and preserv
 integrationTest("compatibility migration also upgrades a database already through 0010", async () => {
   await fixture(async (pool, through) => {
     await through(10);
-    assert.deepEqual((await runMigrations({ pool, logger })).applied, ["0011"]);
+    assert.deepEqual((await runMigrations({ pool, logger })).applied, ["0011", "0012"]);
     await pool.query("INSERT INTO scope_roles(role,email,division) VALUES ('dean','dean@example.invalid','Arts')");
     const constraint = await pool.query("SELECT convalidated FROM pg_constraint WHERE conrelid='scope_roles'::regclass AND conname='scope_roles_identity_valid'");
     assert.equal(constraint.rows[0].convalidated, true);

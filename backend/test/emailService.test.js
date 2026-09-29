@@ -22,7 +22,7 @@ test("Brevo provider sends expected transactional email payload", async () => {
   let captured;
   globalThis.fetch = async (url, options) => {
     captured = { url, options };
-    return { ok: true, text: async () => "" };
+    return { ok: true, text: async () => "", json: async () => ({ messageId: "test-receipt" }) };
   };
 
   try {
@@ -38,7 +38,7 @@ test("Brevo provider sends expected transactional email payload", async () => {
       html: "<p>Plain message</p>",
     });
 
-    assert.deepEqual(result, { provider: "brevo", delivered: true, recipientCount: 2 });
+    assert.deepEqual(result, { provider: "brevo", accepted: true, delivered: null, recipientCount: 2, messageId: "test-receipt" });
     assert.equal(captured.url, "https://api.brevo.com/v3/smtp/email");
     assert.equal(captured.options.headers["api-key"], "xkeysib-test-brevo-key-that-is-long-enough");
     const body = JSON.parse(captured.options.body);

@@ -93,7 +93,7 @@ test("email delivery, append-only audit, and validation migrations are non-destr
 integrationTest("applies all ordered migrations to an empty PostgreSQL database", async () => {
   await withEmptyDatabase(async (pool) => {
     const result = await runMigrations({ pool, logger: silentLogger });
-    assert.deepEqual(result.applied, ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0011", "0010"]);
+    assert.deepEqual(result.applied, ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0011", "0010", "0012"]);
 
     const tables = await pool.query(`
       SELECT to_regclass('scope_users') AS users,
@@ -130,7 +130,7 @@ integrationTest("applies all ordered migrations to an empty PostgreSQL database"
     assert.match(windowColumns.rows[0].column_default, /now\(\)/i);
 
     const history = await pool.query("SELECT * FROM scope_schema_migrations ORDER BY migration_identifier");
-    assert.equal(history.rowCount, 11);
+    assert.equal(history.rowCount, 12);
     assert.equal(history.rows[0].migration_filename, "0001_baseline.sql");
     assert.equal(history.rows[1].migration_filename, "0002_security_integrity_constraints.sql");
     assert.equal(history.rows[2].migration_filename, "0003_shared_auth_rate_limits.sql");
@@ -142,6 +142,7 @@ integrationTest("applies all ordered migrations to an empty PostgreSQL database"
     assert.equal(history.rows[8].migration_filename, "0009_protect_audit_history.sql");
     assert.equal(history.rows[9].migration_filename, "0010_validate_integrity_constraints.sql");
     assert.equal(history.rows[10].migration_filename, "0011_chair_dean_directory_identity.sql");
+    assert.equal(history.rows[11].migration_filename, "0012_email_retry_payload.sql");
     assert.ok(history.rows.every((row) => row.applied_at));
   });
 });
@@ -166,9 +167,9 @@ integrationTest("skips migrations that were already applied successfully", async
     const secondRun = await runMigrations({ pool, logger: silentLogger });
 
     assert.deepEqual(secondRun.applied, []);
-    assert.deepEqual(secondRun.skipped, ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0011", "0010"]);
+    assert.deepEqual(secondRun.skipped, ["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0011", "0010", "0012"]);
     const history = await pool.query("SELECT COUNT(*)::int AS count FROM scope_schema_migrations");
-    assert.equal(history.rows[0].count, 11);
+    assert.equal(history.rows[0].count, 12);
   });
 });
 

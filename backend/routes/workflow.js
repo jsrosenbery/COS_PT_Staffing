@@ -1,3 +1,4 @@
+import disseminationRoutes from "./dissemination.js";
 import express from "express";
 import multer from "multer";
 import Papa from "papaparse";
@@ -8,7 +9,6 @@ import { defaultContractExceptionReasons, validateChairDecision } from "../domai
 import { buildDecisionExplanation, decisionExplanationRows } from "../domain/decisionExplanation.js";
 import { canSavePreferenceVersion, preferenceSubmissionStatuses, preferenceWindowTimezone, validatePreferenceRanks, windowState } from "../domain/preferenceSubmissionPolicy.js";
 import { enforceFacultySelf, isAdmin, requireDivisionScope, requireElevatedRole, requirePreferenceOwnerOrElevated, requireRoles, requireScopedRead, scopeFilterForReq, splitScope } from "../permissions.js";
-import { sendDisseminationEmail } from "../emailService.js";
 import { internalError, logError } from "../security.js";
 
 const router = express.Router();
@@ -3381,128 +3381,5 @@ router.post("/admin/division-reset", requireRoles("admin"), async (req, res) => 
   }
 });
 
-router.post("/dissemination/send", requireElevatedRole, requireDivisionScope, async (req, res) => {
-  const {
-    termCode = "",
-    division = "",
-    senderEmail = "",
-    subject = "",
-    body = "",
-    closesAt = null,
-  } = req.body || {};
-
-  if (!termCode || !division || !senderEmail || !subject || !body) {
-    return res.status(400).json({ error: "termCode, division, senderEmail, subject, and body are required." });
-  }
-
-  const client = await pool.connect();
-  let transactionStarted = false;
-  try {
-    const recipientResult = await client.query(
-      `SELECT DISTINCT email, CONCAT_WS(' ', first_name, last_name) AS full_name
-       FROM scope_pt_faculty
-       WHERE division = $1
-         AND COALESCE(active_status, 'active') = 'active'
-         AND COALESCE(email, '') <> ''
-       ORDER BY email`,
-      [division]
-    );
-    const recipients = recipientResult.rows.map((row) => row.email).filter(Boolean);
-    if (!recipients.length) return res.status(400).json({ error: "No active recipients with email were found for this division." });
-
-    await client.query("BEGIN");
-    transactionStarted = true;
-    await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [termCode, division]);
-    const existingWindow = await client.query(
-      `SELECT id
-       FROM scope_staffing_windows
-       WHERE LOWER(term) = LOWER($1)
-         AND LOWER(division) = LOWER($2)
-         AND status = 'open'
-       LIMIT 1`,
-      [termCode, division]
-    );
-    if (existingWindow.rowCount) {
-      await client.query("ROLLBACK");
-      transactionStarted = false;
-      return res.status(409).json({ error: "An open staffing window already exists for this term and division." });
-    }
-    const windowResult = await client.query(
-      `INSERT INTO scope_staffing_windows (term, division, sender_email, closes_at, status, updated_at)
-       VALUES ($1, $2, $3, $4, 'open', NOW())
-       RETURNING id, term, division, sender_email, opened_at, closes_at, status`,
-      [termCode, division, senderEmail, closesAt || null]
-    );
-    await client.query(
-      `INSERT INTO scope_email_deliveries
-         (staffing_window_id, recipient_count, subject, status, requested_by, requested_at)
-       VALUES ($1, $2, $3, 'pending', $4, NOW())`,
-      [
-        windowResult.rows[0].id,
-        recipients.length,
-        subject,
-        req.auth?.user?.full_name || req.auth?.user?.email || req.auth?.authType || "",
-      ]
-    );
-    await client.query(
-      `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, division, term, note, source)
-       VALUES ('DISSEMINATION_QUEUED', $1, $2, $3, $4, $5, 'backend')`,
-      [
-        req.auth?.user?.full_name || req.auth?.user?.email || req.auth?.authType || "",
-        req.auth?.user?.role || req.auth?.role || "",
-        division,
-        termCode,
-        `Queued staffing window email for ${recipients.length} recipient(s). Subject: ${subject}`,
-      ]
-    );
-    await client.query("COMMIT");
-    transactionStarted = false;
-
-    let emailResult;
-    try {
-      emailResult = await sendDisseminationEmail({ recipients, subject, body });
-      await client.query(
-        `UPDATE scope_email_deliveries
-         SET status = 'sent', sent_at = NOW(), provider_message_id = $2, last_error = NULL
-         WHERE staffing_window_id = $1`,
-        [windowResult.rows[0].id, String(emailResult?.messageId || emailResult?.id || "")]
-      );
-      await client.query(
-        `INSERT INTO scope_audit_log (event_type, actor_name, actor_role, division, term, note, source)
-         VALUES ('DISSEMINATION_SENT', $1, $2, $3, $4, $5, 'backend')`,
-        [
-          req.auth?.user?.full_name || req.auth?.user?.email || req.auth?.authType || "",
-          req.auth?.user?.role || req.auth?.role || "",
-          division,
-          termCode,
-          `Sent staffing window email to ${recipients.length} recipient(s). Subject: ${subject}`,
-        ]
-      );
-    } catch (emailError) {
-      await client.query(
-        `UPDATE scope_email_deliveries
-         SET status = 'failed', failed_at = NOW(), last_error = $2
-         WHERE staffing_window_id = $1`,
-        [windowResult.rows[0].id, String(emailError?.message || "Email provider error").slice(0, 500)]
-      );
-      return internalError(req, res, emailError, "The staffing window was created, but its email could not be delivered.", {
-        windowCreated: true,
-        window: windowResult.rows[0],
-        emailStatus: "failed",
-      });
-    }
-
-    res.json({
-      success: true,
-      recipientCount: recipients.length,
-      email: emailResult,
-      window: windowResult.rows[0],
-    });
-  } catch (error) {
-    if (transactionStarted) await client.query("ROLLBACK");
-    internalError(req, res, error, "Could not create the staffing window or queue its email.");
-  } finally {
-    client.release();
-  }
-});
+router.use(disseminationRoutes);
 export default router;

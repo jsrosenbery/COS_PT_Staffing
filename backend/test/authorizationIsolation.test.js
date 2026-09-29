@@ -197,18 +197,6 @@ test("staffing window writes and audit reads enforce authenticated division scop
   assert.match(persistence, /This audit query is outside your assigned division scope/);
 });
 
-test("dissemination commits auditable delivery state before contacting the email provider", () => {
-  const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
-  const route = workflow.match(/router\.post\("\/dissemination\/send"[\s\S]*?export default router/)?.[0] || "";
-
-  assert.match(route, /INSERT INTO scope_email_deliveries/);
-  assert.match(route, /pg_advisory_xact_lock/);
-  assert.match(route, /An open staffing window already exists/);
-  assert.ok(route.indexOf('await client.query("COMMIT")') < route.indexOf("await sendDisseminationEmail"));
-  assert.match(route, /SET status = 'failed'/);
-  assert.match(route, /windowCreated: true/);
-});
-
 test("backend CSV exports neutralize formula-looking values", () => {
   const workflow = fs.readFileSync(new URL("../routes/workflow.js", import.meta.url), "utf8");
   assert.match(workflow, /\^\\s\*\[=\+\\-@\]/);

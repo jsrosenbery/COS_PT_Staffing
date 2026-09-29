@@ -49,6 +49,10 @@ export function validateProductionConfig(env = process.env) {
   if (production && !corsOrigin) errors.push("CORS_ORIGIN must be explicitly configured in production.");
   if (production && !databaseUrl) errors.push("DATABASE_URL must be configured in production.");
   if (production && !appBaseUrl) errors.push("APP_BASE_URL must be configured in production for invite and password-reset links.");
+  const emailRequired = ["1", "true", "yes", "on"].includes(String(env.EMAIL_DELIVERY_REQUIRED || "false").trim().toLowerCase());
+  if (production && emailRequired && !["sendgrid", "brevo"].includes(text(env.EMAIL_PROVIDER).toLowerCase())) {
+    errors.push("EMAIL_DELIVERY_REQUIRED requires a real email provider in production.");
+  }
   if (production && rateLimitStore !== "postgres") errors.push("RATE_LIMIT_STORE must be postgres in production.");
   if (!/^[0-5]$/.test(proxyHops)) errors.push("RATE_LIMIT_TRUST_PROXY_HOPS must be an integer from 0 through 5.");
   if (production && apiTokenEnabled) {
