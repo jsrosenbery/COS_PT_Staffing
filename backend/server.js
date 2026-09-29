@@ -108,7 +108,7 @@ async function start() {
   setInterval(() => {
     cleanupExpiredAuthRecords().catch((error) => console.error("[auth-cleanup]", error));
   }, 60 * 60 * 1000).unref?.();
-  app.listen(PORT, () => console.log(`SHERMAN backend listening on port ${PORT}`));
+  app.listen(PORT, process.env.HOST || "0.0.0.0", () => console.log(`SHERMAN backend listening on port ${PORT}`));
 }
 
 start().catch((error) => {

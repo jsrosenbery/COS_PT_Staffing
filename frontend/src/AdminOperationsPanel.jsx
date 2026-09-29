@@ -265,10 +265,10 @@ export default function AdminOperationsPanel({
           <div style={{ fontWeight: 800 }}>Division Dissemination</div>
           <div style={{ color: "var(--text-muted)", marginTop: 6 }}>Set the sender address, choose one division at a time, and preview the email copy for the 10-business-day staffing window.</div>
           <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-            <select disabled={sending} style={ui.select} value={selectedDivision} onChange={(e) => setSelectedDivision(e.target.value)}>
+            <select aria-label="Dissemination division" disabled={sending} style={ui.select} value={selectedDivision} onChange={(e) => setSelectedDivision(e.target.value)}>
               {divisionOptions.map((division) => <option key={division} value={division}>{division}</option>)}
             </select>
-            <input style={ui.input} value={senderEmail} onChange={(e) => setSenderEmail(e.target.value)} placeholder="Sender email" />
+            <input aria-label="Sender email" style={ui.input} value={senderEmail} onChange={(e) => setSenderEmail(e.target.value)} placeholder="Sender email" />
             {!delivery ? <>
             <div style={{ border: "1px solid var(--border-soft)", borderRadius: 12, padding: 12, background: "var(--bg-soft)" }}>
               <div style={{ fontWeight: 700 }}>Email Preview</div>
@@ -281,11 +281,11 @@ export default function AdminOperationsPanel({
             </div>
             <div>
               <div style={{ marginBottom: 6, fontWeight: 700 }}>Subject line</div>
-              <input readOnly style={ui.input} value={disseminationSubject} />
+              <input aria-label="Subject line" readOnly style={ui.input} value={disseminationSubject} />
             </div>
             <div>
               <div style={{ marginBottom: 6, fontWeight: 700 }}>Email body</div>
-              <textarea readOnly style={{ ...ui.input, minHeight: 180, resize: "vertical" }} value={disseminationBody} />
+              <textarea aria-label="Email body" readOnly style={{ ...ui.input, minHeight: 180, resize: "vertical" }} value={disseminationBody} />
             </div>
             </> : <div>Original subject: {delivery.subject}. Retries use the saved message and recipients. Older notices require the reviewed original message and use the current active roster.</div>}
             <button

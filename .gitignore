@@ -7,3 +7,5 @@ backend/node_modules/
 .env.*
 !.env.example
 npm-debug.log*
+frontend/test-results/
+frontend/playwright-report/

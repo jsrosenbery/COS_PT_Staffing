@@ -878,7 +878,7 @@ const ui = {
     padding: "10px 14px",
     borderRadius: 14,
     border: "1px solid transparent",
-    background: "linear-gradient(135deg, var(--brand-blue), var(--brand-orange) 55%, var(--brand-green))",
+    background: "var(--brand-blue)",
     color: "#fff",
     cursor: "pointer",
     fontWeight: 800,
@@ -1689,7 +1689,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
 
   const heroCardStyle = {
     ...ui.card,
-    background: "linear-gradient(135deg, rgba(36,51,122,0.98), rgba(240,84,35,0.96) 58%, rgba(127,190,65,0.92))",
+    background: "linear-gradient(135deg, #24337a, #84331d 58%, #354f1c)",
     color: "#fff",
     padding: 26,
     overflow: "hidden",
@@ -3254,7 +3254,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
 
         <div style={{ marginTop: 14 }}>
           <label style={{ ...ui.small, display: "block", marginBottom: 8 }}>Discipline or subject</label>
-          <select
+          <select aria-label="Discipline or subject"
             style={ui.input}
             value={selectedDisciplineCode}
             onChange={(event) => {
@@ -3274,7 +3274,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
 
         <div style={{ marginTop: 14 }}>
           <label style={{ ...ui.small, display: "block", marginBottom: 8 }}>Search sections</label>
-          <input
+          <input aria-label="Search sections"
             style={ui.input}
             value={sectionFilters.search}
             onChange={(event) => setSectionFilters((current) => ({ ...current, search: event.target.value }))}
@@ -3779,8 +3779,24 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
   };
 
   return (
-    <div style={{ ...ui.page, ...themeVars }}>
+    <div className="cos-app" style={{ ...ui.page, ...themeVars }}>
       <style>{`
+        .cos-app *, .cos-app *::before, .cos-app *::after { box-sizing: border-box; }
+        .cos-field { display: grid; gap: 6px; min-width: 0; max-width: 100%; }
+        .cos-field label { font-size: 13px; font-weight: 700; }
+        .cos-field input, .cos-field select { max-width: 100% !important; }
+        .cos-app :focus-visible { outline: 3px solid #087ea4; outline-offset: 3px; }
+        .cos-app div, .cos-app main, .cos-app form { min-width: 0; }
+        .cos-app table { overflow-wrap: normal; }
+        .cos-app table button { white-space: nowrap; }
+        @media (max-width: 600px) {
+          .cos-app { padding: 12px !important; overflow-wrap: anywhere; }
+          .cos-app div[style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
+          .cos-app div.cos-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+          .cos-app form { max-width: 100%; }
+          .cos-app .cos-field { width: 100%; }
+          .cos-app .cos-field input, .cos-app .cos-field select { width: 100% !important; }
+        }
         .cos-table tbody tr:nth-child(even) { background: rgba(36, 51, 122, 0.03); }
         .cos-table tbody tr:hover { background: rgba(240, 84, 35, 0.08); transition: background 140ms ease; }
         .cos-summary-card { position: relative; overflow: hidden; }
@@ -3789,7 +3805,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
           .cos-panel-grid { grid-template-columns: 1fr !important; }
         }
       `}</style>
-      <div style={ui.shell}>
+      <main style={ui.shell}>
         <div style={heroCardStyle}>
           <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at top right, rgba(255,255,255,0.2), transparent 34%)" }} />
           <div style={{ ...ui.between, position: "relative" }}>
@@ -3826,7 +3842,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
               </label>
               {canShowWorkspace && API_TOKEN_AUTH_ENABLED ? (
                 <>
-                  <select
+                  <select aria-label="Workspace role"
                     style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)" }}
                     value={role}
                     onChange={(e) => { setRole(e.target.value); setSelectedDisciplineCode("ALL"); }}
@@ -3837,7 +3853,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                       </option>
                     ))}
                   </select>
-                  <select
+                  <select aria-label="Staffing term"
                     style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)", minWidth: 220 }}
                     value={activeTerm.code}
                     onChange={(e) => activateTerm(e.target.value)}
@@ -3869,7 +3885,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                   </>
                 ) : (
                   <>
-                    <input
+                    <div className="cos-field"><label htmlFor="login-email">Email</label><input id="login-email" autoComplete="email"
                       type="email"
                       value={authEmail}
                       onChange={(e) => {
@@ -3879,8 +3895,8 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                       placeholder="Email"
                       aria-label="Email"
                       style={{ ...ui.input, width: 180, padding: "9px 10px", background: "rgba(255,255,255,0.92)", color: "#0f172a" }}
-                    />
-                    <input
+                    /></div>
+                    <div className="cos-field"><label htmlFor="login-password">Password</label><input id="login-password" autoComplete="current-password"
                       type="password"
                       value={authPassword}
                       onChange={(e) => {
@@ -3890,17 +3906,17 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                       placeholder="Password"
                       aria-label="Password"
                       style={{ ...ui.input, width: 150, padding: "9px 10px", background: "rgba(255,255,255,0.92)", color: "#0f172a" }}
-                    />
+                    /></div>
                     <button type="submit" style={ui.btn} disabled={authBusy}>
                       Sign In
                     </button>
-                    <button type="button" style={ui.btn} onClick={() => setResetEmail(authEmail)}>
+                    <button type="button" style={ui.btn} onClick={() => { setResetEmail(authEmail); document.getElementById("help-email")?.focus(); }}>
                       Forgot
                     </button>
                   </>
                 )}
                 {authMessage ? (
-                  <span style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>{authMessage}</span>
+                  <span role="status" aria-live="polite" aria-atomic="true" style={{ fontSize: 12, fontWeight: 800, color: "#fff" }}>{authMessage}</span>
                 ) : null}
               </form>
               {canShowWorkspace && API_TOKEN_AUTH_ENABLED ? (
@@ -3934,7 +3950,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
         </div>
 
         {canShowWorkspace ? (
-        <div style={ui.gridSummary}>
+        <div className="cos-summary-grid" style={ui.gridSummary}>
           <SummaryCard title="Ready" value={summary.ready} />
           <SummaryCard title="Open" value={summary.open} />
           <SummaryCard title="Pending Dean" value={summary.pending} />
@@ -3951,13 +3967,13 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
               Enter your name and create a password to activate this SHERMAN invitation.
             </div>
             <form onSubmit={handleAcceptInvitation} style={{ ...ui.row, marginTop: 16, alignItems: "center" }}>
-              <input
+              <div className="cos-field"><label htmlFor="setup-name">Full name</label><input id="setup-name" autoComplete="name"
                 style={{ ...ui.input, maxWidth: 260 }}
                 value={setupFullName}
                 onChange={(e) => setSetupFullName(e.target.value)}
                 placeholder="Full name"
-              />
-              <input
+              /></div>
+              <div className="cos-field"><label htmlFor="setup-password">New password (required, 10+ characters)</label><input id="setup-password" autoComplete="new-password"
                 style={{ ...ui.input, maxWidth: 260 }}
                 value={setupPassword}
                 onChange={(e) => setSetupPassword(e.target.value)}
@@ -3965,13 +3981,13 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                 type="password"
                 minLength={10}
                 required
-              />
+              /></div>
               <button type="submit" style={ui.btnPrimary} disabled={setupBusy}>
                 {setupBusy ? "Activating..." : "Activate Account"}
               </button>
             </form>
             {setupMessage ? (
-              <div style={{ marginTop: 10, fontSize: 13, color: setupMessage.startsWith("Account") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+              <div role="status" aria-live="polite" aria-atomic="true" style={{ marginTop: 10, fontSize: 13, color: setupMessage.startsWith("Account") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
                 {setupMessage}
               </div>
             ) : null}
@@ -3985,7 +4001,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
               Create a new password for your SHERMAN account.
             </div>
             <form onSubmit={handleCompletePasswordReset} style={{ ...ui.row, marginTop: 16, alignItems: "center" }}>
-              <input
+              <div className="cos-field"><label htmlFor="reset-password">New password (required, 10+ characters)</label><input id="reset-password" autoComplete="new-password"
                 style={{ ...ui.input, maxWidth: 260 }}
                 value={newResetPassword}
                 onChange={(e) => setNewResetPassword(e.target.value)}
@@ -3993,13 +4009,13 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                 type="password"
                 minLength={10}
                 required
-              />
+              /></div>
               <button type="submit" style={ui.btnPrimary} disabled={newResetBusy}>
                 {newResetBusy ? "Resetting..." : "Reset Password"}
               </button>
             </form>
             {newResetMessage ? (
-              <div style={{ marginTop: 10, fontSize: 13, color: newResetMessage.startsWith("Password") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+              <div role="status" aria-live="polite" aria-atomic="true" style={{ marginTop: 10, fontSize: 13, color: newResetMessage.startsWith("Password") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
                 {newResetMessage}
               </div>
             ) : null}
@@ -4015,30 +4031,30 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
               </div>
               <form onSubmit={submitAccessRequest} style={{ display: "grid", gap: 10, marginTop: 16 }}>
                 <div style={ui.row}>
-                  <input
+                  <div className="cos-field"><label htmlFor="request-name">Full name (required)</label><input id="request-name" autoComplete="name"
                     style={{ ...ui.input, maxWidth: 260 }}
                     value={accessRequestForm.full_name}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, full_name: e.target.value }))}
                     placeholder="Full name"
                     required
-                  />
-                  <input
+                  /></div>
+                  <div className="cos-field"><label htmlFor="request-email">Email (required)</label><input id="request-email" autoComplete="email"
                     style={{ ...ui.input, maxWidth: 260 }}
                     value={accessRequestForm.email}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, email: e.target.value }))}
                     placeholder="user@cos.edu"
                     type="email"
                     required
-                  />
-                  <input
+                  /></div>
+                  <div className="cos-field"><label htmlFor="request-employee">Employee ID (optional)</label><input id="request-employee" autoComplete="off"
                     style={{ ...ui.input, maxWidth: 160 }}
                     value={accessRequestForm.employee_id}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, employee_id: e.target.value }))}
                     placeholder="Employee ID"
-                  />
+                  /></div>
                 </div>
                 <div style={ui.row}>
-                  <select
+                  <div className="cos-field"><label htmlFor="request-role">Requested role</label><select id="request-role"
                     style={{ ...ui.input, maxWidth: 220 }}
                     value={accessRequestForm.role}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, role: e.target.value }))}
@@ -4046,8 +4062,8 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                     <option value="faculty">Part-Time Faculty</option>
                     <option value="chair">Division Chair</option>
                     <option value="dean">Dean</option>
-                  </select>
-                  <select
+                  </select></div>
+                  <div className="cos-field"><label htmlFor="request-division">Division (required)</label><select id="request-division"
                     style={{ ...ui.input, maxWidth: 260 }}
                     value={accessRequestForm.division}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, division: e.target.value }))}
@@ -4057,20 +4073,20 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                     {uploadDivisionOptions.map((division) => (
                       <option key={division} value={division}>{division}</option>
                     ))}
-                  </select>
-                  <input
+                  </select></div>
+                  <div className="cos-field"><label htmlFor="request-note">Note (optional)</label><input id="request-note" autoComplete="off"
                     style={{ ...ui.input, maxWidth: 360 }}
                     value={accessRequestForm.note}
                     onChange={(e) => setAccessRequestForm((prev) => ({ ...prev, note: e.target.value }))}
                     placeholder="Optional note"
-                  />
+                  /></div>
                   <button type="submit" style={ui.btnPrimary} disabled={accessRequestBusy}>
                     {accessRequestBusy ? "Submitting..." : "Request Access"}
                   </button>
                 </div>
               </form>
               {accessRequestMessage ? (
-                <div style={{ marginTop: 10, fontSize: 13, color: accessRequestMessage.startsWith("Account") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+                <div role="status" aria-live="polite" aria-atomic="true" style={{ marginTop: 10, fontSize: 13, color: accessRequestMessage.startsWith("Account") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
                   {accessRequestMessage}
                 </div>
               ) : null}
@@ -4081,20 +4097,20 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                 Send a reset link to the email on your active account.
               </div>
               <form onSubmit={sendPasswordResetRequest} style={{ ...ui.row, marginTop: 16 }}>
-                <input
+                <div className="cos-field"><label htmlFor="help-email">Account email (required)</label><input id="help-email" autoComplete="email"
                   style={{ ...ui.input, maxWidth: 260 }}
                   value={resetEmail}
                   onChange={(e) => setResetEmail(e.target.value)}
                   placeholder="user@cos.edu"
                   type="email"
                   required
-                />
+                /></div>
                 <button type="submit" style={ui.btnPrimary} disabled={resetBusy}>
                   {resetBusy ? "Sending..." : "Send Reset"}
                 </button>
               </form>
               {resetMessage ? (
-                <div style={{ marginTop: 10, fontSize: 13, color: resetMessage.startsWith("If") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
+                <div role="status" aria-live="polite" aria-atomic="true" style={{ marginTop: 10, fontSize: 13, color: resetMessage.startsWith("If") ? "var(--text-muted)" : "#b91c1c", fontWeight: 700 }}>
                   {resetMessage}
                 </div>
               ) : null}
@@ -4119,13 +4135,13 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
           </div>
 
           <div style={{ ...ui.row, marginTop: 16 }}>
-            <input
+            <input aria-label="New term code"
               style={{ ...ui.input, maxWidth: 180 }}
               value={newTermCode}
               onChange={(e) => setNewTermCode(e.target.value.toUpperCase())}
               placeholder="SP28"
             />
-            <input
+            <input aria-label="New term name"
               style={{ ...ui.input, maxWidth: 280 }}
               value={newTermName}
               onChange={(e) => setNewTermName(e.target.value)}
@@ -4136,7 +4152,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
             </button>
           </div>
 
-          <div style={ui.tableWrap}>
+          <div tabIndex={0} role="region" aria-label="Terms table" style={ui.tableWrap}>
             <table className="cos-table" style={ui.table}>
               <thead>
                 <tr>
@@ -4186,6 +4202,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
           <div style={{ marginTop: 16 }}>
             <input
               style={ui.input}
+              aria-label="Subject mapping CSV"
               type="file"
               accept=".csv"
               disabled={uploadingMapping}
@@ -4282,7 +4299,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
 
             {mappingList.length ? (
-              <div style={{ overflowX: "auto", marginTop: 8 }}>
+              <div tabIndex={0} role="region" aria-label="Subject mappings table" style={{ overflowX: "auto", marginTop: 8 }}>
                 <table className="cos-table" style={ui.table}>
                   <thead>
                     <tr>
@@ -4355,7 +4372,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           <div style={{ marginTop: 16, display: "grid", gap: 12, maxWidth: 720 }}>
             <div>
               <div style={{ marginBottom: 6, fontWeight: 700 }}>Division</div>
-              <select
+              <select aria-label="Division"
                 style={ui.alphaSelect}
                 value={selectedUploadDivision}
                 onChange={(e) => setSelectedUploadDivision(e.target.value)}
@@ -4372,6 +4389,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             <input
               key={uploadInputKey}
               style={ui.input}
+              aria-label="Division schedule CSV"
               type="file"
               accept=".csv"
               disabled={uploadingSchedule || previewingUpload}
@@ -4619,7 +4637,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           </div>
           <form onSubmit={sendAccessInvite} style={{ ...ui.row, marginTop: 16, alignItems: "center" }}>
-            <input
+            <input aria-label="Invitation email"
               style={{ ...ui.input, maxWidth: 240 }}
               value={inviteForm.email}
               onChange={(e) => setInviteForm((prev) => ({ ...prev, email: e.target.value }))}
@@ -4627,19 +4645,19 @@ OH,ORNAMENTAL_HORTICULTURE`}
               type="email"
               required
             />
-            <input
+            <input aria-label="Invitation full name"
               style={{ ...ui.input, maxWidth: 220 }}
               value={inviteForm.full_name}
               onChange={(e) => setInviteForm((prev) => ({ ...prev, full_name: e.target.value }))}
               placeholder="Full name"
             />
-            <input
+            <input aria-label="Invitation employee ID"
               style={{ ...ui.input, maxWidth: 160 }}
               value={inviteForm.employee_id}
               onChange={(e) => setInviteForm((prev) => ({ ...prev, employee_id: e.target.value }))}
               placeholder="Employee ID"
             />
-            <select
+            <select aria-label="Invitation role"
               style={{ ...ui.input, maxWidth: 180 }}
               value={inviteForm.role}
               onChange={(e) => setInviteForm((prev) => ({ ...prev, role: e.target.value }))}
@@ -4649,7 +4667,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
               <option value="dean">Dean</option>
               <option value="admin">Scheduler / Admin</option>
             </select>
-            <select
+            <select aria-label="Invitation division"
               style={{ ...ui.input, maxWidth: 240 }}
               value={inviteForm.division}
               onChange={(e) => setInviteForm((prev) => ({ ...prev, division: e.target.value }))}
@@ -4726,7 +4744,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 {managedUsersMessage}
               </div>
             ) : null}
-            <div style={{ overflowX: "auto", marginTop: 12 }}>
+            <div tabIndex={0} role="region" aria-label="User accounts table" style={{ overflowX: "auto", marginTop: 12 }}>
               <table className="cos-table" style={ui.table}>
                 <thead>
                   <tr>
@@ -4745,7 +4763,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{user.email}{user.employee_id ? ` | ${user.employee_id}` : ""}</div>
                       </td>
                       <td style={ui.td}>
-                        <select style={ui.input} value={user.role || "faculty"} onChange={(e) => saveManagedUser(user, { role: e.target.value })} disabled={managedUsersBusy || user.id === lastActiveAdminId} title={user.id === lastActiveAdminId ? "At least one active administrator must remain." : undefined}>
+                        <select aria-label={`Role for ${user.email}`} style={ui.input} value={user.role || "faculty"} onChange={(e) => saveManagedUser(user, { role: e.target.value })} disabled={managedUsersBusy || user.id === lastActiveAdminId} title={user.id === lastActiveAdminId ? "At least one active administrator must remain." : undefined}>
                           <option value="faculty">Faculty</option>
                           <option value="chair">Chair</option>
                           <option value="dean">Dean</option>
@@ -4753,7 +4771,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </select>
                       </td>
                       <td style={ui.td}>
-                        <select style={ui.input} value={user.division || ""} onChange={(e) => saveManagedUser(user, { division: e.target.value })} disabled={managedUsersBusy}>
+                        <select aria-label={`Division for ${user.email}`} style={ui.input} value={user.division || ""} onChange={(e) => saveManagedUser(user, { division: e.target.value })} disabled={managedUsersBusy}>
                           <option value="">All / none</option>
                           {uploadDivisionOptions.map((division) => (
                             <option key={division} value={division}>{division}</option>
@@ -4761,7 +4779,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </select>
                       </td>
                       <td style={ui.td}>
-                        <select style={ui.input} value={user.active_status || "invited"} onChange={(e) => saveManagedUser(user, { active_status: e.target.value })} disabled={managedUsersBusy || user.id === lastActiveAdminId} title={user.id === lastActiveAdminId ? "At least one active administrator must remain." : undefined}>
+                        <select aria-label={`Account status for ${user.email}`} style={ui.input} value={user.active_status || "invited"} onChange={(e) => saveManagedUser(user, { active_status: e.target.value })} disabled={managedUsersBusy || user.id === lastActiveAdminId} title={user.id === lastActiveAdminId ? "At least one active administrator must remain." : undefined}>
                           <option value="invited">Invited</option>
                           <option value="active">Active</option>
                           <option value="disabled">Disabled</option>
@@ -4825,7 +4843,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
               </div>
               {canSelectSyntheticScope ? (
-                <select
+                <select aria-label="Division chair"
                   style={ui.alphaSelect}
                   value={selectedChairName}
                   onChange={(e) => {
@@ -4861,7 +4879,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
               </div>
               {canSelectSyntheticScope ? (
-                <select
+                <select aria-label="Dean"
                   style={ui.alphaSelect}
                   value={selectedDeanName}
                   onChange={(e) => {
@@ -4901,7 +4919,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   <span style={ui.chip}>{selectedFaculty ? facultyName(selectedFaculty) : currentUser?.full_name || currentUser?.email || "Signed-in faculty"}</span>
                 ) : (
                   <>
-                    <select
+                    <select aria-label="Faculty discipline"
                       style={ui.alphaSelect}
                       value={ptFacultyDisciplineFilter}
                       onChange={(e) => {
@@ -4918,7 +4936,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </option>
                       ))}
                     </select>
-                    <select
+                    <select aria-label="Faculty profile"
                       style={ui.alphaSelect}
                       value={selectedFacultyId}
                       onChange={(e) => {
@@ -5036,7 +5054,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                       <label style={{ display: "grid", gap: 4 }}>
                         <span style={ui.small}>Term</span>
-                        <select
+                        <select aria-label="Staffing term"
                           style={ui.select}
                           value={activeTerm.code}
                           onChange={(event) => activateTerm(event.target.value)}
@@ -5049,7 +5067,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </label>
                       <label style={{ display: "grid", gap: 4 }}>
                         <span style={ui.small}>Division</span>
-                        <select
+                        <select aria-label="Division"
                           style={ui.select}
                           value={selectedUploadDivision}
                           onChange={(event) => {
@@ -5066,7 +5084,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </label>
                       <label style={{ display: "grid", gap: 4 }}>
                         <span style={ui.small}>Reset mode</span>
-                        <select
+                        <select aria-label="Reset scope"
                           style={ui.select}
                           value={divisionResetMode}
                           onChange={(event) => setDivisionResetMode(event.target.value)}
@@ -5082,7 +5100,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </div>
                       <label style={{ display: "grid", gap: 4 }}>
                         <span style={ui.small}>Audit reason</span>
-                        <textarea
+                        <textarea aria-label="Reset reason"
                           style={{ ...ui.input, minHeight: 70, resize: "vertical" }}
                           value={divisionResetReason}
                           onChange={(event) => setDivisionResetReason(event.target.value)}
@@ -5092,7 +5110,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </label>
                       <label style={{ display: "grid", gap: 4 }}>
                         <span style={ui.small}>Type the division name to confirm</span>
-                        <input
+                        <input aria-label="Reset confirmation"
                           style={ui.input}
                           value={divisionResetConfirmation}
                           onChange={(event) => setDivisionResetConfirmation(event.target.value)}
@@ -5429,7 +5447,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </div>
                   <div style={{ display: "grid", gap: 6, maxWidth: 360, marginTop: 10 }}>
                     <label style={ui.small}>Submitted faculty list</label>
-                    <select
+                    <select aria-label="Faculty preference review"
                       style={ui.select}
                       value={selectedFacultyId}
                       onChange={(e) => {
@@ -5508,7 +5526,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
                 <div style={{ display: "grid", gap: 6, minWidth: 260 }}>
                   <label style={ui.small}>Sort sections by</label>
-                  <select
+                  <select aria-label="Sort staffing workflow"
                     style={ui.select}
                     value={workflowSort}
                     onChange={(e) => setWorkflowSort(e.target.value)}
@@ -5826,13 +5844,13 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     </button>
                   </div>
                   <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1.4fr 1fr auto", marginTop: 12, alignItems: "center" }}>
-                    <input
+                    <input aria-label="Search audit history"
                       style={ui.input}
                       value={auditSearch}
                       onChange={(e) => setAuditSearch(e.target.value)}
                       placeholder="Search actor, event, discipline, or detail"
                     />
-                    <select style={ui.select} value={auditTypeFilter} onChange={(e) => setAuditTypeFilter(e.target.value)}>
+                    <select aria-label="Audit event type" style={ui.select} value={auditTypeFilter} onChange={(e) => setAuditTypeFilter(e.target.value)}>
                       <option value="ALL">All event types</option>
                       {auditEventOptions.map((eventType) => (
                         <option key={eventType} value={eventType}>{eventType.replace(/_/g, " ")}</option>
@@ -6083,7 +6101,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </button>
                 </div>
                 {preferencesMessage ? (
-                  <div style={{ marginTop: 10, color: /saved|loaded|loading/i.test(preferencesMessage) ? "#166534" : "#b91c1c", fontWeight: 700 }}>
+                  <div role="status" aria-live="polite" style={{ marginTop: 10, color: /saved|loaded|loading/i.test(preferencesMessage) ? "#166534" : "#b91c1c", fontWeight: 700 }}>
                     {preferencesMessage}
                   </div>
                 ) : null}
@@ -6091,7 +6109,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           ) : null}
 
-          <div style={{ ...ui.tableWrap, display: role === "faculty" && !facultyPreferenceWindowOpen ? "none" : undefined }}>
+          <div tabIndex={0} role="region" aria-label="Available sections table" style={{ ...ui.tableWrap, display: role === "faculty" && !facultyPreferenceWindowOpen ? "none" : undefined }}>
             <table className="cos-table" style={ui.table}>
               <thead>
                 <tr>
@@ -6180,7 +6198,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           <br />
           College of the Sequoias Part-Time Faculty Staffing
         </footer>
-      </div>
+      </main>
     </div>
   );
 }
