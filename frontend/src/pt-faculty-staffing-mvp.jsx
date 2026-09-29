@@ -3254,7 +3254,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
 
         <div style={{ marginTop: 14 }}>
           <label style={{ ...ui.small, display: "block", marginBottom: 8 }}>Discipline or subject</label>
-          <select
+          <select aria-label="Discipline or subject"
             style={ui.input}
             value={selectedDisciplineCode}
             onChange={(event) => {
@@ -3274,7 +3274,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
 
         <div style={{ marginTop: 14 }}>
           <label style={{ ...ui.small, display: "block", marginBottom: 8 }}>Search sections</label>
-          <input
+          <input aria-label="Search sections"
             style={ui.input}
             value={sectionFilters.search}
             onChange={(event) => setSectionFilters((current) => ({ ...current, search: event.target.value }))}
@@ -3786,9 +3786,10 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
         .cos-field label { font-size: 13px; font-weight: 700; }
         .cos-field input, .cos-field select { max-width: 100% !important; }
         .cos-app :focus-visible { outline: 3px solid #087ea4; outline-offset: 3px; }
-        .cos-app main > * { min-width: 0; }
+        .cos-app div, .cos-app main, .cos-app form { min-width: 0; }
         @media (max-width: 600px) {
-          .cos-app { padding: 12px !important; }
+          .cos-app { padding: 12px !important; overflow-wrap: anywhere; }
+          .cos-app div[style*="grid-template-columns"] { grid-template-columns: minmax(0, 1fr) !important; }
           .cos-app form { max-width: 100%; }
           .cos-app .cos-field { width: 100%; }
           .cos-app .cos-field input, .cos-app .cos-field select { width: 100% !important; }
@@ -3838,7 +3839,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
               </label>
               {canShowWorkspace && API_TOKEN_AUTH_ENABLED ? (
                 <>
-                  <select
+                  <select aria-label="Workspace role"
                     style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)" }}
                     value={role}
                     onChange={(e) => { setRole(e.target.value); setSelectedDisciplineCode("ALL"); }}
@@ -3849,7 +3850,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
                       </option>
                     ))}
                   </select>
-                  <select
+                  <select aria-label="Staffing term"
                     style={{ ...ui.select, background: "rgba(255,255,255,0.14)", color: "#fff", border: "1px solid rgba(255,255,255,0.22)", minWidth: 220 }}
                     value={activeTerm.code}
                     onChange={(e) => activateTerm(e.target.value)}
@@ -4131,13 +4132,13 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
           </div>
 
           <div style={{ ...ui.row, marginTop: 16 }}>
-            <input
+            <input aria-label="New term code"
               style={{ ...ui.input, maxWidth: 180 }}
               value={newTermCode}
               onChange={(e) => setNewTermCode(e.target.value.toUpperCase())}
               placeholder="SP28"
             />
-            <input
+            <input aria-label="New term name"
               style={{ ...ui.input, maxWidth: 280 }}
               value={newTermName}
               onChange={(e) => setNewTermName(e.target.value)}
@@ -4148,7 +4149,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
             </button>
           </div>
 
-          <div style={ui.tableWrap}>
+          <div tabIndex={0} role="region" aria-label="Terms table" style={ui.tableWrap}>
             <table className="cos-table" style={ui.table}>
               <thead>
                 <tr>
@@ -4198,6 +4199,7 @@ export default function PTFacultyStaffingMVP({ onSignedOut, onSignOutResult, sig
           <div style={{ marginTop: 16 }}>
             <input
               style={ui.input}
+              aria-label="Subject mapping CSV"
               type="file"
               accept=".csv"
               disabled={uploadingMapping}
@@ -4294,7 +4296,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
 
             {mappingList.length ? (
-              <div style={{ overflowX: "auto", marginTop: 8 }}>
+              <div tabIndex={0} role="region" aria-label="Subject mappings table" style={{ overflowX: "auto", marginTop: 8 }}>
                 <table className="cos-table" style={ui.table}>
                   <thead>
                     <tr>
@@ -4367,7 +4369,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
           <div style={{ marginTop: 16, display: "grid", gap: 12, maxWidth: 720 }}>
             <div>
               <div style={{ marginBottom: 6, fontWeight: 700 }}>Division</div>
-              <select
+              <select aria-label="Division"
                 style={ui.alphaSelect}
                 value={selectedUploadDivision}
                 onChange={(e) => setSelectedUploadDivision(e.target.value)}
@@ -4384,6 +4386,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             <input
               key={uploadInputKey}
               style={ui.input}
+              aria-label="Division schedule CSV"
               type="file"
               accept=".csv"
               disabled={uploadingSchedule || previewingUpload}
@@ -4631,7 +4634,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           </div>
           <form onSubmit={sendAccessInvite} style={{ ...ui.row, marginTop: 16, alignItems: "center" }}>
-            <input
+            <input aria-label="Invitation email"
               style={{ ...ui.input, maxWidth: 240 }}
               value={inviteForm.email}
               onChange={(e) => setInviteForm((prev) => ({ ...prev, email: e.target.value }))}
@@ -4639,19 +4642,19 @@ OH,ORNAMENTAL_HORTICULTURE`}
               type="email"
               required
             />
-            <input
+            <input aria-label="Invitation full name"
               style={{ ...ui.input, maxWidth: 220 }}
               value={inviteForm.full_name}
               onChange={(e) => setInviteForm((prev) => ({ ...prev, full_name: e.target.value }))}
               placeholder="Full name"
             />
-            <input
+            <input aria-label="Invitation employee ID"
               style={{ ...ui.input, maxWidth: 160 }}
               value={inviteForm.employee_id}
               onChange={(e) => setInviteForm((prev) => ({ ...prev, employee_id: e.target.value }))}
               placeholder="Employee ID"
             />
-            <select
+            <select aria-label="Invitation role"
               style={{ ...ui.input, maxWidth: 180 }}
               value={inviteForm.role}
               onChange={(e) => setInviteForm((prev) => ({ ...prev, role: e.target.value }))}
@@ -4661,7 +4664,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
               <option value="dean">Dean</option>
               <option value="admin">Scheduler / Admin</option>
             </select>
-            <select
+            <select aria-label="Invitation division"
               style={{ ...ui.input, maxWidth: 240 }}
               value={inviteForm.division}
               onChange={(e) => setInviteForm((prev) => ({ ...prev, division: e.target.value }))}
@@ -4738,7 +4741,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 {managedUsersMessage}
               </div>
             ) : null}
-            <div style={{ overflowX: "auto", marginTop: 12 }}>
+            <div tabIndex={0} role="region" aria-label="User accounts table" style={{ overflowX: "auto", marginTop: 12 }}>
               <table className="cos-table" style={ui.table}>
                 <thead>
                   <tr>
@@ -4757,7 +4760,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{user.email}{user.employee_id ? ` | ${user.employee_id}` : ""}</div>
                       </td>
                       <td style={ui.td}>
-                        <select style={ui.input} value={user.role || "faculty"} onChange={(e) => saveManagedUser(user, { role: e.target.value })} disabled={managedUsersBusy || user.id === lastActiveAdminId} title={user.id === lastActiveAdminId ? "At least one active administrator must remain." : undefined}>
+                        <select aria-label={`Role for ${user.email}`} style={ui.input} value={user.role || "faculty"} onChange={(e) => saveManagedUser(user, { role: e.target.value })} disabled={managedUsersBusy || user.id === lastActiveAdminId} title={user.id === lastActiveAdminId ? "At least one active administrator must remain." : undefined}>
                           <option value="faculty">Faculty</option>
                           <option value="chair">Chair</option>
                           <option value="dean">Dean</option>
@@ -4765,7 +4768,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </select>
                       </td>
                       <td style={ui.td}>
-                        <select style={ui.input} value={user.division || ""} onChange={(e) => saveManagedUser(user, { division: e.target.value })} disabled={managedUsersBusy}>
+                        <select aria-label={`Division for ${user.email}`} style={ui.input} value={user.division || ""} onChange={(e) => saveManagedUser(user, { division: e.target.value })} disabled={managedUsersBusy}>
                           <option value="">All / none</option>
                           {uploadDivisionOptions.map((division) => (
                             <option key={division} value={division}>{division}</option>
@@ -4773,7 +4776,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </select>
                       </td>
                       <td style={ui.td}>
-                        <select style={ui.input} value={user.active_status || "invited"} onChange={(e) => saveManagedUser(user, { active_status: e.target.value })} disabled={managedUsersBusy || user.id === lastActiveAdminId} title={user.id === lastActiveAdminId ? "At least one active administrator must remain." : undefined}>
+                        <select aria-label={`Account status for ${user.email}`} style={ui.input} value={user.active_status || "invited"} onChange={(e) => saveManagedUser(user, { active_status: e.target.value })} disabled={managedUsersBusy || user.id === lastActiveAdminId} title={user.id === lastActiveAdminId ? "At least one active administrator must remain." : undefined}>
                           <option value="invited">Invited</option>
                           <option value="active">Active</option>
                           <option value="disabled">Disabled</option>
@@ -4837,7 +4840,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
               </div>
               {canSelectSyntheticScope ? (
-                <select
+                <select aria-label="Division chair"
                   style={ui.alphaSelect}
                   value={selectedChairName}
                   onChange={(e) => {
@@ -4873,7 +4876,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
               </div>
               {canSelectSyntheticScope ? (
-                <select
+                <select aria-label="Dean"
                   style={ui.alphaSelect}
                   value={selectedDeanName}
                   onChange={(e) => {
@@ -4913,7 +4916,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   <span style={ui.chip}>{selectedFaculty ? facultyName(selectedFaculty) : currentUser?.full_name || currentUser?.email || "Signed-in faculty"}</span>
                 ) : (
                   <>
-                    <select
+                    <select aria-label="Faculty discipline"
                       style={ui.alphaSelect}
                       value={ptFacultyDisciplineFilter}
                       onChange={(e) => {
@@ -4930,7 +4933,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                         </option>
                       ))}
                     </select>
-                    <select
+                    <select aria-label="Faculty member"
                       style={ui.alphaSelect}
                       value={selectedFacultyId}
                       onChange={(e) => {
@@ -5048,7 +5051,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
                       <label style={{ display: "grid", gap: 4 }}>
                         <span style={ui.small}>Term</span>
-                        <select
+                        <select aria-label="Staffing term"
                           style={ui.select}
                           value={activeTerm.code}
                           onChange={(event) => activateTerm(event.target.value)}
@@ -5061,7 +5064,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </label>
                       <label style={{ display: "grid", gap: 4 }}>
                         <span style={ui.small}>Division</span>
-                        <select
+                        <select aria-label="Division"
                           style={ui.select}
                           value={selectedUploadDivision}
                           onChange={(event) => {
@@ -5078,7 +5081,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </label>
                       <label style={{ display: "grid", gap: 4 }}>
                         <span style={ui.small}>Reset mode</span>
-                        <select
+                        <select aria-label="Reset scope"
                           style={ui.select}
                           value={divisionResetMode}
                           onChange={(event) => setDivisionResetMode(event.target.value)}
@@ -5094,7 +5097,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </div>
                       <label style={{ display: "grid", gap: 4 }}>
                         <span style={ui.small}>Audit reason</span>
-                        <textarea
+                        <textarea aria-label="Reset reason"
                           style={{ ...ui.input, minHeight: 70, resize: "vertical" }}
                           value={divisionResetReason}
                           onChange={(event) => setDivisionResetReason(event.target.value)}
@@ -5104,7 +5107,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                       </label>
                       <label style={{ display: "grid", gap: 4 }}>
                         <span style={ui.small}>Type the division name to confirm</span>
-                        <input
+                        <input aria-label="Reset confirmation"
                           style={ui.input}
                           value={divisionResetConfirmation}
                           onChange={(event) => setDivisionResetConfirmation(event.target.value)}
@@ -5441,7 +5444,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                   </div>
                   <div style={{ display: "grid", gap: 6, maxWidth: 360, marginTop: 10 }}>
                     <label style={ui.small}>Submitted faculty list</label>
-                    <select
+                    <select aria-label="Faculty member"
                       style={ui.select}
                       value={selectedFacultyId}
                       onChange={(e) => {
@@ -5520,7 +5523,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
                 </div>
                 <div style={{ display: "grid", gap: 6, minWidth: 260 }}>
                   <label style={ui.small}>Sort sections by</label>
-                  <select
+                  <select aria-label="Sort staffing workflow"
                     style={ui.select}
                     value={workflowSort}
                     onChange={(e) => setWorkflowSort(e.target.value)}
@@ -5838,13 +5841,13 @@ OH,ORNAMENTAL_HORTICULTURE`}
                     </button>
                   </div>
                   <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1.4fr 1fr auto", marginTop: 12, alignItems: "center" }}>
-                    <input
+                    <input aria-label="Search audit history"
                       style={ui.input}
                       value={auditSearch}
                       onChange={(e) => setAuditSearch(e.target.value)}
                       placeholder="Search actor, event, discipline, or detail"
                     />
-                    <select style={ui.select} value={auditTypeFilter} onChange={(e) => setAuditTypeFilter(e.target.value)}>
+                    <select aria-label="Audit event type" style={ui.select} value={auditTypeFilter} onChange={(e) => setAuditTypeFilter(e.target.value)}>
                       <option value="ALL">All event types</option>
                       {auditEventOptions.map((eventType) => (
                         <option key={eventType} value={eventType}>{eventType.replace(/_/g, " ")}</option>
@@ -6103,7 +6106,7 @@ OH,ORNAMENTAL_HORTICULTURE`}
             </div>
           ) : null}
 
-          <div style={{ ...ui.tableWrap, display: role === "faculty" && !facultyPreferenceWindowOpen ? "none" : undefined }}>
+          <div tabIndex={0} role="region" aria-label="Available sections table" style={{ ...ui.tableWrap, display: role === "faculty" && !facultyPreferenceWindowOpen ? "none" : undefined }}>
             <table className="cos-table" style={ui.table}>
               <thead>
                 <tr>
