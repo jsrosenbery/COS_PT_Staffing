@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import {
   addBusinessDays,
@@ -10,7 +10,7 @@ import {
   summarizePtRosterReplace,
   toIsoDate,
 } from "./adminOpsUtils";
-import { sendDissemination } from "./apiClient";
+import { sendDissemination, getDisseminationStatus, retryDissemination } from "./apiClient";
 
 function panelStat(label, value) {
   return (
@@ -51,7 +51,23 @@ export default function AdminOperationsPanel({
   const [ptSummary, setPtSummary] = useState(null);
   const [sendMessage, setSendMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [delivery, setDelivery] = useState(null);
+  const [deliveryLoading, setDeliveryLoading] = useState(true);
   const [selectedDivision, setSelectedDivision] = useState(divisionOptions[0] || "");
+  const scopeRef = useRef("");
+  scopeRef.current = JSON.stringify([activeTerm?.code, selectedDivision]);
+  useEffect(() => {
+    let cancelled = false;
+    setDelivery(null);
+    setSendMessage("");
+    setDeliveryLoading(true);
+    if (!activeTerm?.code || !selectedDivision) { setDeliveryLoading(false); return; }
+    getDisseminationStatus(activeTerm.code, selectedDivision).then(data => {
+      if (!cancelled) setDelivery(data.delivery);
+    }).catch(error => { if (!cancelled) setSendMessage(error.message); })
+      .finally(() => { if (!cancelled) setDeliveryLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeTerm?.code, selectedDivision]);
   const chairInputRef = useRef(null);
   const deanInputRef = useRef(null);
   const ptInputRef = useRef(null);
@@ -144,12 +160,18 @@ export default function AdminOperationsPanel({
 
   async function handleSendDissemination() {
     if (!selectedDivision || !activeTerm?.code) return;
-    const confirmed = window.confirm(`Send staffing window email to ${selectedDivisionRecipients.length} recipient(s) in ${selectedDivision}?`);
+    let legacyBody;
+    if (delivery?.status === "failed" && !delivery.has_payload) {
+      legacyBody = window.prompt(`Paste the reviewed original notice for "${delivery.subject}". Keep its original closing date (${delivery.closes_at || "no deadline"}). This retry uses the current active division roster.`);
+      if (!legacyBody?.trim()) return;
+    }
+    const confirmed = window.confirm(delivery ? "Retry this failed notice? The existing window and deadline will be preserved." : `Send staffing window email to ${selectedDivisionRecipients.length} recipient(s) in ${selectedDivision}?`);
     if (!confirmed) return;
+    const requestScope = scopeRef.current;
     setSending(true);
     setSendMessage("");
     try {
-      const data = await sendDissemination({
+      const data = delivery ? await retryDissemination(delivery.id, legacyBody) : await sendDissemination({
         termCode: activeTerm.code,
         division: selectedDivision,
         senderEmail,
@@ -157,10 +179,14 @@ export default function AdminOperationsPanel({
         body: disseminationBody,
         closesAt,
       });
-      setSendMessage(`Sent to ${data.recipientCount || 0} recipient(s). Staffing window opened.`);
+      if (scopeRef.current === requestScope) setSendMessage(data.alreadyAccepted ? "The provider already accepted this notice; no duplicate was sent." : `Provider accepted the notice for ${data.recipientCount || 0} recipient(s). Inbox delivery is not yet confirmed.`);
     } catch (error) {
-      setSendMessage(error.message || "Could not send dissemination email.");
+      if (scopeRef.current === requestScope) setSendMessage(error.message || "Could not send dissemination email.");
     } finally {
+      try {
+        const status = await getDisseminationStatus(activeTerm.code, selectedDivision);
+        if (scopeRef.current === requestScope) setDelivery(status.delivery);
+      } catch { /* Retain the original error. */ }
       setSending(false);
     }
   }
@@ -239,10 +265,11 @@ export default function AdminOperationsPanel({
           <div style={{ fontWeight: 800 }}>Division Dissemination</div>
           <div style={{ color: "var(--text-muted)", marginTop: 6 }}>Set the sender address, choose one division at a time, and preview the email copy for the 10-business-day staffing window.</div>
           <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-            <select style={ui.select} value={selectedDivision} onChange={(e) => setSelectedDivision(e.target.value)}>
+            <select disabled={sending} style={ui.select} value={selectedDivision} onChange={(e) => setSelectedDivision(e.target.value)}>
               {divisionOptions.map((division) => <option key={division} value={division}>{division}</option>)}
             </select>
             <input style={ui.input} value={senderEmail} onChange={(e) => setSenderEmail(e.target.value)} placeholder="Sender email" />
+            {!delivery ? <>
             <div style={{ border: "1px solid var(--border-soft)", borderRadius: 12, padding: 12, background: "var(--bg-soft)" }}>
               <div style={{ fontWeight: 700 }}>Email Preview</div>
               <div style={{ marginTop: 6, fontSize: 14 }}>Term: {activeTerm?.code}</div>
@@ -260,16 +287,18 @@ export default function AdminOperationsPanel({
               <div style={{ marginBottom: 6, fontWeight: 700 }}>Email body</div>
               <textarea readOnly style={{ ...ui.input, minHeight: 180, resize: "vertical" }} value={disseminationBody} />
             </div>
+            </> : <div>Original subject: {delivery.subject}. Retries use the saved message and recipients. Older notices require the reviewed original message and use the current active roster.</div>}
             <button
               type="button"
               style={ui.btnPrimary}
-              disabled={sending || !selectedDivision || !selectedDivisionRecipients.length}
+              disabled={sending || deliveryLoading || !selectedDivision || (!delivery && !selectedDivisionRecipients.length) || (delivery && delivery.status !== "failed")}
               onClick={handleSendDissemination}
             >
-              {sending ? "Sending..." : "Send Dissemination Email"}
+              {sending ? "Sending..." : delivery?.status === "failed" ? "Retry Failed Notice" : delivery?.status === "sent" ? "Notice Accepted" : delivery?.status === "pending" ? "Notice Pending — Check Provider" : "Send Dissemination Email"}
             </button>
+            {delivery ? <div role="status">Notice status: {delivery.status === "sent" ? "Accepted by provider" : delivery.status}. {delivery.last_error || ""} Window closes: {delivery.closes_at || "No deadline"}.</div> : null}
             {sendMessage ? (
-              <div style={{ color: sendMessage.startsWith("Sent") ? "#166534" : "#b91c1c", fontWeight: 700 }}>
+              <div style={{ color: /^(Provider accepted|The provider already accepted)/.test(sendMessage) ? "#166534" : "#b91c1c", fontWeight: 700 }}>
                 {sendMessage}
               </div>
             ) : null}

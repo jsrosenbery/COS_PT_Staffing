@@ -39,6 +39,21 @@ function requireAdmin(req, res) {
   return false;
 }
 
+async function lockAdminChanges(client, req, res) {
+  await client.query("SELECT pg_advisory_xact_lock(82468349120260723::bigint)");
+  if (req.auth?.authType === "api-token") return true;
+  const actor = await client.query("SELECT id FROM scope_users WHERE id=$1 AND role='admin' AND active_status='active'", [req.auth?.user?.id]);
+  if (actor.rowCount) return true;
+  publicError(res, 403, "ADMIN_REQUIRED", "Active administrator access is required.", req.correlationId);
+  return false;
+}
+
+async function wouldRemoveLastAdmin(client, existing, nextRole, nextStatus) {
+  if (existing.role !== "admin" || existing.active_status !== "active" || (nextRole === "admin" && nextStatus === "active")) return false;
+  const other = await client.query("SELECT id FROM scope_users WHERE role='admin' AND active_status='active' AND id<>$1 LIMIT 1", [existing.id]);
+  return !other.rowCount;
+}
+
 function unexpected(res, req, label, error, publicMessage) {
   logError(label, error, req);
   return publicError(res, 500, "INTERNAL_ERROR", publicMessage, req.correlationId);
@@ -171,12 +186,16 @@ router.patch("/users/:id", async (req, res) => {
 
     await client.query("BEGIN");
     transactionStarted = true;
+    if (!await lockAdminChanges(client, req, res)) return;
     const existingResult = await client.query("SELECT * FROM scope_users WHERE id = $1 LIMIT 1 FOR UPDATE", [req.params.id]);
     const existing = existingResult.rows[0];
     if (!existing) return res.status(404).json({ error: "User not found." });
     const hasEmployeeId = Object.prototype.hasOwnProperty.call(req.body || {}, "employee_id") || Object.prototype.hasOwnProperty.call(req.body || {}, "employeeId");
     const hasFullName = Object.prototype.hasOwnProperty.call(req.body || {}, "full_name") || Object.prototype.hasOwnProperty.call(req.body || {}, "fullName");
     const hasDivision = Object.prototype.hasOwnProperty.call(req.body || {}, "division");
+    if (await wouldRemoveLastAdmin(client, existing, role || existing.role, activeStatus || existing.active_status)) {
+      return publicError(res, 409, "LAST_ACTIVE_ADMIN", "At least one active admin account must remain.", req.correlationId);
+    }
 
     const result = await client.query(
       `UPDATE scope_users
@@ -238,25 +257,19 @@ router.delete("/users/:id", async (req, res) => {
     }
 
     await client.query("BEGIN");
+    if (!await lockAdminChanges(client, req, res)) {
+      await client.query("ROLLBACK");
+      return;
+    }
     const existingResult = await client.query("SELECT * FROM scope_users WHERE id = $1 LIMIT 1 FOR UPDATE", [userId]);
     const existing = existingResult.rows[0];
     if (!existing) {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "User not found." });
     }
-    if (existing.role === "admin" && existing.active_status === "active") {
-      const otherAdminResult = await client.query(
-        `SELECT COUNT(*)::int AS count
-         FROM scope_users
-         WHERE role = 'admin'
-           AND active_status = 'active'
-           AND id <> $1`,
-        [userId]
-      );
-      if (!otherAdminResult.rows[0]?.count) {
-        await client.query("ROLLBACK");
-        return res.status(400).json({ error: "At least one active admin account must remain." });
-      }
+    if (await wouldRemoveLastAdmin(client, existing, null, null)) {
+      await client.query("ROLLBACK");
+      return publicError(res, 409, "LAST_ACTIVE_ADMIN", "At least one active admin account must remain.", req.correlationId);
     }
 
     await client.query(

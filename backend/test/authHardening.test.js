@@ -81,6 +81,7 @@ test("production configuration fails closed for unsafe auth settings", () => {
   };
 
   assert.equal(validateProductionConfig({ ...base }).ok, true);
+  assert.match(validateProductionConfig({ ...base, EMAIL_DELIVERY_REQUIRED: "true" }).errors.join(" "), /real email provider/);
 
   assert.match(validateProductionConfig({ ...base, AUTH_DISABLED: "true" }).errors.join(" "), /AUTH_DISABLED/);
   assert.match(validateProductionConfig({ ...base, CORS_ORIGIN: "" }).errors.join(" "), /CORS_ORIGIN/);
