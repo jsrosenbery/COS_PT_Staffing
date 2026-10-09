@@ -99,7 +99,7 @@ jobs:
 
       - name: Retain browser pilot evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: browser-pilot-evidence
           path: |
